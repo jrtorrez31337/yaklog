@@ -64,6 +64,93 @@ test('renders context as plain text', async () => {
   assert.match(context.text, /Need latest deployment status\./);
 });
 
+test('updates a message body and metadata', async () => {
+  const create = await request(app)
+    .post('/api/v1/messages')
+    .set(authed)
+    .send({ channel: 'updates', sender: 'agent', body: 'original', metadata: { v: 1 } });
+
+  const id = create.body.message.id;
+
+  const patch = await request(app)
+    .patch(`/api/v1/messages/${id}`)
+    .set(authed)
+    .send({ body: 'revised', metadata: { v: 2 } });
+
+  assert.equal(patch.statusCode, 200);
+  assert.equal(patch.body.message.body, 'revised');
+  assert.equal(patch.body.message.metadata.v, 2);
+  assert.ok(patch.body.message.updated_at);
+});
+
+test('updates only body (partial update)', async () => {
+  const create = await request(app)
+    .post('/api/v1/messages')
+    .set(authed)
+    .send({ channel: 'updates', sender: 'agent', body: 'before', metadata: { keep: true } });
+
+  const id = create.body.message.id;
+
+  const patch = await request(app)
+    .patch(`/api/v1/messages/${id}`)
+    .set(authed)
+    .send({ body: 'after' });
+
+  assert.equal(patch.statusCode, 200);
+  assert.equal(patch.body.message.body, 'after');
+  assert.equal(patch.body.message.metadata.keep, true);
+});
+
+test('update nonexistent message returns 404', async () => {
+  const res = await request(app)
+    .patch('/api/v1/messages/999999')
+    .set(authed)
+    .send({ body: 'nope' });
+
+  assert.equal(res.statusCode, 404);
+});
+
+test('deletes a message', async () => {
+  const create = await request(app)
+    .post('/api/v1/messages')
+    .set(authed)
+    .send({ channel: 'deletes', sender: 'agent', body: 'ephemeral' });
+
+  const id = create.body.message.id;
+
+  const del = await request(app)
+    .delete(`/api/v1/messages/${id}`)
+    .set(authed);
+
+  assert.equal(del.statusCode, 204);
+
+  const list = await request(app)
+    .get(`/api/v1/messages?channel=deletes`)
+    .set(authed);
+
+  const ids = list.body.messages.map(m => m.id);
+  assert.ok(!ids.includes(id));
+});
+
+test('delete nonexistent message returns 404', async () => {
+  const res = await request(app)
+    .delete('/api/v1/messages/999999')
+    .set(authed);
+
+  assert.equal(res.statusCode, 404);
+});
+
+test('posts a message with body > 8000 chars', async () => {
+  const largeBody = 'x'.repeat(10000);
+  const res = await request(app)
+    .post('/api/v1/messages')
+    .set(authed)
+    .send({ channel: 'large', sender: 'agent', body: largeBody });
+
+  assert.equal(res.statusCode, 201);
+  assert.equal(res.body.message.body.length, 10000);
+});
+
 test.after(() => {
   closeDb();
   fs.rmSync(tempDir, { recursive: true, force: true });

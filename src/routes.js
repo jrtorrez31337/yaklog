@@ -1,5 +1,5 @@
 const express = require('express');
-const { insertMessage, listMessages, listChannels } = require('./db');
+const { insertMessage, listMessages, listChannels, updateMessage, deleteMessage } = require('./db');
 
 const router = express.Router();
 
@@ -75,10 +75,10 @@ router.post('/messages', (req, res) => {
     });
   }
 
-  if (typeof body !== 'string' || body.trim().length === 0 || body.length > 8000) {
+  if (typeof body !== 'string' || body.trim().length === 0) {
     return res.status(400).json({
       error: 'ValidationError',
-      message: 'body is required, non-empty, and must be <= 8000 chars.'
+      message: 'body is required and must be a non-empty string.'
     });
   }
 
@@ -147,6 +147,61 @@ router.get('/context', (req, res) => {
 
   res.type('text/plain');
   return res.send(`${lines.join('\n')}\n`);
+});
+
+router.patch('/messages/:id', (req, res) => {
+  const id = parsePositiveInt(req.params.id, null, Number.MAX_SAFE_INTEGER);
+  if (id === null) {
+    return res.status(400).json({ error: 'ValidationError', message: 'id must be a positive integer.' });
+  }
+
+  const { body, metadata } = req.body || {};
+
+  if (body === undefined && metadata === undefined) {
+    return res.status(400).json({
+      error: 'ValidationError',
+      message: 'At least one of body or metadata is required.'
+    });
+  }
+
+  if (body !== undefined && (typeof body !== 'string' || body.trim().length === 0)) {
+    return res.status(400).json({
+      error: 'ValidationError',
+      message: 'body must be a non-empty string when provided.'
+    });
+  }
+
+  if (metadata !== undefined && (metadata === null || typeof metadata !== 'object' || Array.isArray(metadata))) {
+    return res.status(400).json({
+      error: 'ValidationError',
+      message: 'metadata must be a JSON object when provided.'
+    });
+  }
+
+  const updates = {};
+  if (body !== undefined) updates.body = body;
+  if (metadata !== undefined) updates.metadata = metadata;
+
+  const message = updateMessage(id, updates);
+  if (!message) {
+    return res.status(404).json({ error: 'NotFound', message: 'Message not found.' });
+  }
+
+  return res.json({ message });
+});
+
+router.delete('/messages/:id', (req, res) => {
+  const id = parsePositiveInt(req.params.id, null, Number.MAX_SAFE_INTEGER);
+  if (id === null) {
+    return res.status(400).json({ error: 'ValidationError', message: 'id must be a positive integer.' });
+  }
+
+  const deleted = deleteMessage(id);
+  if (!deleted) {
+    return res.status(404).json({ error: 'NotFound', message: 'Message not found.' });
+  }
+
+  return res.status(204).send();
 });
 
 module.exports = router;

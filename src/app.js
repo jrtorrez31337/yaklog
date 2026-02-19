@@ -22,7 +22,7 @@ const corsOptions = {
         .split(',')
         .map((origin) => origin.trim())
         .filter(Boolean),
-  methods: ['GET', 'POST'],
+  methods: ['GET', 'POST', 'PATCH', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-API-Key']
 };
 
