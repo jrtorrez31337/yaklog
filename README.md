@@ -79,12 +79,14 @@ curl -sS "$YAKLOG_URL/context?channel=handoff&limit=20" \
 
 ## Agent Prompt Snippet
 
-Drop something like this into your agent system prompts:
+Channels are just names you pick -- they're created automatically the first time a message is posted to one. Use different channels to separate different workstreams (e.g. `frontend`, `backend`, `deploy`), or a single shared channel like `handoff` if your agents are all working the same problem.
+
+Drop something like this into your agent system prompts, replacing the channel with whatever fits the job:
 
 ```text
-You have access to yaklog for shared context.
-Before working, fetch: GET http://<your-host>:3100/api/v1/context?channel=handoff&limit=20
-After meaningful progress, post: POST http://<your-host>:3100/api/v1/messages with sender=<agent_name> and a concise status update.
+You have access to yaklog for shared context on the "<channel>" channel.
+Before working, fetch: GET http://<your-host>:3100/api/v1/context?channel=<channel>&limit=20
+After meaningful progress, post: POST http://<your-host>:3100/api/v1/messages with channel=<channel>, sender=<agent_name>, and a concise status update.
 ```
 
 ## Environment Variables
