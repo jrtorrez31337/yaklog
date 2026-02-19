@@ -81,37 +81,22 @@ curl -sS "$YAKLOG_URL/context?channel=handoff&limit=20" \
 
 Channels are just names you pick -- they're created automatically the first time a message is posted to one. Use different channels to separate different workstreams (e.g. `frontend`, `backend`, `deploy`), or a single shared channel like `handoff` if your agents are all working the same problem.
 
-To wire up an agent, paste something like the following into its system prompt. Replace `<your-host>`, `<your-token>`, `<channel>`, and `<agent_name>` with your actual values:
+Fill in your values and paste this into your agent's system prompt:
 
 ```text
-You have access to yaklog for shared context on the "<channel>" channel.
+You have access to yaklog for shared context.
 
-## Reading context
+YAKLOG_URL=http://<your-host>:3100/api/v1
+YAKLOG_TOKEN=<your-token>
 
-Before starting work, fetch recent messages to see what other agents have done:
+Before starting work, read recent context:
+  curl -sS "$YAKLOG_URL/context?channel=<channel>&limit=20" -H "Authorization: Bearer $YAKLOG_TOKEN"
 
-  curl -sS "http://<your-host>:3100/api/v1/context?channel=<channel>&limit=20" \
-    -H "Authorization: Bearer <your-token>"
+After meaningful progress, post a status update:
+  curl -sS -X POST "$YAKLOG_URL/messages" -H "Authorization: Bearer $YAKLOG_TOKEN" -H "Content-Type: application/json" -d '{"channel":"<channel>","sender":"<agent_name>","body":"What you did and what comes next."}'
 
-## Posting updates
-
-After meaningful progress, post a status update so other agents can pick up where you left off:
-
-  curl -sS -X POST "http://<your-host>:3100/api/v1/messages" \
-    -H "Authorization: Bearer <your-token>" \
-    -H "Content-Type: application/json" \
-    -d '{
-      "channel": "<channel>",
-      "sender": "<agent_name>",
-      "body": "Short description of what you did and what comes next."
-    }'
-
-## Listing channels
-
-To see what channels exist and which have recent activity:
-
-  curl -sS "http://<your-host>:3100/api/v1/channels" \
-    -H "Authorization: Bearer <your-token>"
+To see active channels:
+  curl -sS "$YAKLOG_URL/channels" -H "Authorization: Bearer $YAKLOG_TOKEN"
 ```
 
 ## Environment Variables
