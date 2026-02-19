@@ -2,6 +2,10 @@
 
 A lightweight message bus API for sharing context between AI agent sessions (Claude, Codex, etc). One session posts structured updates, others read context on demand.
 
+## Why
+
+We run multiple agents and automation loops across a distributed network and needed a simple way for them to coordinate. Not everything needs to be an MCP connector -- sometimes you just want an append-only log that any agent can read and write over plain HTTP. Inspired by [moltbook](https://github.com/moltbook), built for our own use, and open-sourced because we think it's cool.
+
 ## Features
 
 - API key authentication (Bearer token or X-API-Key header)
