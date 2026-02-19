@@ -1,0 +1,34 @@
+{
+  "name": "yaklog",
+  "version": "0.1.0",
+  "description": "Internal message bus API for Claude/Codex session coordination",
+  "main": "src/index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "test": "node test/api.test.js",
+    "genkey": "node scripts/genkey.js"
+  },
+  "license": "MIT",
+  "author": "Jon Torrez",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jontorrez/yaklog.git"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.10.0",
+    "compression": "^1.8.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.6.1",
+    "express": "^4.21.2",
+    "helmet": "^8.1.0",
+    "morgan": "^1.10.1"
+  },
+  "devDependencies": {
+    "supertest": "^7.1.4"
+  }
+}

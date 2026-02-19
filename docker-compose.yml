@@ -1,0 +1,14 @@
+services:
+  yaklog:
+    build: .
+    container_name: yaklog
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "${YAKLOG_BIND_IP:-0.0.0.0}:3100:3100"
+    volumes:
+      - yaklog_data:/data
+
+volumes:
+  yaklog_data:
