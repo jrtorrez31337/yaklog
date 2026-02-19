@@ -14,7 +14,7 @@
   "author": "Jon Torrez",
   "repository": {
     "type": "git",
-    "url": "https://github.com/jontorrez/yaklog.git"
+    "url": "https://github.com/jrtorrez31337/yaklog.git"
   },
   "engines": {
     "node": ">=20.0.0"
