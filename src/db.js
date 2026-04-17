@@ -1,9 +1,13 @@
 const fs = require('fs');
 const path = require('path');
 const Database = require('better-sqlite3');
+const { EventEmitter } = require('node:events');
 
 const config = require('./config');
 const { parseMentions } = require('./mentions');
+
+const messageBus = new EventEmitter();
+messageBus.setMaxListeners(0);
 
 let db;
 
@@ -118,7 +122,9 @@ function insertMessage({ channel, sender, body, metadata = null }) {
     .prepare('SELECT id, channel, sender, body, metadata_json, mentions, created_at, updated_at FROM messages WHERE id = ?')
     .get(result.lastInsertRowid);
 
-  return toMessage(row);
+  const message = toMessage(row);
+  messageBus.emit('message', message);
+  return message;
 }
 
 function listMessages({ channel, limit = 50, afterId = null, beforeId = null }) {
@@ -236,5 +242,6 @@ module.exports = {
   getMessage,
   updateMessage,
   deleteMessage,
-  closeDb
+  closeDb,
+  messageBus
 };

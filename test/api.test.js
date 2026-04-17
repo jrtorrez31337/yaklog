@@ -151,6 +151,18 @@ test('posts a message with body > 8000 chars', async () => {
   assert.equal(res.body.message.body.length, 10000);
 });
 
+test('insertMessage emits on messageBus', async () => {
+  const { messageBus, insertMessage } = require('../src/db');
+  const received = new Promise((resolve) => {
+    messageBus.once('message', resolve);
+  });
+  insertMessage({ channel: 'bus-test', sender: 'tester', body: 'ping @alice' });
+  const msg = await received;
+  assert.equal(msg.channel, 'bus-test');
+  assert.deepEqual(msg.mentions, ['alice']);
+  assert.equal(msg.seq, msg.id);
+});
+
 test.after(() => {
   closeDb();
   fs.rmSync(tempDir, { recursive: true, force: true });
