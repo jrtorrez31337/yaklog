@@ -54,15 +54,30 @@ function streamHandler(req, res) {
   });
   res.write(': connected\n\n');
 
+  // Register close handler early so listeners are always cleaned up,
+  // even if the client disconnects during the synchronous replay/drain phase.
+  let closed = false;
+  let currentListener = null;
+  let keepalive = null;
+
+  const cleanup = () => {
+    if (closed) return;
+    closed = true;
+    if (keepalive) clearInterval(keepalive);
+    if (currentListener) messageBus.off('message', currentListener);
+  };
+  req.on('close', cleanup);
+
   // Race-free replay: subscribe first (buffer), then replay, then drain buffer.
   const buffered = [];
-  const onBuffer = (msg) => buffered.push(msg);
-  messageBus.on('message', onBuffer);
+  currentListener = (msg) => buffered.push(msg);
+  messageBus.on('message', currentListener);
 
   let highestReplayed = cursor !== null ? cursor : 0;
-  if (cursor !== null) {
+  if (cursor !== null && !closed) {
     const rows = listMessagesAfter({ afterId: cursor, channel, excludeSender, mention });
     for (const msg of rows) {
+      if (closed) break;
       res.write(formatEvent(msg));
       highestReplayed = Math.max(highestReplayed, msg.id);
     }
@@ -70,6 +85,7 @@ function streamHandler(req, res) {
 
   const seen = new Set();
   for (const msg of buffered) {
+    if (closed) break;
     if (msg.id <= highestReplayed) continue;
     if (!messageMatches(msg, filters)) continue;
     if (seen.has(msg.id)) continue;
@@ -78,21 +94,19 @@ function streamHandler(req, res) {
   }
   buffered.length = 0;
 
-  messageBus.off('message', onBuffer);
-  const liveHandler = (msg) => {
+  messageBus.off('message', currentListener);
+  currentListener = null;
+  if (closed) return;
+
+  currentListener = (msg) => {
     if (!messageMatches(msg, filters)) return;
     res.write(formatEvent(msg));
   };
-  messageBus.on('message', liveHandler);
+  messageBus.on('message', currentListener);
 
-  const keepalive = setInterval(() => {
+  keepalive = setInterval(() => {
     res.write(`: keepalive\n\n`);
   }, KEEPALIVE_MS);
-
-  req.on('close', () => {
-    clearInterval(keepalive);
-    messageBus.off('message', liveHandler);
-  });
 }
 
 module.exports = { streamHandler };

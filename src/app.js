@@ -27,7 +27,12 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-app.use(compression());
+app.use(compression({
+  filter: (req, res) => {
+    if (res.getHeader('Content-Type') === 'text/event-stream') return false;
+    return compression.filter(req, res);
+  }
+}));
 app.use(morgan(config.isProduction ? 'combined' : 'dev'));
 app.use(express.json({ limit: config.maxBodyBytes }));
 
