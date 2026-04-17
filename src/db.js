@@ -82,18 +82,14 @@ function initializeDb() {
     }
   }
 
-  const rowsToBackfill = db
-    .prepare('SELECT id, body FROM messages WHERE mentions IS NULL')
-    .all();
-  if (rowsToBackfill.length > 0) {
-    const update = db.prepare('UPDATE messages SET mentions = ? WHERE id = ?');
-    const tx = db.transaction((rows) => {
-      for (const row of rows) {
-        update.run(JSON.stringify(parseMentions(row.body)), row.id);
-      }
-    });
-    tx(rowsToBackfill);
-  }
+  const selectBackfill = db.prepare('SELECT id, body FROM messages WHERE mentions IS NULL');
+  const updateBackfill = db.prepare('UPDATE messages SET mentions = ? WHERE id = ?');
+  const runBackfill = db.transaction(() => {
+    for (const row of selectBackfill.iterate()) {
+      updateBackfill.run(JSON.stringify(parseMentions(row.body)), row.id);
+    }
+  });
+  runBackfill();
 
   return db;
 }
@@ -193,6 +189,8 @@ function updateMessage(id, { body, metadata } = {}) {
   if (body !== undefined) {
     sets.push('body = @body');
     params.body = body;
+    sets.push('mentions = @mentions');
+    params.mentions = JSON.stringify(parseMentions(body));
   }
 
   if (metadata !== undefined) {
