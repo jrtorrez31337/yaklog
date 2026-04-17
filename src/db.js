@@ -3,6 +3,7 @@ const path = require('path');
 const Database = require('better-sqlite3');
 
 const config = require('./config');
+const { parseMentions } = require('./mentions');
 
 let db;
 
@@ -18,13 +19,25 @@ function parseMetadata(raw) {
   }
 }
 
+function parseMentionsField(raw) {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
 function toMessage(row) {
   return {
     id: row.id,
+    seq: row.id,
     channel: row.channel,
     sender: row.sender,
     body: row.body,
     metadata: parseMetadata(row.metadata_json),
+    mentions: parseMentionsField(row.mentions),
     created_at: row.created_at,
     updated_at: row.updated_at || null
   };
@@ -61,6 +74,27 @@ function initializeDb() {
     }
   }
 
+  try {
+    db.exec(`ALTER TABLE messages ADD COLUMN mentions TEXT`);
+  } catch (err) {
+    if (!err.message.includes('duplicate column')) {
+      throw err;
+    }
+  }
+
+  const rowsToBackfill = db
+    .prepare('SELECT id, body FROM messages WHERE mentions IS NULL')
+    .all();
+  if (rowsToBackfill.length > 0) {
+    const update = db.prepare('UPDATE messages SET mentions = ? WHERE id = ?');
+    const tx = db.transaction((rows) => {
+      for (const row of rows) {
+        update.run(JSON.stringify(parseMentions(row.body)), row.id);
+      }
+    });
+    tx(rowsToBackfill);
+  }
+
   return db;
 }
 
@@ -70,20 +104,22 @@ function getDb() {
 
 function insertMessage({ channel, sender, body, metadata = null }) {
   const database = getDb();
+  const mentions = parseMentions(body);
   const stmt = database.prepare(`
-    INSERT INTO messages (channel, sender, body, metadata_json)
-    VALUES (@channel, @sender, @body, @metadata_json)
+    INSERT INTO messages (channel, sender, body, metadata_json, mentions)
+    VALUES (@channel, @sender, @body, @metadata_json, @mentions)
   `);
 
   const result = stmt.run({
     channel,
     sender,
     body,
-    metadata_json: metadata ? JSON.stringify(metadata) : null
+    metadata_json: metadata ? JSON.stringify(metadata) : null,
+    mentions: JSON.stringify(mentions)
   });
 
   const row = database
-    .prepare('SELECT id, channel, sender, body, metadata_json, created_at FROM messages WHERE id = ?')
+    .prepare('SELECT id, channel, sender, body, metadata_json, mentions, created_at, updated_at FROM messages WHERE id = ?')
     .get(result.lastInsertRowid);
 
   return toMessage(row);
@@ -113,7 +149,7 @@ function listMessages({ channel, limit = 50, afterId = null, beforeId = null }) 
 
   const rows = database
     .prepare(`
-      SELECT id, channel, sender, body, metadata_json, created_at
+      SELECT id, channel, sender, body, metadata_json, mentions, created_at, updated_at
       FROM messages
       ${whereSql}
       ORDER BY id DESC
@@ -144,7 +180,7 @@ function listChannels(limit = 100) {
 function getMessage(id) {
   const database = getDb();
   const row = database
-    .prepare('SELECT id, channel, sender, body, metadata_json, created_at, updated_at FROM messages WHERE id = ?')
+    .prepare('SELECT id, channel, sender, body, metadata_json, mentions, created_at, updated_at FROM messages WHERE id = ?')
     .get(id);
   return row ? toMessage(row) : null;
 }
