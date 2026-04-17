@@ -162,6 +162,25 @@ function listMessages({ channel, limit = 50, afterId = null, beforeId = null }) 
   return rows.reverse().map(toMessage);
 }
 
+function listMessagesAfter({ afterId, channel, excludeSender, mention }) {
+  const database = getDb();
+  const where = ['id > @afterId'];
+  const params = { afterId };
+  if (channel) { where.push('channel = @channel'); params.channel = channel; }
+  if (excludeSender) { where.push('sender != @excludeSender'); params.excludeSender = excludeSender; }
+  const rows = database
+    .prepare(`SELECT id, channel, sender, body, metadata_json, mentions, created_at, updated_at
+              FROM messages
+              WHERE ${where.join(' AND ')}
+              ORDER BY id ASC`)
+    .all(params);
+  const filtered = rows.map(toMessage).filter((m) => {
+    if (!mention) return true;
+    return (m.mentions || []).includes(mention);
+  });
+  return filtered;
+}
+
 function listChannels(limit = 100) {
   const database = getDb();
   return database
@@ -238,6 +257,7 @@ module.exports = {
   initializeDb,
   insertMessage,
   listMessages,
+  listMessagesAfter,
   listChannels,
   getMessage,
   updateMessage,

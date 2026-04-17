@@ -1,5 +1,6 @@
 const express = require('express');
 const { insertMessage, listMessages, listChannels, updateMessage, deleteMessage } = require('./db');
+const { streamHandler } = require('./stream');
 
 const router = express.Router();
 
@@ -203,5 +204,7 @@ router.delete('/messages/:id', (req, res) => {
 
   return res.status(204).send();
 });
+
+router.get('/stream', streamHandler);
 
 module.exports = router;
