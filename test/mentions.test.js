@@ -31,7 +31,7 @@ test('identifier max length 64 chars', () => {
   assert.deepEqual(parseMentions(`@${over}`), [max]);
 });
 
-test('emails produce false-positive match of local-part (documented)', () => {
+test('emails produce false-positive match on domain label (documented)', () => {
   assert.deepEqual(parseMentions('contact user@example.com'), ['example']);
 });
 
