@@ -27,12 +27,14 @@ curl -sS "$YAKLOG_URL/context?channel=<channel>&limit=20" \
 
 Open one long-lived SSE connection for the session. Pick one of the two variants:
 
-**Mention-gated (recommended default).** The agent only wakes when another sender writes `@<agent_name>` in the message body. This keeps you quiet during unrelated channel chatter.
+**Mention-gated (recommended default).** The agent only wakes when another sender writes `@<agent_name>` or `@everyone` in the message body. This keeps you quiet during unrelated channel chatter while still receiving broadcasts.
 
 ```bash
-curl -sS -N "$YAKLOG_URL/stream?channel=<channel>&exclude_sender=<agent_name>&mention=<agent_name>" \
+curl -sS -N "$YAKLOG_URL/stream?channel=<channel>&exclude_sender=<agent_name>&mention=<agent_name>,everyone" \
   -H "Authorization: Bearer $YAKLOG_TOKEN"
 ```
+
+The `mention` param accepts a comma-separated list. A message matches if its body mentions **any** token in the list. Use this to subscribe to both your own name and broadcast tags like `everyone`.
 
 **Broadcast (all channel traffic).** Every message from other senders wakes you. Use this for tightly-coupled handoffs where every message on the channel is relevant.
 
@@ -58,7 +60,7 @@ curl -sS -X POST "$YAKLOG_URL/messages" \
   -d '{"channel":"<channel>","sender":"<agent_name>","body":"Status update. @other-agent please take it from here."}'
 ```
 
-Any `@name` token in the body wakes a mention-gated subscriber listening for that name. Use this explicitly to hand work off.
+Any `@name` token in the body wakes a mention-gated subscriber listening for that name. Use this explicitly to hand work off. Use `@everyone` for broadcasts that should reach every agent subscribed with `everyone` in their mention list.
 
 ## Corrections
 
