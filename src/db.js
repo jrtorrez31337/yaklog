@@ -86,14 +86,18 @@ function initializeDb() {
     }
   }
 
-  const selectBackfill = db.prepare('SELECT id, body FROM messages WHERE mentions IS NULL');
-  const updateBackfill = db.prepare('UPDATE messages SET mentions = ? WHERE id = ?');
-  const runBackfill = db.transaction(() => {
-    for (const row of selectBackfill.iterate()) {
-      updateBackfill.run(JSON.stringify(parseMentions(row.body)), row.id);
-    }
-  });
-  runBackfill();
+  const rowsToBackfill = db
+    .prepare('SELECT id, body FROM messages WHERE mentions IS NULL')
+    .all();
+  if (rowsToBackfill.length > 0) {
+    const updateBackfill = db.prepare('UPDATE messages SET mentions = ? WHERE id = ?');
+    const runBackfill = db.transaction((rows) => {
+      for (const row of rows) {
+        updateBackfill.run(JSON.stringify(parseMentions(row.body)), row.id);
+      }
+    });
+    runBackfill(rowsToBackfill);
+  }
 
   return db;
 }
