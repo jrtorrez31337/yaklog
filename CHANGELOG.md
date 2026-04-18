@@ -4,7 +4,7 @@
 
 ### Added
 - `GET /api/v1/stream` — Server-Sent Events endpoint for real-time message fan-out.
-  - Query params: `channel`, `exclude_sender`, `mention`, `since`, `min_quiet_ms` (default 500ms coalescing, 0 to disable).
+  - Query params: `channel`, `exclude_sender`, `mention` (comma-separated list, e.g. `mention=claude,everyone`), `since`, `min_quiet_ms` (default 500ms coalescing, 0 to disable).
   - `Last-Event-ID` request header for race-free replay after reconnect.
   - 15s keepalive comments (configurable via `YAKLOG_STREAM_KEEPALIVE_MS`).
 - `mentions` field on all message responses — auto-parsed `@name` tokens (alphanumeric, `_`, `-`, max 64 chars, deduped).

@@ -163,6 +163,65 @@ test('min_quiet_ms=0 flushes immediately', async () => {
   server.close();
 });
 
+test('mention filter accepts comma-separated list — matches any', async () => {
+  const server = await startServer();
+  const port = server.address().port;
+  const { events, close } = await openStream(port, '?channel=multi&mention=claude,everyone&min_quiet_ms=0');
+
+  insertMessage({ channel: 'multi', sender: 'bob', body: 'just chatter, no ping' });
+  insertMessage({ channel: 'multi', sender: 'alice', body: 'heads up @everyone — deploy at 5' });
+  insertMessage({ channel: 'multi', sender: 'dave', body: 'hi @claude please review' });
+  insertMessage({ channel: 'multi', sender: 'eve', body: '@other-agent take it' });
+
+  await waitFor(() => events.filter((e) => e.startsWith('id:')).length >= 2);
+  const bodies = events.filter((e) => e.startsWith('id:')).map((e) => JSON.parse(e.split('data: ')[1]).body);
+  assert.ok(bodies.some((b) => b.includes('@everyone')));
+  assert.ok(bodies.some((b) => b.includes('@claude')));
+  assert.ok(!bodies.some((b) => b.includes('just chatter')));
+  assert.ok(!bodies.some((b) => b.includes('@other-agent')));
+
+  close();
+  server.close();
+});
+
+test('mention filter rejects list containing invalid token', async () => {
+  const server = await startServer();
+  const port = server.address().port;
+  const res = await new Promise((resolve, reject) => {
+    const req = http.request({
+      host: '127.0.0.1', port, method: 'GET',
+      path: '/api/v1/stream?mention=claude,bad!token',
+      headers: { Authorization: `Bearer ${TOKEN}` }
+    });
+    req.on('response', resolve);
+    req.on('error', reject);
+    req.end();
+  });
+  assert.equal(res.statusCode, 400);
+  res.resume();
+  server.close();
+});
+
+test('Last-Event-ID replay honors multi-mention filter', async () => {
+  const server = await startServer();
+  const port = server.address().port;
+
+  const m1 = insertMessage({ channel: 'mreplay', sender: 'x', body: 'ignored' });
+  const m2 = insertMessage({ channel: 'mreplay', sender: 'x', body: 'wake @everyone' });
+  const m3 = insertMessage({ channel: 'mreplay', sender: 'x', body: 'poke @claude' });
+
+  const { events, close } = await openStream(port, `?channel=mreplay&mention=claude,everyone&min_quiet_ms=0`, {
+    'Last-Event-ID': String(m1.id)
+  });
+
+  await waitFor(() => events.filter((e) => e.startsWith('id:')).length >= 2);
+  const ids = events.filter((e) => e.startsWith('id:')).map((e) => Number(e.match(/^id: (\d+)/)[1]));
+  assert.deepEqual(ids, [m2.id, m3.id]);
+
+  close();
+  server.close();
+});
+
 test('emits keepalive comments periodically', async () => {
   const server = await startServer();
   const port = server.address().port;

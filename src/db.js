@@ -166,7 +166,7 @@ function listMessages({ channel, limit = 50, afterId = null, beforeId = null }) 
   return rows.reverse().map(toMessage);
 }
 
-function listMessagesAfter({ afterId, channel, excludeSender, mention }) {
+function listMessagesAfter({ afterId, channel, excludeSender, mentions }) {
   const database = getDb();
   const where = ['id > @afterId'];
   const params = { afterId };
@@ -179,8 +179,9 @@ function listMessagesAfter({ afterId, channel, excludeSender, mention }) {
               ORDER BY id ASC`)
     .all(params);
   const filtered = rows.map(toMessage).filter((m) => {
-    if (!mention) return true;
-    return (m.mentions || []).includes(mention);
+    if (!mentions || mentions.length === 0) return true;
+    const msgMentions = m.mentions || [];
+    return mentions.some((mention) => msgMentions.includes(mention));
   });
   return filtered;
 }
