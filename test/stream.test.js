@@ -9,6 +9,7 @@ const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'yaklog-stream-test-'));
 process.env.YAKLOG_DB_PATH = path.join(tempDir, 'yaklog.db');
 process.env.YAKLOG_API_KEYS = 'test-key';
 process.env.NODE_ENV = 'test';
+process.env.YAKLOG_STREAM_KEEPALIVE_MS = '100';
 
 const app = require('../src/app');
 const { closeDb, insertMessage } = require('../src/db');
@@ -158,6 +159,15 @@ test('min_quiet_ms=0 flushes immediately', async () => {
   const elapsed = Date.now() - t0;
   assert.ok(elapsed < 200, `expected <200ms, got ${elapsed}ms`);
 
+  close();
+  server.close();
+});
+
+test('emits keepalive comments periodically', async () => {
+  const server = await startServer();
+  const port = server.address().port;
+  const { events, close } = await openStream(port, '?channel=ka');
+  await waitFor(() => events.some((e) => e.includes('keepalive')), 1500);
   close();
   server.close();
 });
