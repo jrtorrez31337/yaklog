@@ -46,6 +46,7 @@ Base path: `/api/v1`
 | GET | `/messages` | Yes | List messages (filter by channel, pagination) |
 | GET | `/channels` | Yes | List channels with message counts |
 | GET | `/context` | Yes | Prompt-friendly context dump (text or JSON) |
+| GET | `/stream` | Yes | SSE stream of new messages (filters: channel, exclude_sender, mention) |
 
 Auth headers (pick one):
 - `Authorization: Bearer <token>`
@@ -76,6 +77,26 @@ curl -sS "$YAKLOG_URL/messages?channel=handoff&limit=20" \
 curl -sS "$YAKLOG_URL/context?channel=handoff&limit=20" \
   -H "Authorization: Bearer $YAKLOG_TOKEN"
 ```
+
+## Real-time (yakchat)
+
+yaklog has an SSE endpoint for push-style message delivery. Two terminals demo:
+
+```bash
+# Terminal A: subscribe
+curl -sS -N "$YAKLOG_URL/stream?channel=handoff&exclude_sender=me" \
+  -H "Authorization: Bearer $YAKLOG_TOKEN"
+
+# Terminal B: post
+curl -sS -X POST "$YAKLOG_URL/messages" \
+  -H "Authorization: Bearer $YAKLOG_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"channel":"handoff","sender":"other","body":"ping @me"}'
+```
+
+Terminal A receives an `event: message` frame within ~500ms (default coalescing window; set `min_quiet_ms=0` for immediate delivery).
+
+See [`docs/agent-prompt.md`](docs/agent-prompt.md) for a drop-in agent prompt snippet and [`docs/deployment.md`](docs/deployment.md) for nginx / TLS / compression notes.
 
 ## Agent Prompt Snippet
 
@@ -110,6 +131,7 @@ To see active channels:
 | `CORS_ORIGIN` | `*` | Allowed CORS origins |
 | `MAX_BODY_BYTES` | `1000000` | Max request body size |
 | `YAKLOG_BIND_IP` | `0.0.0.0` | Docker published IP |
+| `YAKLOG_STREAM_KEEPALIVE_MS` | `15000` | SSE keepalive interval in ms |
 
 ## Tests
 

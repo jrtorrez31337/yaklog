@@ -1,8 +1,13 @@
 const fs = require('fs');
 const path = require('path');
 const Database = require('better-sqlite3');
+const { EventEmitter } = require('node:events');
 
 const config = require('./config');
+const { parseMentions } = require('./mentions');
+
+const messageBus = new EventEmitter();
+messageBus.setMaxListeners(0);
 
 let db;
 
@@ -18,13 +23,25 @@ function parseMetadata(raw) {
   }
 }
 
+function parseMentionsField(raw) {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
 function toMessage(row) {
   return {
     id: row.id,
+    seq: row.id,
     channel: row.channel,
     sender: row.sender,
     body: row.body,
     metadata: parseMetadata(row.metadata_json),
+    mentions: parseMentionsField(row.mentions),
     created_at: row.created_at,
     updated_at: row.updated_at || null
   };
@@ -61,6 +78,27 @@ function initializeDb() {
     }
   }
 
+  try {
+    db.exec(`ALTER TABLE messages ADD COLUMN mentions TEXT`);
+  } catch (err) {
+    if (!err.message.includes('duplicate column')) {
+      throw err;
+    }
+  }
+
+  const rowsToBackfill = db
+    .prepare('SELECT id, body FROM messages WHERE mentions IS NULL')
+    .all();
+  if (rowsToBackfill.length > 0) {
+    const updateBackfill = db.prepare('UPDATE messages SET mentions = ? WHERE id = ?');
+    const runBackfill = db.transaction((rows) => {
+      for (const row of rows) {
+        updateBackfill.run(JSON.stringify(parseMentions(row.body)), row.id);
+      }
+    });
+    runBackfill(rowsToBackfill);
+  }
+
   return db;
 }
 
@@ -70,23 +108,27 @@ function getDb() {
 
 function insertMessage({ channel, sender, body, metadata = null }) {
   const database = getDb();
+  const mentions = parseMentions(body);
   const stmt = database.prepare(`
-    INSERT INTO messages (channel, sender, body, metadata_json)
-    VALUES (@channel, @sender, @body, @metadata_json)
+    INSERT INTO messages (channel, sender, body, metadata_json, mentions)
+    VALUES (@channel, @sender, @body, @metadata_json, @mentions)
   `);
 
   const result = stmt.run({
     channel,
     sender,
     body,
-    metadata_json: metadata ? JSON.stringify(metadata) : null
+    metadata_json: metadata ? JSON.stringify(metadata) : null,
+    mentions: JSON.stringify(mentions)
   });
 
   const row = database
-    .prepare('SELECT id, channel, sender, body, metadata_json, created_at FROM messages WHERE id = ?')
+    .prepare('SELECT id, channel, sender, body, metadata_json, mentions, created_at, updated_at FROM messages WHERE id = ?')
     .get(result.lastInsertRowid);
 
-  return toMessage(row);
+  const message = toMessage(row);
+  messageBus.emit('message', message);
+  return message;
 }
 
 function listMessages({ channel, limit = 50, afterId = null, beforeId = null }) {
@@ -113,7 +155,7 @@ function listMessages({ channel, limit = 50, afterId = null, beforeId = null }) 
 
   const rows = database
     .prepare(`
-      SELECT id, channel, sender, body, metadata_json, created_at
+      SELECT id, channel, sender, body, metadata_json, mentions, created_at, updated_at
       FROM messages
       ${whereSql}
       ORDER BY id DESC
@@ -122,6 +164,26 @@ function listMessages({ channel, limit = 50, afterId = null, beforeId = null }) 
     .all(params);
 
   return rows.reverse().map(toMessage);
+}
+
+function listMessagesAfter({ afterId, channel, excludeSender, mentions }) {
+  const database = getDb();
+  const where = ['id > @afterId'];
+  const params = { afterId };
+  if (channel) { where.push('channel = @channel'); params.channel = channel; }
+  if (excludeSender) { where.push('sender != @excludeSender'); params.excludeSender = excludeSender; }
+  const rows = database
+    .prepare(`SELECT id, channel, sender, body, metadata_json, mentions, created_at, updated_at
+              FROM messages
+              WHERE ${where.join(' AND ')}
+              ORDER BY id ASC`)
+    .all(params);
+  const filtered = rows.map(toMessage).filter((m) => {
+    if (!mentions || mentions.length === 0) return true;
+    const msgMentions = m.mentions || [];
+    return mentions.some((mention) => msgMentions.includes(mention));
+  });
+  return filtered;
 }
 
 function listChannels(limit = 100) {
@@ -144,7 +206,7 @@ function listChannels(limit = 100) {
 function getMessage(id) {
   const database = getDb();
   const row = database
-    .prepare('SELECT id, channel, sender, body, metadata_json, created_at, updated_at FROM messages WHERE id = ?')
+    .prepare('SELECT id, channel, sender, body, metadata_json, mentions, created_at, updated_at FROM messages WHERE id = ?')
     .get(id);
   return row ? toMessage(row) : null;
 }
@@ -157,6 +219,8 @@ function updateMessage(id, { body, metadata } = {}) {
   if (body !== undefined) {
     sets.push('body = @body');
     params.body = body;
+    sets.push('mentions = @mentions');
+    params.mentions = JSON.stringify(parseMentions(body));
   }
 
   if (metadata !== undefined) {
@@ -198,9 +262,11 @@ module.exports = {
   initializeDb,
   insertMessage,
   listMessages,
+  listMessagesAfter,
   listChannels,
   getMessage,
   updateMessage,
   deleteMessage,
-  closeDb
+  closeDb,
+  messageBus
 };

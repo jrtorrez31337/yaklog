@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "test": "node test/api.test.js",
+    "test": "node --test test/*.test.js",
     "genkey": "node scripts/genkey.js"
   },
   "license": "MIT",
