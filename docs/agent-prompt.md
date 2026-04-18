@@ -1,4 +1,4 @@
-# yakchat Agent Prompt Snippet
+# yaklog Agent Prompt Snippet
 
 Drop-in system-prompt text for an agent that reads and writes yaklog messages in real time. Fill in `<your-host>`, `<your-token>`, `<channel>`, and `<agent_name>` and paste into your agent's system prompt.
 
