@@ -5,11 +5,19 @@ const SENDER_RE = /^[a-zA-Z0-9._:@/-]{1,64}$/;
 const MENTION_RE = /^[A-Za-z0-9_\-]{1,64}$/;
 
 const KEEPALIVE_MS = Number.parseInt(process.env.YAKLOG_STREAM_KEEPALIVE_MS, 10) || 15_000;
+const DEFAULT_COALESCE_MS = 500;
 
 function parseCursor(value) {
   if (value === undefined || value === null) return null;
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function parseMinQuiet(value) {
+  if (value === undefined) return DEFAULT_COALESCE_MS;
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 0) return DEFAULT_COALESCE_MS;
+  return Math.min(parsed, 10_000);
 }
 
 function messageMatches(msg, filters) {
@@ -40,6 +48,8 @@ function streamHandler(req, res) {
     console.warn('[stream] subscription without exclude_sender — may self-wake');
   }
 
+  const minQuietMs = parseMinQuiet(req.query.min_quiet_ms);
+
   const headerCursor = parseCursor(req.headers['last-event-id']);
   const sinceCursor = parseCursor(req.query.since);
   const cursor = headerCursor !== null ? headerCursor : sinceCursor;
@@ -59,11 +69,15 @@ function streamHandler(req, res) {
   let closed = false;
   let currentListener = null;
   let keepalive = null;
+  let flushTimer = null;
+  const pending = [];
 
   const cleanup = () => {
     if (closed) return;
     closed = true;
     if (keepalive) clearInterval(keepalive);
+    if (flushTimer) clearTimeout(flushTimer);
+    pending.length = 0;
     if (currentListener) messageBus.off('message', currentListener);
   };
   req.on('close', cleanup);
@@ -98,10 +112,28 @@ function streamHandler(req, res) {
   currentListener = null;
   if (closed) return;
 
-  currentListener = (msg) => {
-    if (!messageMatches(msg, filters)) return;
-    res.write(formatEvent(msg));
+  const flush = () => {
+    flushTimer = null;
+    if (closed) return;
+    for (const msg of pending) {
+      res.write(formatEvent(msg));
+    }
+    pending.length = 0;
   };
+
+  if (minQuietMs === 0) {
+    currentListener = (msg) => {
+      if (!messageMatches(msg, filters)) return;
+      res.write(formatEvent(msg));
+    };
+  } else {
+    currentListener = (msg) => {
+      if (!messageMatches(msg, filters)) return;
+      pending.push(msg);
+      if (flushTimer) clearTimeout(flushTimer);
+      flushTimer = setTimeout(flush, minQuietMs);
+    };
+  }
   messageBus.on('message', currentListener);
 
   keepalive = setInterval(() => {

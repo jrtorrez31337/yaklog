@@ -129,6 +129,39 @@ test('Last-Event-ID replays missed messages in order', async () => {
   server.close();
 });
 
+test('min_quiet_ms=500 coalesces burst into one flush window', async () => {
+  const server = await startServer();
+  const port = server.address().port;
+  const { events, close } = await openStream(port, '?channel=burst&min_quiet_ms=500');
+
+  const t0 = Date.now();
+  insertMessage({ channel: 'burst', sender: 'a', body: 'a1' });
+  insertMessage({ channel: 'burst', sender: 'a', body: 'a2' });
+  insertMessage({ channel: 'burst', sender: 'a', body: 'a3' });
+
+  await waitFor(() => events.filter((e) => e.startsWith('id:')).length >= 3, 3000);
+  const elapsed = Date.now() - t0;
+  assert.ok(elapsed >= 400, `expected >=400ms delay, got ${elapsed}ms`);
+
+  close();
+  server.close();
+});
+
+test('min_quiet_ms=0 flushes immediately', async () => {
+  const server = await startServer();
+  const port = server.address().port;
+  const { events, close } = await openStream(port, '?channel=immed&min_quiet_ms=0');
+
+  const t0 = Date.now();
+  insertMessage({ channel: 'immed', sender: 'a', body: 'fast' });
+  await waitFor(() => events.some((e) => e.includes('fast')));
+  const elapsed = Date.now() - t0;
+  assert.ok(elapsed < 200, `expected <200ms, got ${elapsed}ms`);
+
+  close();
+  server.close();
+});
+
 test.after(() => {
   closeDb();
   fs.rmSync(tempDir, { recursive: true, force: true });
