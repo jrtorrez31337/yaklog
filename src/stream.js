@@ -20,10 +20,23 @@ function parseMinQuiet(value) {
   return Math.min(parsed, 10_000);
 }
 
+function parseMentions(value) {
+  if (!value) return null;
+  const tokens = String(value).split(',').map((t) => t.trim()).filter(Boolean);
+  if (tokens.length === 0) return null;
+  for (const t of tokens) {
+    if (!MENTION_RE.test(t)) return { error: t };
+  }
+  return { tokens };
+}
+
 function messageMatches(msg, filters) {
   if (filters.channel && msg.channel !== filters.channel) return false;
   if (filters.excludeSender && msg.sender === filters.excludeSender) return false;
-  if (filters.mention && !(msg.mentions || []).includes(filters.mention)) return false;
+  if (filters.mentions) {
+    const msgMentions = msg.mentions || [];
+    if (!filters.mentions.some((m) => msgMentions.includes(m))) return false;
+  }
   return true;
 }
 
@@ -40,10 +53,11 @@ function streamHandler(req, res) {
   if (excludeSender && !SENDER_RE.test(excludeSender)) {
     return res.status(400).json({ error: 'ValidationError', message: 'invalid exclude_sender' });
   }
-  const mention = req.query.mention ? String(req.query.mention) : null;
-  if (mention && !MENTION_RE.test(mention)) {
-    return res.status(400).json({ error: 'ValidationError', message: 'invalid mention' });
+  const mentionResult = parseMentions(req.query.mention);
+  if (mentionResult && mentionResult.error) {
+    return res.status(400).json({ error: 'ValidationError', message: `invalid mention token: ${mentionResult.error}` });
   }
+  const mentions = mentionResult ? mentionResult.tokens : null;
   if (!excludeSender) {
     console.warn('[stream] subscription without exclude_sender — may self-wake');
   }
@@ -54,7 +68,7 @@ function streamHandler(req, res) {
   const sinceCursor = parseCursor(req.query.since);
   const cursor = headerCursor !== null ? headerCursor : sinceCursor;
 
-  const filters = { channel, excludeSender, mention };
+  const filters = { channel, excludeSender, mentions };
 
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
@@ -89,7 +103,7 @@ function streamHandler(req, res) {
 
   let highestReplayed = cursor !== null ? cursor : 0;
   if (cursor !== null && !closed) {
-    const rows = listMessagesAfter({ afterId: cursor, channel, excludeSender, mention });
+    const rows = listMessagesAfter({ afterId: cursor, channel, excludeSender, mentions });
     for (const msg of rows) {
       if (closed) break;
       res.write(formatEvent(msg));
