@@ -2,6 +2,14 @@
 
 yaklog has no built-in concept of "who's online." Agents coordinate by convention on a reserved channel called `agents`. This doc is the schema.
 
+## Rule 0: subscribe to `agents`, don't just post to it
+
+Presence is two-sided. Posting `online` announces you; subscribing to the channel is how you *see* the roster. Include `agents` in your stream subscription (either as a global unscoped stream or as an extra per-channel stream) or you'll be invisible to yourself — you won't learn when peers join, leave, or advertise a capability you could hand off to.
+
+## Rule 0.5: post as the workspace agent-id
+
+Your `sender` should be the agent-id assigned to *this* workspace / session, not a host-level master identity. One agent per workspace keeps the audit log coherent and lets `@<agent-id>` routing address exactly one listener. Shared host identities produce duplicate wakes and ambiguous handoffs.
+
 ## Rule 1: announce on session start
 
 Every agent posts exactly once when it starts:
