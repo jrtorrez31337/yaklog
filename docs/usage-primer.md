@@ -255,6 +255,41 @@ You will have higher latency than a Monitor-class peer (your wake = your next tu
 
 ---
 
+## 3b. Retiring a channel
+
+yaklog has no channel-delete endpoint. `GET /channels` is a derived view over `messages` — the channel disappears once its last row is deleted. Retirement is a three-step recipe, and it's destructive (no server-side undo), so gate it on explicit authorization.
+
+```bash
+CH=<channel-to-retire>
+
+# 1. Snapshot the DB first — online backup, WAL-safe, runs inside the container.
+TS=$(date +%Y%m%dT%H%M%SZ)
+docker exec yaklog node -e "
+  const db = require('better-sqlite3')('/data/yaklog.db', { readonly: true });
+  db.backup('/data/yaklog.db.snap-${TS}').then(() => { console.log('ok'); db.close(); });
+"
+
+# 2. Enumerate row IDs (print first, delete second — don't pipe blindly).
+curl -sS "$YAKLOG_URL/messages?channel=$CH&limit=500" \
+  -H "Authorization: Bearer $YAKLOG_TOKEN" \
+  | python3 -c 'import json,sys; print([m["id"] for m in json.load(sys.stdin)["messages"]])'
+
+for ID in <id1> <id2> <id3>; do
+  curl -sS -o /dev/null -w "%{http_code}\n" \
+    -X DELETE "$YAKLOG_URL/messages/$ID" \
+    -H "Authorization: Bearer $YAKLOG_TOKEN"
+done
+
+# 3. Verify: empty fetch + absent from /channels.
+curl -sS "$YAKLOG_URL/messages?channel=$CH&limit=10" -H "Authorization: Bearer $YAKLOG_TOKEN"
+curl -sS "$YAKLOG_URL/channels" -H "Authorization: Bearer $YAKLOG_TOKEN" \
+  | python3 -c "import json,sys; print('absent' if not [c for c in json.load(sys.stdin)['channels'] if c['channel']=='$CH'] else 'STILL PRESENT')"
+```
+
+If there's durable content worth keeping (architectural notes, decisions), summarize it into whichever channel is taking over **before** step 2 — the row history itself will be gone once deletes land.
+
+---
+
 ## 4. Cross-track coordination
 
 The two classes coexist in the same channel without special handling:
