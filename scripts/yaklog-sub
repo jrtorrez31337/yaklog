@@ -1,0 +1,272 @@
+#!/usr/bin/env python3
+"""yaklog-sub: per-agent SSE broker daemon.
+
+One daemon per agent-id. Holds a long-lived /stream connection to yaklog
+and writes each received event as one NDJSON line to events.ndjson. Claude's
+Monitor (or any tail -F consumer) reads from that file. The daemon's
+identity is the agent-id, not the UID — multiple Claude sessions for the
+same agent share one daemon and one event log.
+
+State directory: $XDG_RUNTIME_DIR/yaklog/<agent-id>/  (or $HOME/.run/yaklog/<agent-id>/)
+  lock           — exclusive flock; second daemon for same agent-id refuses to start
+  cursor         — last seq durably appended to events.ndjson (atomic write)
+  events.ndjson  — append-only, one server message per line
+  daemon.log     — daemon's own stderr
+
+Stdlib only. Python 3.8+.
+"""
+
+from __future__ import annotations
+
+import argparse
+import errno
+import fcntl
+import json
+import os
+import signal
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from pathlib import Path
+from typing import Optional
+
+DEFAULT_RECONNECT_MIN_S = 1.0
+DEFAULT_RECONNECT_MAX_S = 30.0
+READ_TIMEOUT_S = 60.0
+
+
+class GracefulExit(Exception):
+    pass
+
+
+def state_dir(agent_id: str) -> Path:
+    base = os.environ.get("XDG_RUNTIME_DIR")
+    if not base:
+        base = str(Path.home() / ".run")
+    return Path(base) / "yaklog" / agent_id
+
+
+def atomic_write_text(path: Path, text: str) -> None:
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with open(tmp, "w") as f:
+        f.write(text)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+
+
+def read_cursor(path: Path) -> int:
+    try:
+        return int(path.read_text().strip() or "0")
+    except FileNotFoundError:
+        return 0
+    except ValueError:
+        return 0
+
+
+def acquire_lock(lock_path: Path):
+    fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError as e:
+        os.close(fd)
+        if e.errno in (errno.EWOULDBLOCK, errno.EACCES):
+            raise SystemExit(
+                f"yaklog-sub: another daemon already holds {lock_path}; refusing to start"
+            )
+        raise
+    os.write(fd, f"{os.getpid()}\n".encode())
+    os.fsync(fd)
+    return fd  # caller keeps fd alive; flock released on close/exit
+
+
+class EventLog:
+    """Append-only NDJSON sink with cursor advance after fsync."""
+
+    def __init__(self, events_path: Path, cursor_path: Path):
+        self.events_path = events_path
+        self.cursor_path = cursor_path
+        self._fh = open(self.events_path, "a", buffering=1)  # line-buffered
+
+    def append(self, msg: dict) -> None:
+        seq = msg.get("seq") or msg.get("id")
+        if not isinstance(seq, int):
+            raise ValueError(f"event missing integer id/seq: {msg!r}")
+        line = json.dumps(msg, separators=(",", ":"), sort_keys=False) + "\n"
+        self._fh.write(line)
+        self._fh.flush()
+        os.fsync(self._fh.fileno())
+        atomic_write_text(self.cursor_path, str(seq))
+
+    def close(self) -> None:
+        try:
+            self._fh.close()
+        except Exception:
+            pass
+
+
+def build_stream_url(base: str, agent_id: str, aliases: list[str], since: int) -> str:
+    mention_tokens = [agent_id] + list(aliases) + ["everyone"]
+    seen: set[str] = set()
+    deduped = []
+    for t in mention_tokens:
+        if t and t not in seen:
+            seen.add(t)
+            deduped.append(t)
+    params = {
+        "exclude_sender": agent_id,
+        "mention": ",".join(deduped),
+        "since": str(since),
+    }
+    return f"{base.rstrip('/')}/stream?{urllib.parse.urlencode(params)}"
+
+
+def open_stream(url: str, token: str):
+    req = urllib.request.Request(
+        url,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "text/event-stream",
+            "Cache-Control": "no-cache",
+        },
+    )
+    return urllib.request.urlopen(req, timeout=READ_TIMEOUT_S)
+
+
+def parse_sse(stream, on_event, should_stop):
+    """Yield SSE events from a urlopen()'d response. on_event(msg_dict) is
+    called for each `event: message` frame. Returns when stream ends or
+    should_stop() returns True.
+    """
+    event_type: Optional[str] = None
+    data_lines: list[str] = []
+    last_id: Optional[str] = None
+
+    while True:
+        if should_stop():
+            return
+        raw = stream.readline()
+        if not raw:
+            return  # server closed
+        line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
+        if line == "":
+            if data_lines and event_type == "message":
+                payload = "\n".join(data_lines)
+                try:
+                    msg = json.loads(payload)
+                except json.JSONDecodeError as e:
+                    sys.stderr.write(f"sse parse error: {e}: {payload!r}\n")
+                else:
+                    on_event(msg)
+            event_type = None
+            data_lines = []
+            continue
+        if line.startswith(":"):
+            continue  # comment / keepalive
+        if ":" in line:
+            field, _, value = line.partition(":")
+            if value.startswith(" "):
+                value = value[1:]
+        else:
+            field, value = line, ""
+        if field == "event":
+            event_type = value
+        elif field == "data":
+            data_lines.append(value)
+        elif field == "id":
+            last_id = value
+        # other fields ignored
+
+
+def run(args) -> int:
+    aliases = [a.strip() for a in (args.aliases or "").split(",") if a.strip()]
+    sd = state_dir(args.agent_id)
+    sd.mkdir(parents=True, exist_ok=True)
+    lock_path = sd / "lock"
+    cursor_path = sd / "cursor"
+    events_path = sd / "events.ndjson"
+
+    lock_fd = acquire_lock(lock_path)  # held until process exit
+
+    token = Path(args.token_file).read_text().strip()
+    log = EventLog(events_path, cursor_path)
+
+    stop = {"flag": False}
+
+    def handle_signal(signum, _frame):
+        stop["flag"] = True
+
+    signal.signal(signal.SIGTERM, handle_signal)
+    signal.signal(signal.SIGINT, handle_signal)
+
+    backoff = DEFAULT_RECONNECT_MIN_S
+    sys.stderr.write(f"yaklog-sub: agent={args.agent_id} state={sd}\n")
+    sys.stderr.flush()
+
+    try:
+        while not stop["flag"]:
+            since = read_cursor(cursor_path)
+            url = build_stream_url(args.url, args.agent_id, aliases, since)
+            try:
+                resp = open_stream(url, token)
+            except (urllib.error.URLError, urllib.error.HTTPError, OSError) as e:
+                sys.stderr.write(f"yaklog-sub: connect failed: {e}; sleeping {backoff:.1f}s\n")
+                sys.stderr.flush()
+                _sleep_interruptible(backoff, stop)
+                backoff = min(backoff * 2, DEFAULT_RECONNECT_MAX_S)
+                continue
+            backoff = DEFAULT_RECONNECT_MIN_S
+
+            def on_event(msg):
+                try:
+                    log.append(msg)
+                except Exception as e:
+                    # Append failure must NOT advance cursor — re-raise to
+                    # tear down the connection and reconnect from prior cursor.
+                    sys.stderr.write(f"yaklog-sub: append failed: {e}; reconnecting\n")
+                    sys.stderr.flush()
+                    raise
+
+            try:
+                parse_sse(resp, on_event, lambda: stop["flag"])
+            except Exception as e:
+                sys.stderr.write(f"yaklog-sub: stream error: {e}\n")
+                sys.stderr.flush()
+            finally:
+                try:
+                    resp.close()
+                except Exception:
+                    pass
+
+            if not stop["flag"]:
+                _sleep_interruptible(DEFAULT_RECONNECT_MIN_S, stop)
+    finally:
+        log.close()
+        try:
+            os.close(lock_fd)
+        except Exception:
+            pass
+
+    return 0
+
+
+def _sleep_interruptible(seconds: float, stop: dict) -> None:
+    end = time.monotonic() + seconds
+    while not stop["flag"] and time.monotonic() < end:
+        time.sleep(min(0.2, end - time.monotonic()))
+
+
+def main(argv=None) -> int:
+    p = argparse.ArgumentParser(description="yaklog SSE broker daemon")
+    p.add_argument("--agent-id", required=True, help="agent identity (sender / exclude_sender)")
+    p.add_argument("--aliases", default="", help="comma-separated aliases for mention filter")
+    p.add_argument("--url", required=True, help="yaklog API base, e.g. http://host:3100/api/v1")
+    p.add_argument("--token-file", required=True, help="path to file containing the API token")
+    args = p.parse_args(argv)
+    return run(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
