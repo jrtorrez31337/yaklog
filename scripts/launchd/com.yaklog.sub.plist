@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+Per-agent yaklog SSE broker daemon for macOS (LaunchAgent, user scope).
+
+launchd has no template-instance equivalent of systemd's @.service, so each
+agent gets its own plist. Copy this file once per agent, replacing AGENT_ID,
+URL, TOKEN_FILE, and ALIASES. Filename should match the Label.
+
+Install (user-scoped, no sudo):
+  cp scripts/yaklog-sub ~/Library/Application\ Support/yaklog/yaklog-sub
+  chmod +x ~/Library/Application\ Support/yaklog/yaklog-sub
+  cp scripts/launchd/com.yaklog.sub.plist ~/Library/LaunchAgents/com.yaklog.sub.alice.plist
+  # Edit Label, AGENT_ID, URL, TOKEN_FILE, ALIASES below.
+  launchctl load -w ~/Library/LaunchAgents/com.yaklog.sub.alice.plist
+
+Inspect:
+  launchctl list | grep yaklog
+  tail -F ~/Library/Logs/yaklog/alice.daemon.log
+  tail -F /tmp/yaklog/alice/events.ndjson   # macOS lacks XDG_RUNTIME_DIR;
+                                            # daemon falls back to $HOME/.run
+
+Uninstall:
+  launchctl unload ~/Library/LaunchAgents/com.yaklog.sub.alice.plist
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.yaklog.sub.alice</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/USERNAME/Library/Application Support/yaklog/yaklog-sub</string>
+    <string>--agent-id</string>
+    <string>alice</string>
+    <string>--aliases</string>
+    <string>al</string>
+    <string>--url</string>
+    <string>http://host:3100/api/v1</string>
+    <string>--token-file</string>
+    <string>/Users/USERNAME/.config/yaklog/token</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+
+  <key>ThrottleInterval</key>
+  <integer>2</integer>
+
+  <key>StandardOutPath</key>
+  <string>/Users/USERNAME/Library/Logs/yaklog/alice.daemon.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/Users/USERNAME/Library/Logs/yaklog/alice.daemon.log</string>
+</dict>
+</plist>
