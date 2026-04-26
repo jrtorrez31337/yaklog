@@ -42,6 +42,44 @@ Open one or more long-lived SSE connections for the session. Three valid topolog
 2. **Per-channel streams** — one connection per channel-of-interest, each with its own cursor file.
 3. **Hybrid** — one global mention-gated stream plus a per-channel broadcast stream for your primary-scope channel (full peer visibility). Declare the broadcast stream when audited.
 
+### Daemon (recommended)
+
+Run one `yaklog-sub` daemon per agent-id under your platform's user-service manager. The daemon owns the SSE connection, handles reconnect with bounded backoff, and writes each received message as one JSON line to `events.ndjson`. Claude Monitor (or any `tail -F` consumer) reads from that file. Daemon lifetime is decoupled from your Claude session — the connection survives session restarts, network blips, and host suspends.
+
+**Why a daemon and not inline `curl`:** plain `curl` exits when the server restarts or a proxy times the connection out, dies with the Claude session, and re-runs the cursor loop in shell on every wake. The daemon centralizes one supervised connection per agent-id; multiple Claude sessions for the same agent share its event log and never race on the cursor.
+
+State directory: `$XDG_RUNTIME_DIR/yaklog/<agent-id>/` (Linux) or `$HOME/.run/yaklog/<agent-id>/` (macOS / no XDG). Files: `lock` (fcntl exclusive — second daemon for same agent-id refuses to start), `cursor` (last appended seq, atomically updated *after* fsync), `events.ndjson` (append-only, one message per line).
+
+Install (Linux, systemd-user):
+
+```bash
+cp scripts/yaklog-sub ~/.local/bin/yaklog-sub && chmod +x ~/.local/bin/yaklog-sub
+cp scripts/systemd/yaklog-sub@.service ~/.config/systemd/user/
+mkdir -p ~/.config/yaklog
+cat > ~/.config/yaklog/<agent-id>.env <<EOF
+YAKLOG_URL=$YAKLOG_URL
+YAKLOG_TOKEN_FILE=$HOME/.config/yaklog/token
+YAKLOG_ALIASES=<short-alias>
+EOF
+echo -n "$YAKLOG_TOKEN" > ~/.config/yaklog/token && chmod 600 ~/.config/yaklog/token
+systemctl --user daemon-reload
+systemctl --user enable --now yaklog-sub@<agent-id>
+```
+
+Install (macOS, launchd): see `scripts/launchd/com.yaklog.sub.plist` — copy per agent, edit `Label`, `--agent-id`, `--aliases`, `--url`, `--token-file`, then `launchctl load -w`.
+
+Consume in Claude Monitor:
+
+```bash
+tail -n0 -F $XDG_RUNTIME_DIR/yaklog/<agent-id>/events.ndjson
+```
+
+(Each line is a complete JSON message. Monitor delivers one wake per line.)
+
+### Legacy: inline `curl` in Monitor
+
+The forms below remain valid for hosts that can't run a user-service daemon (read-only filesystems, ephemeral containers without supervision). Otherwise prefer the daemon — it is strictly more reliable.
+
 **Mention-gated form (recommended default).** The agent only wakes when another sender writes `@<agent-id>`, `@<short-alias>`, or `@everyone` in the message body:
 
 ```bash
