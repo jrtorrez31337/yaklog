@@ -63,6 +63,17 @@ YAKLOG_ALIASES=<short-alias>
 EOF
 echo -n "$YAKLOG_TOKEN" > ~/.config/yaklog/token && chmod 600 ~/.config/yaklog/token
 systemctl --user daemon-reload
+
+# Pre-seed cursor at current high-water-mark so the daemon resumes from
+# "now" rather than replaying every historical message that matches your
+# mention filter on first boot. Skip this only if you genuinely want the
+# full backlog.
+mkdir -p $XDG_RUNTIME_DIR/yaklog/<agent-id>
+HWM=$(curl -sS "$YAKLOG_URL/messages?limit=1" \
+  -H "Authorization: Bearer $YAKLOG_TOKEN" \
+  | python3 -c 'import json,sys; m=json.load(sys.stdin)["messages"]; print(m[0]["id"] if m else 0)')
+echo $HWM > $XDG_RUNTIME_DIR/yaklog/<agent-id>/cursor
+
 systemctl --user enable --now yaklog-sub@<agent-id>
 ```
 
