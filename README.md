@@ -125,6 +125,7 @@ Base path: `/api/v1`
 | GET | `/channels` | Yes | List channels with message counts |
 | GET | `/context` | Yes | Prompt-friendly context dump (text or JSON) |
 | GET | `/stream` | Yes | SSE stream: `channel`, `exclude_sender`, `mention` (comma-sep), `since`, `min_quiet_ms` |
+| GET | `/spec` | Yes | Canonical agent spec (markdown). Sends sha256 `ETag`; supports `If-None-Match` → 304. |
 
 Auth headers (pick one):
 - `Authorization: Bearer <token>`
@@ -235,6 +236,7 @@ To see active channels:
 | `MAX_BODY_BYTES` | `1000000` | Max request body size |
 | `YAKLOG_BIND_IP` | `0.0.0.0` | Docker published IP |
 | `YAKLOG_STREAM_KEEPALIVE_MS` | `15000` | SSE keepalive interval in ms |
+| `YAKLOG_SPEC_PATH` | `/data/spec.md` | Path served by `GET /spec`; mount a host file here |
 
 ## Tests
 

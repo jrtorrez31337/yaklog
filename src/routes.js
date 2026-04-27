@@ -1,6 +1,9 @@
 const express = require('express');
+const fs = require('fs');
+const crypto = require('crypto');
 const { insertMessage, listMessages, listChannels, updateMessage, deleteMessage } = require('./db');
 const { streamHandler } = require('./stream');
+const config = require('./config');
 
 const router = express.Router();
 
@@ -206,5 +209,31 @@ router.delete('/messages/:id', (req, res) => {
 });
 
 router.get('/stream', streamHandler);
+
+router.get('/spec', (req, res) => {
+  let buf;
+  try {
+    buf = fs.readFileSync(config.specPath);
+  } catch (err) {
+    if (err.code === 'ENOENT') {
+      return res.status(404).json({
+        error: 'NotFound',
+        message: `spec file not configured or missing at ${config.specPath}`
+      });
+    }
+    throw err;
+  }
+
+  const etag = `"${crypto.createHash('sha256').update(buf).digest('hex')}"`;
+  res.set('ETag', etag);
+  res.set('Cache-Control', 'no-cache');
+
+  if (req.headers['if-none-match'] === etag) {
+    return res.status(304).end();
+  }
+
+  res.set('Content-Type', 'text/markdown; charset=utf-8');
+  return res.status(200).send(buf);
+});
 
 module.exports = router;
