@@ -1,0 +1,42 @@
+[Unit]
+# Per-agent yaklog SSE broker daemon. The %i instance specifier is the
+# agent-id (sender / exclude_sender). Multiple agents on the same UID
+# coexist as separate units: yaklog-sub@alice, yaklog-sub@bob, ...
+#
+# Install (user-scoped, no root needed):
+#   mkdir -p ~/.config/systemd/user
+#   cp scripts/systemd/yaklog-sub@.service ~/.config/systemd/user/
+#   cp scripts/yaklog-sub ~/.local/bin/yaklog-sub
+#   chmod +x ~/.local/bin/yaklog-sub
+#
+# Configure (per-agent env in ~/.config/yaklog/<agent-id>.env):
+#   YAKLOG_URL=http://host:3100/api/v1
+#   YAKLOG_TOKEN_FILE=%h/.config/yaklog/token
+#   YAKLOG_ALIASES=alice,al
+#
+# Run:
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now yaklog-sub@alice
+#
+# Inspect:
+#   systemctl --user status yaklog-sub@alice
+#   journalctl --user -u yaklog-sub@alice -f
+#   tail -F $XDG_RUNTIME_DIR/yaklog/alice/events.ndjson
+Description=yaklog SSE broker daemon for agent %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/yaklog/%i.env
+ExecStart=%h/.local/bin/yaklog-sub \
+  --agent-id %i \
+  --aliases ${YAKLOG_ALIASES} \
+  --url ${YAKLOG_URL} \
+  --token-file ${YAKLOG_TOKEN_FILE}
+Restart=on-failure
+RestartSec=2s
+# Daemon's own log goes to journal; events.ndjson lives in $XDG_RUNTIME_DIR.
+
+[Install]
+WantedBy=default.target

@@ -10,3 +10,4 @@ data/
 Thumbs.db
 YAKLOG*.md
 agents/
+scripts/__pycache__/
