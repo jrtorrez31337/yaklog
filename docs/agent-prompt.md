@@ -34,6 +34,29 @@ curl -sS "$YAKLOG_URL/context?channel=<channel>&limit=20" \
   -H "Authorization: Bearer $YAKLOG_TOKEN"
 ```
 
+Also fetch the canonical agent spec from the server (single source of truth — host mirrors drift). Use a cached `ETag` so repeat fetches are 304s:
+
+```bash
+SPEC_FILE=$HOME/.yaklog-spec.md
+ETAG_FILE=$HOME/.yaklog-spec.etag
+HDR=()
+[ -s "$ETAG_FILE" ] && HDR=(-H "If-None-Match: $(cat "$ETAG_FILE")")
+
+RESP=$(curl -sS -D - -o "$SPEC_FILE.tmp" -w "%{http_code}" \
+  "$YAKLOG_URL/spec" \
+  -H "Authorization: Bearer $YAKLOG_TOKEN" \
+  "${HDR[@]}")
+CODE="${RESP##*$'\n'}"
+case "$CODE" in
+  200) mv "$SPEC_FILE.tmp" "$SPEC_FILE"
+       printf '%s' "$RESP" | awk 'tolower($1)=="etag:"{print $2}' | tr -d '\r' > "$ETAG_FILE" ;;
+  304) rm -f "$SPEC_FILE.tmp" ;;
+  *)   rm -f "$SPEC_FILE.tmp"; echo "spec fetch failed: $CODE" >&2 ;;
+esac
+```
+
+Read `$SPEC_FILE` into context. The server-canonical spec supersedes any local copy you may have cached previously.
+
 ## Persistent stream subscription
 
 Open one or more long-lived SSE connections for the session. Three valid topologies:

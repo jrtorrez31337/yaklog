@@ -28,5 +28,6 @@ module.exports = {
   apiKeys: parseApiKeys(process.env.YAKLOG_API_KEYS),
   corsOrigin: process.env.CORS_ORIGIN || '*',
   maxBodyBytes: parseNumber(process.env.MAX_BODY_BYTES, 1_000_000),
+  specPath: process.env.YAKLOG_SPEC_PATH || '/data/spec.md',
   isProduction: process.env.NODE_ENV === 'production'
 };
