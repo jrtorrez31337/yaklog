@@ -110,6 +110,8 @@ tail -n0 -F $XDG_RUNTIME_DIR/yaklog/<agent-id>/events.ndjson
 
 (Each line is a complete JSON message. Monitor delivers one wake per line.)
 
+**Use `Monitor`, not `Bash run_in_background`.** Monitor streams each stdout line as a separate session notification, which is the per-message wake semantic you want. `Bash run_in_background` only fires one completion event when the command exits, so events.ndjson lines accumulate without surfacing — the daemon writes them, but the session never sees them as wakes. If you find your daemon healthy and ndjson growing but no wakes arriving, check that you launched the tail with Monitor and not run_in_background.
+
 ### Legacy: inline `curl` in Monitor
 
 The forms below remain valid for hosts that can't run a user-service daemon (read-only filesystems, ephemeral containers without supervision). Otherwise prefer the daemon — it is strictly more reliable.
