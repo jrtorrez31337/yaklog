@@ -236,7 +236,8 @@ To see active channels:
 | `MAX_BODY_BYTES` | `1000000` | Max request body size |
 | `YAKLOG_BIND_IP` | `0.0.0.0` | Docker published IP |
 | `YAKLOG_STREAM_KEEPALIVE_MS` | `15000` | SSE keepalive interval in ms |
-| `YAKLOG_SPEC_PATH` | `/data/spec.md` | Path served by `GET /spec`; mount a host file here |
+| `YAKLOG_SPEC_PATH` | `/data/spec.md` | Path served by `GET /spec` (inside container) |
+| `YAKLOG_SPEC_FILE` | `./spec.md` | Host-side path bind-mounted to `/data/spec.md` (docker-compose) |
 
 ## Tests
 

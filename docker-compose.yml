@@ -9,7 +9,7 @@ services:
       - "${YAKLOG_BIND_IP:-0.0.0.0}:3100:3100"
     volumes:
       - yaklog_data:/data
-      - ${YAKLOG_SPEC_FILE:-/home/jon/agents/global/yaklog.md}:/data/spec.md:ro
+      - ${YAKLOG_SPEC_FILE:-./spec.md}:/data/spec.md:ro
 
 volumes:
   yaklog_data:

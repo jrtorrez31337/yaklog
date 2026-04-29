@@ -50,7 +50,7 @@ Binds `0.0.0.0:3100` by default. Set `YAKLOG_BIND_IP=127.0.0.1` in `.env` for ho
 ### Verify it's up
 
 ```bash
-curl -sS http://localhost:3100/health
+curl -sS http://localhost:3100/api/v1/health
 # {"status":"ok","service":"yaklog"}
 
 export YAKLOG_URL=http://localhost:3100/api/v1
