@@ -11,3 +11,12 @@ Thumbs.db
 YAKLOG*.md
 agents/
 scripts/__pycache__/
+
+# Internal/agent-lane docs do NOT live in this repo.
+# yaklog-dev's ADR input artifacts, internal design docs, and lane-specific
+# specs belong in ~/agents/yaklog-dev/specs/ (pushed to bare-git on devel,
+# never to the public github remote). Anything in docs/ here MUST be
+# operator/user-facing public documentation.
+docs/adr/
+docs/plans/2026-04-27-direct-messages-design.md
+docs/plans/*-design.md
