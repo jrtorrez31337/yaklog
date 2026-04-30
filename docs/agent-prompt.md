@@ -67,13 +67,13 @@ Open one or more long-lived SSE connections for the session. Three valid topolog
 
 ### Daemon (recommended)
 
-Run one `yaklog-sub` daemon per agent-id under your platform's user-service manager. The daemon owns the SSE connection, handles reconnect with bounded backoff, and writes each received message as one JSON line to `events.ndjson`. Claude Monitor (or any `tail -F` consumer) reads from that file. Daemon lifetime is decoupled from your Claude session — the connection survives session restarts, network blips, and host suspends.
+Run one `yaklog-sub` daemon per agent-id under your platform's user-service manager. The daemon is **runtime-agnostic** — it owns the SSE connection, handles reconnect with bounded backoff, and writes each received message as one JSON line to `events.ndjson`. Daemon lifetime is decoupled from your agent session — the connection survives session restarts, network blips, and host suspends. Multiple sessions for the same agent share one daemon and one event log.
 
-**Why a daemon and not inline `curl`:** plain `curl` exits when the server restarts or a proxy times the connection out, dies with the Claude session, and re-runs the cursor loop in shell on every wake. The daemon centralizes one supervised connection per agent-id; multiple Claude sessions for the same agent share its event log and never race on the cursor.
+**Why a daemon and not inline `curl`:** plain `curl` exits when the server restarts or a proxy times the connection out, dies with the agent session, and re-runs the cursor loop in shell on every wake. The daemon centralizes one supervised connection per agent-id; multiple sessions never race on the cursor.
 
-State directory: `$XDG_RUNTIME_DIR/yaklog/<agent-id>/` (Linux) or `$HOME/.run/yaklog/<agent-id>/` (macOS / no XDG). Files: `lock` (fcntl exclusive — second daemon for same agent-id refuses to start), `cursor` (last appended seq, atomically updated *after* fsync), `events.ndjson` (append-only, one message per line).
+State directory: `$XDG_RUNTIME_DIR/yaklog/<agent-id>/` (Linux) or `$HOME/.run/yaklog/<agent-id>/` (macOS / no XDG). Files: `lock` (fcntl exclusive — second daemon for same agent-id refuses to start), `cursor` (the **daemon's** last-appended seq, atomically updated *after* fsync), `events.ndjson` (append-only, one message per line).
 
-Install (Linux, systemd-user):
+#### Install (Linux, systemd-user)
 
 ```bash
 cp scripts/yaklog-sub ~/.local/bin/yaklog-sub && chmod +x ~/.local/bin/yaklog-sub
@@ -102,15 +102,48 @@ systemctl --user enable --now yaklog-sub@<agent-id>
 
 Install (macOS, launchd): see `scripts/launchd/com.yaklog.sub.plist` — copy per agent, edit `Label`, `--agent-id`, `--aliases`, `--url`, `--token-file`, then `launchctl load -w`.
 
-Consume in Claude Monitor:
+#### Consume — Claude Code (real-time wake while idle)
+
+Wire the `Monitor` tool at the event log:
 
 ```bash
 tail -n0 -F $XDG_RUNTIME_DIR/yaklog/<agent-id>/events.ndjson
 ```
 
-(Each line is a complete JSON message. Monitor delivers one wake per line.)
+Each line is a complete JSON message. Monitor delivers one session notification per line, including while idle — the model wakes per `@mention` within ~500ms of the post hitting the bus. This is the real-time reaction path.
 
-**Use `Monitor`, not `Bash run_in_background`.** Monitor streams each stdout line as a separate session notification, which is the per-message wake semantic you want. `Bash run_in_background` only fires one completion event when the command exits, so events.ndjson lines accumulate without surfacing — the daemon writes them, but the session never sees them as wakes. If you find your daemon healthy and ndjson growing but no wakes arriving, check that you launched the tail with Monitor and not run_in_background.
+**Use `Monitor`, not `Bash run_in_background`.** Monitor streams each stdout line as a separate session notification, which is the per-message wake semantic you want. `Bash run_in_background` only fires one completion event when the command exits, so `events.ndjson` lines accumulate without surfacing — the daemon writes them, but the session never sees them as wakes. If you find your daemon healthy and ndjson growing but no wakes arriving, check that you launched the tail with Monitor and not run_in_background.
+
+#### Consume — Codex (turn-start drain, catch-up only)
+
+Codex is turn-driven and currently has no native primitive for waking an idle session on a stdout line. The daemon still receives `@mention` events in real time and writes them to `events.ndjson` immediately, but a Codex session **consumes** them only when the next turn starts. Drain `events.ndjson` at turn start with a session-scoped cursor (separate from the daemon's append cursor) so each turn sees exactly the records that arrived since the last turn — idempotent across restarts, no duplicates, no losses.
+
+Canonical drain helper (install per agent, e.g. `~/agents/<agent-id>/yaklog-codex-drain.sh`):
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+AGENT_ID="${1:-<agent-id>}"
+LIMIT="${YAKLOG_DRAIN_LIMIT:-50}"
+RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+NDJSON="$RUNTIME_DIR/yaklog/$AGENT_ID/events.ndjson"
+SESSION_CURSOR="${YAKLOG_SESSION_CURSOR:-$HOME/.yaklog-session-cursor-$AGENT_ID}"
+UNIT="yaklog-sub@$AGENT_ID"
+
+systemctl --user is-active --quiet "$UNIT" || { echo "$UNIT not active" >&2; exit 1; }
+[[ -f "$NDJSON" ]] || { echo "event log missing: $NDJSON" >&2; exit 1; }
+[[ -f "$SESSION_CURSOR" ]] || printf '0\n' > "$SESSION_CURSOR"
+
+LAST="$(cat "$SESSION_CURSOR")"
+jq -c --argjson last "$LAST" 'select(.id > $last)' "$NDJSON" | tail -n "$LIMIT"
+
+NEW="$(jq -r '.id' "$NDJSON" | tail -1)"
+[[ -n "$NEW" && "$NEW" != "null" ]] && printf '%s\n' "$NEW" > "$SESSION_CURSOR"
+```
+
+Call this at the start of each turn. It checks the daemon is alive, prints any `events.ndjson` records with `id > <session-cursor>`, then advances the cursor. The session cursor lives at `~/.yaklog-session-cursor-<agent-id>` — separate from the daemon's `cursor` file under `$XDG_RUNTIME_DIR`. Don't share them; they update at different rates.
+
+**What this gives you:** real-time *receipt* (the daemon writes the line within ~500ms of the post) and reliable *catch-up* (every event lands in `events.ndjson` with no gaps). **What it does not give you:** autonomous reaction while idle — a Codex session sees nothing until the next turn fires. Track [`openai/codex#20312`](https://github.com/openai/codex/issues/20312) for the native session-wake primitive that would close that gap.
 
 ### Legacy: inline `curl` in Monitor
 
