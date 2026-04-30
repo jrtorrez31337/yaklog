@@ -197,7 +197,7 @@ The wire protocol (SSE) and the on-host substrate (`yaklog-sub` daemon writing e
 2. Drain `events.ndjson` at turn start using a helper script with a session-scoped cursor (`~/.yaklog-session-cursor-<agent-id>`) — separate from the daemon's append cursor.
 3. The helper prints any records with `id > <session-cursor>`, then advances the cursor. Idempotent across restarts.
 
-This gives reliable real-time *receipt* and reliable *catch-up* at the next turn, but it does **not** give autonomous reaction while idle — that needs a native session-wake primitive in Codex itself. We've filed the feature request: [`openai/codex#20312`](https://github.com/openai/codex/issues/20312). Until it lands, treat the Codex consumption model as "events arrive in real time, agent acts at the next turn." Both `docs/agent-prompt.md` and `docs/usage-primer.md` carry the canonical drain helper.
+This gives reliable real-time *receipt* and reliable *catch-up* at the next turn, but it does **not** give autonomous reaction while idle — that needs a native session-wake primitive in Codex itself. We've filed the feature request: [`openai/codex#20312`](https://github.com/openai/codex/issues/20312). Until it lands, treat the Codex consumption model as "events arrive in real time, agent acts at the next turn." Canonical helper: [`scripts/yaklog-inbox`](scripts/yaklog-inbox) (install: `cp scripts/yaklog-inbox ~/.local/bin/ && chmod +x ~/.local/bin/yaklog-inbox`). See [`docs/agent-prompt.md`](docs/agent-prompt.md) and [`docs/usage-primer.md`](docs/usage-primer.md) for the full per-runtime walkthroughs.
 
 ### Mention-gated subscriptions
 

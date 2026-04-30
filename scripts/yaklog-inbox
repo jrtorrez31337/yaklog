@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+#
+# yaklog-inbox: turn-start event drain for runtimes without per-line wake.
+#
+# Reads new lines from the yaklog-sub daemon's events.ndjson since the last
+# call and prints them to stdout. Maintains a session-scoped cursor that is
+# separate from the daemon's append cursor, so each turn drains exactly the
+# records that arrived since the previous turn — idempotent across restarts,
+# no duplicates, no losses.
+#
+# Intended for Codex (turn-driven) and any other runtime that consumes events
+# at turn boundaries rather than per stdout line. Claude Code agents should
+# wire `Monitor` directly to `tail -F events.ndjson` instead — they wake per
+# line, no drain needed.
+#
+# Usage:
+#   yaklog-inbox <agent-id>           # drain since last cursor; advance
+#   yaklog-inbox <agent-id> --peek    # drain without advancing the cursor
+#
+# Environment overrides:
+#   YAKLOG_DRAIN_LIMIT     max records emitted per call (default 50)
+#   YAKLOG_SESSION_CURSOR  cursor file path (default ~/.yaklog-session-cursor-<agent-id>)
+#   XDG_RUNTIME_DIR        events.ndjson is read from $XDG_RUNTIME_DIR/yaklog/<agent-id>/
+#
+# Exit codes:
+#   0  ok (zero or more records emitted)
+#   1  daemon not active or event log missing
+#   2  bad usage / missing dependency
+#
+# Forward-track: a native session-wake primitive in Codex would make this
+# helper unnecessary — see openai/codex#20312.
+
+set -euo pipefail
+
+usage() {
+  sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//' >&2
+  exit 2
+}
+
+[[ $# -ge 1 ]] || usage
+case "$1" in -h|--help) usage ;; esac
+
+AGENT_ID="$1"
+PEEK=0
+[[ "${2:-}" == "--peek" ]] && PEEK=1
+
+command -v jq >/dev/null 2>&1 || { echo "yaklog-inbox: jq is required" >&2; exit 2; }
+
+LIMIT="${YAKLOG_DRAIN_LIMIT:-50}"
+RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+NDJSON="$RUNTIME_DIR/yaklog/$AGENT_ID/events.ndjson"
+SESSION_CURSOR="${YAKLOG_SESSION_CURSOR:-$HOME/.yaklog-session-cursor-$AGENT_ID}"
+UNIT="yaklog-sub@$AGENT_ID"
+
+if ! systemctl --user is-active --quiet "$UNIT"; then
+  echo "yaklog-inbox: $UNIT is not active" >&2
+  exit 1
+fi
+
+if [[ ! -f "$NDJSON" ]]; then
+  echo "yaklog-inbox: event log missing: $NDJSON" >&2
+  exit 1
+fi
+
+[[ -f "$SESSION_CURSOR" ]] || printf '0\n' > "$SESSION_CURSOR"
+LAST="$(cat "$SESSION_CURSOR")"
+
+jq -c --argjson last "$LAST" 'select(.id > $last)' "$NDJSON" | tail -n "$LIMIT"
+
+if [[ "$PEEK" -eq 0 ]]; then
+  NEW="$(jq -r '.id' "$NDJSON" | tail -1)"
+  if [[ -n "$NEW" && "$NEW" != "null" ]]; then
+    printf '%s\n' "$NEW" > "$SESSION_CURSOR"
+  fi
+fi

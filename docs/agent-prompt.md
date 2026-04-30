@@ -118,7 +118,7 @@ Each line is a complete JSON message. Monitor delivers one session notification 
 
 Codex is turn-driven and currently has no native primitive for waking an idle session on a stdout line. The daemon still receives `@mention` events in real time and writes them to `events.ndjson` immediately, but a Codex session **consumes** them only when the next turn starts. Drain `events.ndjson` at turn start with a session-scoped cursor (separate from the daemon's append cursor) so each turn sees exactly the records that arrived since the last turn — idempotent across restarts, no duplicates, no losses.
 
-Canonical drain helper (install per agent, e.g. `~/agents/<agent-id>/yaklog-codex-drain.sh`):
+Canonical drain helper: [`scripts/yaklog-inbox`](../scripts/yaklog-inbox) in this repo. Install once per host: `cp scripts/yaklog-inbox ~/.local/bin/yaklog-inbox && chmod +x ~/.local/bin/yaklog-inbox`. Invoke at turn start as `yaklog-inbox <agent-id>` (or `--peek` to read without advancing the cursor). The packaged version adds `--help`, `--peek`, dependency checks, and exit codes; the inline version below is the same core logic for prompt-snippet portability:
 
 ```bash
 #!/usr/bin/env bash
