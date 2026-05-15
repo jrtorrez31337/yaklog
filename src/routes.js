@@ -1,9 +1,10 @@
 const express = require('express');
 const fs = require('fs');
 const crypto = require('crypto');
-const { insertMessage, listMessages, listChannels, updateMessage, deleteMessage } = require('./db');
+const { insertMessage, listMessages, listChannels, updateMessage, deleteMessage, getMessage } = require('./db');
 const { streamHandler } = require('./stream');
 const config = require('./config');
+const { enforceSenderBinding, enforceMutationBinding } = require('./middleware/senderBinding');
 
 const router = express.Router();
 
@@ -91,6 +92,11 @@ router.post('/messages', (req, res) => {
       error: 'ValidationError',
       message: 'metadata must be a JSON object when provided.'
     });
+  }
+
+  const violation = enforceSenderBinding(req, sender);
+  if (violation) {
+    return res.status(violation.status).json(violation.body);
   }
 
   const message = insertMessage({
@@ -182,6 +188,16 @@ router.patch('/messages/:id', (req, res) => {
     });
   }
 
+  const existing = getMessage(id);
+  if (!existing) {
+    return res.status(404).json({ error: 'NotFound', message: 'Message not found.' });
+  }
+
+  const violation = enforceMutationBinding(req, existing.sender);
+  if (violation) {
+    return res.status(violation.status).json(violation.body);
+  }
+
   const updates = {};
   if (body !== undefined) updates.body = body;
   if (metadata !== undefined) updates.metadata = metadata;
@@ -198,6 +214,16 @@ router.delete('/messages/:id', (req, res) => {
   const id = parsePositiveInt(req.params.id, null, Number.MAX_SAFE_INTEGER);
   if (id === null) {
     return res.status(400).json({ error: 'ValidationError', message: 'id must be a positive integer.' });
+  }
+
+  const existing = getMessage(id);
+  if (!existing) {
+    return res.status(404).json({ error: 'NotFound', message: 'Message not found.' });
+  }
+
+  const violation = enforceMutationBinding(req, existing.sender);
+  if (violation) {
+    return res.status(violation.status).json(violation.body);
   }
 
   const deleted = deleteMessage(id);
