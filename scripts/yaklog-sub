@@ -23,8 +23,10 @@ import errno
 import fcntl
 import json
 import os
+import select
 import signal
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -32,9 +34,28 @@ import urllib.request
 from pathlib import Path
 from typing import Optional
 
+VERSION = "0.5.0"
+
 DEFAULT_RECONNECT_MIN_S = 1.0
 DEFAULT_RECONNECT_MAX_S = 30.0
 READ_TIMEOUT_S = 60.0
+# Watchdog: server emits ': keepalive\n\n' every 15s. If no bytes reach the
+# client for STREAM_RECV_TIMEOUT_S, treat the connection as silently dead
+# (kernel-level RST not yet observed) and force reconnect. Without this,
+# a stale ESTAB socket post-server-restart can hang readline() until OS
+# TCP keepalive fires (Linux default ~2h11m). See yaklog #4245 / #4266.
+STREAM_RECV_TIMEOUT_S = 30.0
+
+# ADR-0016 Phase-1 (yaklog #4280) — daemon presence/liveness:
+DEFAULT_HEARTBEAT_S = 30.0          # T_HB; daemon publishes presence every N seconds
+DEFAULT_STALL_THRESHOLD_S = 120.0   # T2; no hook fire within this -> session_state=unknown
+HOOK_TO_SESSION_STATE = {
+    "SessionStart": "active",
+    "PreToolUse": "tool_running",
+    "PostToolUse": "idle_between_tools",
+    "Stop": "idle",
+    "SessionEnd": "idle",
+}
 
 
 class GracefulExit(Exception):
@@ -135,18 +156,181 @@ def open_stream(url: str, token: str):
     return urllib.request.urlopen(req, timeout=READ_TIMEOUT_S)
 
 
+def post_presence(presence_url: str, token: str, payload: dict, timeout: float = 10.0) -> Optional[int]:
+    """POST to /presence/event. Returns HTTP status code or None on transport error.
+    Best-effort: errors are logged but never raised — presence is non-load-bearing
+    relative to the daemon's primary SSE-consume responsibility."""
+    body = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        presence_url,
+        data=body,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.status
+    except urllib.error.HTTPError as e:
+        sys.stderr.write(f"yaklog-sub: presence post HTTP {e.code}: {e.reason}\n")
+        sys.stderr.flush()
+        return e.code
+    except (urllib.error.URLError, OSError) as e:
+        sys.stderr.write(f"yaklog-sub: presence post transport error: {e}\n")
+        sys.stderr.flush()
+        return None
+
+
+class PresencePublisher:
+    """L1 daemon TTL heartbeat (ADR-0016 §1) + L2 hook tail (ADR-0016 §1.L2).
+
+    Runs in a background thread. Tails $XDG_RUNTIME_DIR/yaklog/<agent>/state.jsonl
+    for hook events that update session_state. Publishes a presence heartbeat
+    every T_HB seconds AND immediately on session_state change."""
+
+    def __init__(self, presence_url: str, token: str, agent_id: str, state_jsonl_path: Path,
+                 heartbeat_s: float, stall_threshold_s: float, stop_flag: dict, runtime_state: dict):
+        self.presence_url = presence_url
+        self.token = token
+        self.agent_id = agent_id
+        self.state_jsonl_path = state_jsonl_path
+        self.heartbeat_s = heartbeat_s
+        self.stall_threshold_s = stall_threshold_s
+        self.stop_flag = stop_flag
+        self.runtime_state = runtime_state  # shared dict: cursor_position, sse_connected
+        self.session_state = "active"
+        self.last_hook_at: Optional[str] = None
+        self.last_hook_monotonic = time.monotonic()
+
+    def _build_payload(self, daemon_state: str = "up", reason: Optional[str] = None) -> dict:
+        # If no hook fire within stall threshold AND not freshly started, mark unknown.
+        ss = self.session_state
+        if (time.monotonic() - self.last_hook_monotonic) > self.stall_threshold_s:
+            ss = "unknown"
+        payload = {
+            "agent_id": self.agent_id,
+            "daemon_state": daemon_state,
+            "session_state": ss,
+            "cursor_position": self.runtime_state.get("cursor_position"),
+            "lock_held": True,
+            "sse_connected": self.runtime_state.get("sse_connected", False),
+            "last_hook_at": self.last_hook_at,
+        }
+        if reason:
+            payload["reason"] = reason
+        return payload
+
+    def _process_hook_line(self, raw: str) -> bool:
+        """Parse one state.jsonl line. Returns True if session_state changed."""
+        try:
+            event = json.loads(raw)
+        except json.JSONDecodeError:
+            return False
+        hook_event = event.get("event")
+        new_state = HOOK_TO_SESSION_STATE.get(hook_event)
+        if new_state is None:
+            return False
+        ts = event.get("ts")
+        if isinstance(ts, str):
+            self.last_hook_at = ts
+        self.last_hook_monotonic = time.monotonic()
+        if new_state != self.session_state:
+            self.session_state = new_state
+            return True
+        return False
+
+    def run(self) -> None:
+        """Main publisher loop. Tails state.jsonl + heartbeats."""
+        # Open state.jsonl if present; tolerate it not existing yet
+        fh = None
+        try:
+            self.state_jsonl_path.parent.mkdir(parents=True, exist_ok=True)
+            fh = open(self.state_jsonl_path, "a+", encoding="utf-8")
+            fh.seek(0, os.SEEK_END)  # tail from current end
+        except OSError as e:
+            sys.stderr.write(f"yaklog-sub: state.jsonl open failed: {e}; presence will publish heartbeat-only\n")
+            sys.stderr.flush()
+
+        # Initial heartbeat on startup
+        post_presence(self.presence_url, self.token, self._build_payload(reason="daemon_start"))
+        next_hb_at = time.monotonic() + self.heartbeat_s
+
+        while not self.stop_flag["flag"]:
+            now = time.monotonic()
+            sleep_s = min(1.0, max(0.0, next_hb_at - now))
+            time.sleep(sleep_s)
+            if self.stop_flag["flag"]:
+                break
+
+            # Drain any new state.jsonl lines
+            if fh is not None:
+                changed = False
+                while True:
+                    line = fh.readline()
+                    if not line:
+                        break
+                    if self._process_hook_line(line.rstrip("\r\n")):
+                        changed = True
+                if changed:
+                    post_presence(self.presence_url, self.token, self._build_payload(reason="hook_state_change"))
+
+            # Heartbeat tick
+            if time.monotonic() >= next_hb_at:
+                post_presence(self.presence_url, self.token, self._build_payload(reason="heartbeat"))
+                next_hb_at = time.monotonic() + self.heartbeat_s
+
+        if fh is not None:
+            try: fh.close()
+            except Exception: pass
+
+        # Final beat — graceful daemon_state=down so swarm sees us go offline
+        # immediately rather than waiting T_TTL.
+        post_presence(self.presence_url, self.token, self._build_payload(daemon_state="down", reason="daemon_shutdown"))
+
+
 def parse_sse(stream, on_event, should_stop):
     """Yield SSE events from a urlopen()'d response. on_event(msg_dict) is
-    called for each `event: message` frame. Returns when stream ends or
-    should_stop() returns True.
+    called for each `event: message` frame. Returns when stream ends, when
+    should_stop() returns True, or when STREAM_RECV_TIMEOUT_S elapses with
+    no bytes from the server (silent-TCP-death watchdog).
     """
     event_type: Optional[str] = None
     data_lines: list[str] = []
     last_id: Optional[str] = None
 
+    try:
+        fd = stream.fileno()
+    except (OSError, ValueError, AttributeError):
+        fd = None
+
     while True:
         if should_stop():
             return
+
+        # Watchdog: only block in readline() if either (a) data is buffered
+        # in user-space (peek non-empty) or (b) the kernel reports the fd
+        # readable within STREAM_RECV_TIMEOUT_S. Otherwise, treat the
+        # connection as silently dead and return to trigger reconnect.
+        try:
+            buffered = stream.peek(1)
+        except (OSError, ValueError, AttributeError):
+            buffered = b""
+
+        if not buffered and fd is not None:
+            try:
+                ready, _, _ = select.select([fd], [], [], STREAM_RECV_TIMEOUT_S)
+            except (OSError, ValueError):
+                return  # fd closed or invalid; reconnect
+            if not ready:
+                sys.stderr.write(
+                    f"yaklog-sub: no bytes from server for {STREAM_RECV_TIMEOUT_S:.0f}s "
+                    f"(server keepalive interval is 15s); reconnecting\n"
+                )
+                sys.stderr.flush()
+                return
+
         raw = stream.readline()
         if not raw:
             return  # server closed
@@ -187,6 +371,7 @@ def run(args) -> int:
     lock_path = sd / "lock"
     cursor_path = sd / "cursor"
     events_path = sd / "events.ndjson"
+    state_jsonl_path = sd / "state.jsonl"
 
     lock_fd = acquire_lock(lock_path)  # held until process exit
 
@@ -202,8 +387,30 @@ def run(args) -> int:
     signal.signal(signal.SIGINT, handle_signal)
 
     backoff = DEFAULT_RECONNECT_MIN_S
-    sys.stderr.write(f"yaklog-sub: agent={args.agent_id} state={sd}\n")
+    sys.stderr.write(f"yaklog-sub v{VERSION}: agent={args.agent_id} state={sd}\n")
     sys.stderr.flush()
+
+    # Shared runtime state for the presence publisher to read snapshots of.
+    runtime_state = {"cursor_position": read_cursor(cursor_path), "sse_connected": False}
+
+    presence_thread: Optional[threading.Thread] = None
+    publisher: Optional[PresencePublisher] = None
+    if not args.presence_disabled:
+        presence_url = (args.presence_url or args.url).rstrip("/") + "/presence/event"
+        publisher = PresencePublisher(
+            presence_url=presence_url,
+            token=token,
+            agent_id=args.agent_id,
+            state_jsonl_path=state_jsonl_path,
+            heartbeat_s=args.heartbeat_s,
+            stall_threshold_s=args.stall_threshold_s,
+            stop_flag=stop,
+            runtime_state=runtime_state,
+        )
+        presence_thread = threading.Thread(target=publisher.run, daemon=True, name="presence")
+        presence_thread.start()
+        sys.stderr.write(f"yaklog-sub: presence publisher started ({presence_url}; T_HB={args.heartbeat_s}s)\n")
+        sys.stderr.flush()
 
     try:
         while not stop["flag"]:
@@ -212,16 +419,21 @@ def run(args) -> int:
             try:
                 resp = open_stream(url, token)
             except (urllib.error.URLError, urllib.error.HTTPError, OSError) as e:
+                runtime_state["sse_connected"] = False
                 sys.stderr.write(f"yaklog-sub: connect failed: {e}; sleeping {backoff:.1f}s\n")
                 sys.stderr.flush()
                 _sleep_interruptible(backoff, stop)
                 backoff = min(backoff * 2, DEFAULT_RECONNECT_MAX_S)
                 continue
             backoff = DEFAULT_RECONNECT_MIN_S
+            runtime_state["sse_connected"] = True
 
             def on_event(msg):
                 try:
                     log.append(msg)
+                    seq = msg.get("seq") or msg.get("id")
+                    if isinstance(seq, int):
+                        runtime_state["cursor_position"] = seq
                 except Exception as e:
                     # Append failure must NOT advance cursor — re-raise to
                     # tear down the connection and reconnect from prior cursor.
@@ -235,6 +447,7 @@ def run(args) -> int:
                 sys.stderr.write(f"yaklog-sub: stream error: {e}\n")
                 sys.stderr.flush()
             finally:
+                runtime_state["sse_connected"] = False
                 try:
                     resp.close()
                 except Exception:
@@ -244,6 +457,9 @@ def run(args) -> int:
                 _sleep_interruptible(DEFAULT_RECONNECT_MIN_S, stop)
     finally:
         log.close()
+        # Wait briefly for presence publisher's final-beat
+        if presence_thread is not None:
+            presence_thread.join(timeout=5.0)
         try:
             os.close(lock_fd)
         except Exception:
@@ -264,6 +480,16 @@ def main(argv=None) -> int:
     p.add_argument("--aliases", default="", help="comma-separated aliases for mention filter")
     p.add_argument("--url", required=True, help="yaklog API base, e.g. http://host:3100/api/v1")
     p.add_argument("--token-file", required=True, help="path to file containing the API token")
+    # ADR-0016 Phase-1 (yaklog #4280) — daemon presence/liveness publisher
+    p.add_argument("--presence-url", default=None,
+                   help="yaklog presence-base; defaults to --url. Ignored when --presence-disabled.")
+    p.add_argument("--presence-disabled", action="store_true",
+                   help="opt out of presence publishing (use only if server side does not support /presence/event yet)")
+    p.add_argument("--heartbeat-s", type=float, default=DEFAULT_HEARTBEAT_S,
+                   help=f"presence heartbeat interval in seconds (default {DEFAULT_HEARTBEAT_S})")
+    p.add_argument("--stall-threshold-s", type=float, default=DEFAULT_STALL_THRESHOLD_S,
+                   help=f"no-hook-fire threshold flipping session_state to unknown (default {DEFAULT_STALL_THRESHOLD_S})")
+    p.add_argument("--version", action="version", version=f"yaklog-sub {VERSION}")
     args = p.parse_args(argv)
     return run(args)
 
