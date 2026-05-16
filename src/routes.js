@@ -1,10 +1,16 @@
 const express = require('express');
 const fs = require('fs');
 const crypto = require('crypto');
-const { insertMessage, listMessages, listChannels, updateMessage, deleteMessage, getMessage } = require('./db');
+const { insertMessage, listMessages, listChannels, updateMessage, deleteMessage, getMessage,
+        upsertPresence, getPresenceByAgent, listPresence, listPresenceTransitions } = require('./db');
 const { streamHandler } = require('./stream');
 const config = require('./config');
 const { enforceSenderBinding, enforceMutationBinding } = require('./middleware/senderBinding');
+const { enforceDaemonBinding } = require('./middleware/daemonBinding');
+
+const AGENT_ID_RE = /^[a-zA-Z0-9._:@/-]{1,64}$/;
+const DAEMON_STATES = new Set(['up', 'down']);
+const SESSION_STATES = new Set(['active', 'idle', 'unknown', 'tool_running', 'idle_between_tools']);
 
 const router = express.Router();
 
@@ -232,6 +238,83 @@ router.delete('/messages/:id', (req, res) => {
   }
 
   return res.status(204).send();
+});
+
+router.post('/presence/event', (req, res) => {
+  const { agent_id, daemon_state, session_state, cursor_position, lock_held, sse_connected, last_hook_at, reason } = req.body || {};
+
+  if (typeof agent_id !== 'string' || !AGENT_ID_RE.test(agent_id)) {
+    return res.status(400).json({ error: 'ValidationError', message: 'agent_id is required and must match [a-zA-Z0-9._:@/-] (1-64 chars).' });
+  }
+  if (typeof daemon_state !== 'string' || !DAEMON_STATES.has(daemon_state)) {
+    return res.status(400).json({ error: 'ValidationError', message: `daemon_state must be one of: ${[...DAEMON_STATES].join(', ')}.` });
+  }
+  if (typeof session_state !== 'string' || !SESSION_STATES.has(session_state)) {
+    return res.status(400).json({ error: 'ValidationError', message: `session_state must be one of: ${[...SESSION_STATES].join(', ')}.` });
+  }
+  if (cursor_position !== undefined && cursor_position !== null && !Number.isInteger(cursor_position)) {
+    return res.status(400).json({ error: 'ValidationError', message: 'cursor_position must be an integer or null.' });
+  }
+  if (last_hook_at !== undefined && last_hook_at !== null && typeof last_hook_at !== 'string') {
+    return res.status(400).json({ error: 'ValidationError', message: 'last_hook_at must be an ISO-8601 string or null.' });
+  }
+
+  const violation = enforceDaemonBinding(req, agent_id);
+  if (violation) {
+    return res.status(violation.status).json(violation.body);
+  }
+
+  const presence = upsertPresence({
+    agent_id,
+    daemon_state,
+    session_state,
+    cursor_position: cursor_position ?? null,
+    lock_held: !!lock_held,
+    sse_connected: !!sse_connected,
+    last_hook_at: last_hook_at ?? null,
+    reason: reason ?? null
+  });
+
+  return res.status(200).json({ presence });
+});
+
+function presenceEtag(rows) {
+  const hash = crypto.createHash('sha256');
+  for (const row of rows) {
+    hash.update(`${row.agent_id}:${row.daemon_state}:${row.session_state}:${row.cursor_position ?? ''}:${row.lock_held ? 1 : 0}:${row.last_state_change_at}\n`);
+  }
+  return `"${hash.digest('hex').slice(0, 16)}"`;
+}
+
+router.get('/presence', (req, res) => {
+  const presence = listPresence();
+  const etag = presenceEtag(presence);
+  res.set('ETag', etag);
+  res.set('Cache-Control', 'no-cache');
+  if (req.headers['if-none-match'] === etag) {
+    return res.status(304).end();
+  }
+  return res.json({ presence, count: presence.length });
+});
+
+router.get('/presence/:agent_id', (req, res) => {
+  const agentId = String(req.params.agent_id);
+  if (!AGENT_ID_RE.test(agentId)) {
+    return res.status(400).json({ error: 'ValidationError', message: 'agent_id must match [a-zA-Z0-9._:@/-] (1-64 chars).' });
+  }
+  const presence = getPresenceByAgent(agentId);
+  if (!presence) {
+    return res.status(404).json({ error: 'NotFound', message: 'No presence record for agent.' });
+  }
+  const transitionLimit = parsePositiveInt(req.query.transitions, 20, 200);
+  const transitions = listPresenceTransitions(agentId, transitionLimit ?? 20);
+  const etag = presenceEtag([presence]);
+  res.set('ETag', etag);
+  res.set('Cache-Control', 'no-cache');
+  if (req.headers['if-none-match'] === etag) {
+    return res.status(304).end();
+  }
+  return res.json({ presence, transitions });
 });
 
 router.get('/stream', streamHandler);
