@@ -34,7 +34,7 @@ import urllib.request
 from pathlib import Path
 from typing import Optional
 
-VERSION = "0.5.0"
+VERSION = "0.5.1"
 
 DEFAULT_RECONNECT_MIN_S = 1.0
 DEFAULT_RECONNECT_MAX_S = 30.0
@@ -191,7 +191,9 @@ class PresencePublisher:
     every T_HB seconds AND immediately on session_state change."""
 
     def __init__(self, presence_url: str, token: str, agent_id: str, state_jsonl_path: Path,
-                 heartbeat_s: float, stall_threshold_s: float, stop_flag: dict, runtime_state: dict):
+                 heartbeat_s: float, stall_threshold_s: float, stop_flag: dict, runtime_state: dict,
+                 messages_url: Optional[str] = None, agents_backcompat: bool = True,
+                 host: Optional[str] = None):
         self.presence_url = presence_url
         self.token = token
         self.agent_id = agent_id
@@ -203,6 +205,13 @@ class PresencePublisher:
         self.session_state = "active"
         self.last_hook_at: Optional[str] = None
         self.last_hook_monotonic = time.monotonic()
+        # ADR-0016 Phase-1.5 — Q5(a) #agents back-compat: daemon publishes
+        # canonical online/offline events to #agents channel during the
+        # Phase-1 transition window. Existing #3568 manual-post consumers
+        # continue to work; new consumers query GET /presence directly.
+        self.messages_url = messages_url
+        self.agents_backcompat = agents_backcompat and (messages_url is not None)
+        self.host = host or os.uname().nodename
 
     def _build_payload(self, daemon_state: str = "up", reason: Optional[str] = None) -> dict:
         # If no hook fire within stall threshold AND not freshly started, mark unknown.
@@ -241,6 +250,26 @@ class PresencePublisher:
             return True
         return False
 
+    def _post_agents_backcompat(self, event: str) -> None:
+        """ADR-0016 P1.7: post canonical online/offline event to #agents
+        channel for back-compat with #3568 manual-post consumers. State-
+        change-driven (startup, shutdown), not per-heartbeat."""
+        if not self.agents_backcompat:
+            return
+        body = json.dumps({
+            "event": event,
+            "host": self.host,
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "via": f"yaklog-sub v{VERSION} P1.7-back-compat",
+        })
+        payload = {
+            "channel": "agents",
+            "sender": self.agent_id,
+            "body": body,
+            "metadata": {"type": "presence", "event": event},
+        }
+        post_presence(self.messages_url, self.token, payload)
+
     def run(self) -> None:
         """Main publisher loop. Tails state.jsonl + heartbeats."""
         # Open state.jsonl if present; tolerate it not existing yet
@@ -253,8 +282,9 @@ class PresencePublisher:
             sys.stderr.write(f"yaklog-sub: state.jsonl open failed: {e}; presence will publish heartbeat-only\n")
             sys.stderr.flush()
 
-        # Initial heartbeat on startup
+        # Initial heartbeat on startup + ADR-0016 P1.7 #agents back-compat
         post_presence(self.presence_url, self.token, self._build_payload(reason="daemon_start"))
+        self._post_agents_backcompat("online")
         next_hb_at = time.monotonic() + self.heartbeat_s
 
         while not self.stop_flag["flag"]:
@@ -286,8 +316,10 @@ class PresencePublisher:
             except Exception: pass
 
         # Final beat — graceful daemon_state=down so swarm sees us go offline
-        # immediately rather than waiting T_TTL.
+        # immediately rather than waiting T_TTL. Also fires #agents
+        # back-compat 'offline' event per ADR-0016 P1.7.
         post_presence(self.presence_url, self.token, self._build_payload(daemon_state="down", reason="daemon_shutdown"))
+        self._post_agents_backcompat("offline")
 
 
 def parse_sse(stream, on_event, should_stop):
@@ -396,7 +428,9 @@ def run(args) -> int:
     presence_thread: Optional[threading.Thread] = None
     publisher: Optional[PresencePublisher] = None
     if not args.presence_disabled:
-        presence_url = (args.presence_url or args.url).rstrip("/") + "/presence/event"
+        url_base = (args.presence_url or args.url).rstrip("/")
+        presence_url = url_base + "/presence/event"
+        messages_url = url_base + "/messages" if not args.no_agents_backcompat else None
         publisher = PresencePublisher(
             presence_url=presence_url,
             token=token,
@@ -406,10 +440,14 @@ def run(args) -> int:
             stall_threshold_s=args.stall_threshold_s,
             stop_flag=stop,
             runtime_state=runtime_state,
+            messages_url=messages_url,
+            agents_backcompat=not args.no_agents_backcompat,
+            host=args.host or os.uname().nodename,
         )
         presence_thread = threading.Thread(target=publisher.run, daemon=True, name="presence")
         presence_thread.start()
-        sys.stderr.write(f"yaklog-sub: presence publisher started ({presence_url}; T_HB={args.heartbeat_s}s)\n")
+        backcompat_str = "+#agents back-compat" if publisher.agents_backcompat else ""
+        sys.stderr.write(f"yaklog-sub: presence publisher started ({presence_url}; T_HB={args.heartbeat_s}s{(' ' + backcompat_str) if backcompat_str else ''})\n")
         sys.stderr.flush()
 
     try:
@@ -489,6 +527,11 @@ def main(argv=None) -> int:
                    help=f"presence heartbeat interval in seconds (default {DEFAULT_HEARTBEAT_S})")
     p.add_argument("--stall-threshold-s", type=float, default=DEFAULT_STALL_THRESHOLD_S,
                    help=f"no-hook-fire threshold flipping session_state to unknown (default {DEFAULT_STALL_THRESHOLD_S})")
+    # ADR-0016 Phase-1.5 — Q5(a) #agents back-compat
+    p.add_argument("--no-agents-backcompat", action="store_true",
+                   help="disable ADR-0016 P1.7 #agents back-compat post on startup/shutdown (default: enabled)")
+    p.add_argument("--host", default=None,
+                   help="hostname to advertise in #agents back-compat events (default: os.uname().nodename)")
     p.add_argument("--version", action="version", version=f"yaklog-sub {VERSION}")
     args = p.parse_args(argv)
     return run(args)
