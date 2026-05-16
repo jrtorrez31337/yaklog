@@ -21,6 +21,10 @@ function parseApiKeys(value) {
   );
 }
 
+// Returns Map<token, Set<agentId>> — one-to-many. A token can be authorized
+// for multiple agent_id sender names (e.g., legacy short-stem + canonical
+// `<name>-agent`). Aligns with the existing --aliases mechanism for SSE
+// mention-filtering. See yaklog #4446 for the bug-discovery context.
 function parseTokenBindings(value) {
   const map = new Map();
   if (!value) {
@@ -35,7 +39,12 @@ function parseTokenBindings(value) {
     const agentId = trimmed.slice(0, idx).trim();
     const token = trimmed.slice(idx + 1).trim();
     if (agentId && token) {
-      map.set(token, agentId);
+      let set = map.get(token);
+      if (!set) {
+        set = new Set();
+        map.set(token, set);
+      }
+      set.add(agentId);
     }
   }
   return map;

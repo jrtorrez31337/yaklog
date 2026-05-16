@@ -4,11 +4,11 @@ function enforceDaemonBinding(req, claimedAgentId) {
   if (!req.auth || !req.auth.token) {
     return null;
   }
-  if (!config.daemonBindings.has(req.auth.token)) {
+  const allowedAgentIds = config.daemonBindings.get(req.auth.token);
+  if (!allowedAgentIds) {
     return null;
   }
-  const bound = config.daemonBindings.get(req.auth.token);
-  if (claimedAgentId === bound) {
+  if (allowedAgentIds.has(claimedAgentId)) {
     return null;
   }
   return {
