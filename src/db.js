@@ -99,6 +99,31 @@ function initializeDb() {
     runBackfill(rowsToBackfill);
   }
 
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS presence (
+      agent_id              TEXT PRIMARY KEY,
+      daemon_state          TEXT NOT NULL CHECK (daemon_state IN ('up','down')),
+      session_state         TEXT NOT NULL CHECK (session_state IN ('active','idle','unknown','tool_running','idle_between_tools')),
+      cursor_position       INTEGER,
+      lock_held             INTEGER NOT NULL DEFAULT 0,
+      sse_connected         INTEGER NOT NULL DEFAULT 0,
+      last_heartbeat_at     TEXT NOT NULL,
+      last_hook_at          TEXT,
+      last_state_change_at  TEXT NOT NULL
+    )
+  `).run();
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS presence_transitions (
+      id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+      agent_id              TEXT NOT NULL,
+      from_label            TEXT,
+      to_label              TEXT NOT NULL,
+      occurred_at           TEXT NOT NULL,
+      reason                TEXT
+    )
+  `).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_transitions_agent_time ON presence_transitions(agent_id, occurred_at DESC)`).run();
+
   return db;
 }
 
@@ -258,6 +283,125 @@ function closeDb() {
   }
 }
 
+const PRESENCE_LABELS = {
+  up: { active: 'online', idle: 'online_idle', unknown: 'stalled', tool_running: 'online_tool_running', idle_between_tools: 'online_idle_between_tools' },
+  down: { active: 'offline', idle: 'offline', unknown: 'offline', tool_running: 'offline', idle_between_tools: 'offline' }
+};
+
+function deriveLabel(daemon_state, session_state) {
+  return (PRESENCE_LABELS[daemon_state] || {})[session_state] || 'offline';
+}
+
+function upsertPresence({ agent_id, daemon_state, session_state, cursor_position, lock_held, sse_connected, last_hook_at, reason }) {
+  const database = getDb();
+  const now = new Date().toISOString();
+  const newLabel = deriveLabel(daemon_state, session_state);
+
+  const existing = database.prepare('SELECT * FROM presence WHERE agent_id = ?').get(agent_id);
+  const oldLabel = existing ? deriveLabel(existing.daemon_state, existing.session_state) : null;
+  const stateChanged = !existing
+    || existing.daemon_state !== daemon_state
+    || existing.session_state !== session_state;
+
+  const last_state_change_at = stateChanged ? now : (existing ? existing.last_state_change_at : now);
+
+  const stmt = database.prepare(`
+    INSERT INTO presence (agent_id, daemon_state, session_state, cursor_position, lock_held, sse_connected, last_heartbeat_at, last_hook_at, last_state_change_at)
+    VALUES (@agent_id, @daemon_state, @session_state, @cursor_position, @lock_held, @sse_connected, @last_heartbeat_at, @last_hook_at, @last_state_change_at)
+    ON CONFLICT(agent_id) DO UPDATE SET
+      daemon_state = excluded.daemon_state,
+      session_state = excluded.session_state,
+      cursor_position = excluded.cursor_position,
+      lock_held = excluded.lock_held,
+      sse_connected = excluded.sse_connected,
+      last_heartbeat_at = excluded.last_heartbeat_at,
+      last_hook_at = COALESCE(excluded.last_hook_at, presence.last_hook_at),
+      last_state_change_at = excluded.last_state_change_at
+  `);
+  stmt.run({
+    agent_id,
+    daemon_state,
+    session_state,
+    cursor_position: cursor_position ?? null,
+    lock_held: lock_held ? 1 : 0,
+    sse_connected: sse_connected ? 1 : 0,
+    last_heartbeat_at: now,
+    last_hook_at: last_hook_at ?? null,
+    last_state_change_at
+  });
+
+  if (stateChanged) {
+    database.prepare('INSERT INTO presence_transitions (agent_id, from_label, to_label, occurred_at, reason) VALUES (?, ?, ?, ?, ?)')
+      .run(agent_id, oldLabel, newLabel, now, reason ?? null);
+  }
+  return getPresenceByAgent(agent_id);
+}
+
+function getPresenceByAgent(agent_id) {
+  const database = getDb();
+  const row = database.prepare('SELECT * FROM presence WHERE agent_id = ?').get(agent_id);
+  if (!row) return null;
+  return {
+    agent_id: row.agent_id,
+    daemon_state: row.daemon_state,
+    session_state: row.session_state,
+    label: deriveLabel(row.daemon_state, row.session_state),
+    cursor_position: row.cursor_position,
+    lock_held: !!row.lock_held,
+    sse_connected: !!row.sse_connected,
+    last_heartbeat_at: row.last_heartbeat_at,
+    last_hook_at: row.last_hook_at,
+    last_state_change_at: row.last_state_change_at
+  };
+}
+
+function listPresence() {
+  const database = getDb();
+  const rows = database.prepare('SELECT * FROM presence ORDER BY agent_id ASC').all();
+  return rows.map((row) => ({
+    agent_id: row.agent_id,
+    daemon_state: row.daemon_state,
+    session_state: row.session_state,
+    label: deriveLabel(row.daemon_state, row.session_state),
+    cursor_position: row.cursor_position,
+    lock_held: !!row.lock_held,
+    sse_connected: !!row.sse_connected,
+    last_heartbeat_at: row.last_heartbeat_at,
+    last_hook_at: row.last_hook_at,
+    last_state_change_at: row.last_state_change_at
+  }));
+}
+
+function listPresenceTransitions(agent_id, limit = 50) {
+  const database = getDb();
+  const rows = database
+    .prepare('SELECT id, from_label, to_label, occurred_at, reason FROM presence_transitions WHERE agent_id = ? ORDER BY occurred_at DESC LIMIT ?')
+    .all(agent_id, limit);
+  return rows;
+}
+
+function expireStalePresence(ttlSeconds) {
+  const database = getDb();
+  const cutoffIso = new Date(Date.now() - ttlSeconds * 1000).toISOString();
+  const stale = database
+    .prepare(`SELECT agent_id, daemon_state, session_state FROM presence WHERE daemon_state = 'up' AND last_heartbeat_at < ?`)
+    .all(cutoffIso);
+  if (stale.length === 0) return [];
+  const now = new Date().toISOString();
+  const flipDaemon = database.prepare(`UPDATE presence SET daemon_state = 'down', last_state_change_at = ? WHERE agent_id = ?`);
+  const recordTransition = database.prepare('INSERT INTO presence_transitions (agent_id, from_label, to_label, occurred_at, reason) VALUES (?, ?, ?, ?, ?)');
+  const tx = database.transaction((rows) => {
+    for (const row of rows) {
+      const fromLabel = deriveLabel(row.daemon_state, row.session_state);
+      const toLabel = deriveLabel('down', row.session_state);
+      flipDaemon.run(now, row.agent_id);
+      recordTransition.run(row.agent_id, fromLabel, toLabel, now, `ttl_expired_${ttlSeconds}s`);
+    }
+  });
+  tx(stale);
+  return stale.map((r) => r.agent_id);
+}
+
 module.exports = {
   initializeDb,
   insertMessage,
@@ -267,6 +411,12 @@ module.exports = {
   getMessage,
   updateMessage,
   deleteMessage,
+  upsertPresence,
+  getPresenceByAgent,
+  listPresence,
+  listPresenceTransitions,
+  expireStalePresence,
+  deriveLabel,
   closeDb,
   messageBus
 };
