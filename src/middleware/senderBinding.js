@@ -4,11 +4,11 @@ function enforceSenderBinding(req, claimedSender) {
   if (!req.auth || !req.auth.token) {
     return null;
   }
-  if (!config.tokenBindings.has(req.auth.token)) {
+  const allowedSenders = config.tokenBindings.get(req.auth.token);
+  if (!allowedSenders) {
     return null;
   }
-  const bound = config.tokenBindings.get(req.auth.token);
-  if (claimedSender === bound) {
+  if (allowedSenders.has(claimedSender)) {
     return null;
   }
   return {
@@ -24,11 +24,11 @@ function enforceMutationBinding(req, originalSender) {
   if (!req.auth || !req.auth.token) {
     return null;
   }
-  if (!config.tokenBindings.has(req.auth.token)) {
+  const allowedSenders = config.tokenBindings.get(req.auth.token);
+  if (!allowedSenders) {
     return null;
   }
-  const bound = config.tokenBindings.get(req.auth.token);
-  if (originalSender === bound) {
+  if (allowedSenders.has(originalSender)) {
     return null;
   }
   return {
