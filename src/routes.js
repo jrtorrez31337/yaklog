@@ -165,6 +165,18 @@ router.get('/context', (req, res) => {
   return res.send(`${lines.join('\n')}\n`);
 });
 
+router.get('/messages/:id', (req, res) => {
+  const id = parsePositiveInt(req.params.id, null, Number.MAX_SAFE_INTEGER);
+  if (id === null) {
+    return res.status(400).json({ error: 'ValidationError', message: 'id must be a positive integer.' });
+  }
+  const message = getMessage(id);
+  if (!message) {
+    return res.status(404).json({ error: 'NotFound', message: `Message id ${id} not found.` });
+  }
+  return res.json({ message });
+});
+
 router.patch('/messages/:id', (req, res) => {
   const id = parsePositiveInt(req.params.id, null, Number.MAX_SAFE_INTEGER);
   if (id === null) {
