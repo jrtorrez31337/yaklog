@@ -1,16 +1,22 @@
 node_modules/
 .env
+.env.bak*
 npm-debug.log*
 data/
 *.db
 *.db-shm
 *.db-wal
+*.db.backup*
 *.log
 .DS_Store
 Thumbs.db
 YAKLOG*.md
 agents/
 scripts/__pycache__/
+# Per-agent Claude Code workspace state (hook settings + worktrees).
+# yaklog-the-server is one consumer of this repo; agent-runtime state
+# belongs in the agent's home dir, not in the public repo.
+.claude/
 
 # Internal/agent-lane docs do NOT live in this repo.
 # yaklog-dev's ADR input artifacts, internal design docs, and lane-specific

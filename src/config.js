@@ -55,11 +55,29 @@ module.exports = {
   host: process.env.HOST || '0.0.0.0',
   dbPath: process.env.YAKLOG_DB_PATH || path.join(process.cwd(), 'data', 'yaklog.db'),
   apiKeys: parseApiKeys(process.env.YAKLOG_API_KEYS),
+  // YAKLOG_OPS_API_KEYS: orthogonal to YAKLOG_API_KEYS per ADR-0025 §4b.
+  // Held by the 3-agent ferry group (secops + ssw-devops + admin-agent).
+  // Gates ferry-group-scoped /register routes: GET /register/<id>/ciphertext
+  // (FALLBACK courier flow only — registrant PRIMARY pull uses
+  // registration_access_token, NOT op-key), POST /register/<id>/ferry-complete,
+  // and ops-only audit-trail endpoints. Same parsing as apiKeys; same
+  // rotation discipline (env edit + container env-only-recreate + safety
+  // captures per [[feedback_db_rebuild_safety]]).
+  opsApiKeys: parseApiKeys(process.env.YAKLOG_OPS_API_KEYS),
   tokenBindings: parseTokenBindings(process.env.YAKLOG_TOKEN_BINDINGS),
   daemonBindings: parseTokenBindings(process.env.YAKLOG_DAEMON_BINDINGS),
   corsOrigin: process.env.CORS_ORIGIN || '*',
   maxBodyBytes: parseNumber(process.env.MAX_BODY_BYTES, 1_000_000),
   specPath: process.env.YAKLOG_SPEC_PATH || '/data/spec.md',
+  specDir: process.env.YAKLOG_SPEC_DIR || '/data/canonical',
+  // GET /api/v1/canonical/<repo>/<treeish>/<path> reads from bare-git repos
+  // under bareGitDir. Only repos in canonicalRepoAllowlist are addressable;
+  // anything else returns 404 without touching the filesystem.
+  bareGitDir: process.env.YAKLOG_BARE_GIT_DIR || '/srv/git',
+  canonicalRepoAllowlist: new Set(
+    (process.env.YAKLOG_CANONICAL_REPOS || 'agent-tooling,agent-globals,yaklog')
+      .split(',').map((s) => s.trim()).filter(Boolean)
+  ),
   presenceTtlSeconds: parseNumber(process.env.YAKLOG_PRESENCE_TTL_S, 90),
   presenceSweepIntervalMs: parseNumber(process.env.YAKLOG_PRESENCE_SWEEP_MS, 30_000),
   isProduction: process.env.NODE_ENV === 'production'

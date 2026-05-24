@@ -1,6 +1,8 @@
 const express = require('express');
 const fs = require('fs');
+const path = require('path');
 const crypto = require('crypto');
+const { execFileSync } = require('child_process');
 const { insertMessage, listMessages, listChannels, updateMessage, deleteMessage, getMessage,
         upsertPresence, getPresenceByAgent, listPresence, listPresenceTransitions } = require('./db');
 const { streamHandler } = require('./stream');
@@ -10,7 +12,10 @@ const { enforceDaemonBinding } = require('./middleware/daemonBinding');
 
 const AGENT_ID_RE = /^[a-zA-Z0-9._:@/-]{1,64}$/;
 const DAEMON_STATES = new Set(['up', 'down']);
-const SESSION_STATES = new Set(['active', 'idle', 'unknown', 'tool_running', 'idle_between_tools']);
+// v0.5.7: stop_failure added per daemon StopFailure hook recognition.
+// Sticky like idle/down; sets last_stop_reason="failure" upstream for the
+// Amendment-1 silence-ambiguity sunset signal.
+const SESSION_STATES = new Set(['active', 'idle', 'unknown', 'tool_running', 'idle_between_tools', 'compacting', 'stop_failure']);
 
 const router = express.Router();
 
@@ -252,8 +257,46 @@ router.delete('/messages/:id', (req, res) => {
   return res.status(204).send();
 });
 
+// v0.5.7: validation whitelists for runtime-meta enum-ish fields.
+const TOOL_STATUS_VALUES = new Set(['ok', 'error']);
+const COMPACTION_REASON_VALUES = new Set(['manual', 'auto']);
+const STOP_REASON_VALUES = new Set(['natural', 'failure']);
+const SESSION_SOURCE_VALUES = new Set(['startup', 'resume', 'clear', 'compact']);
+// Bounds for free-text runtime-meta fields (model/tool name; substrate-local
+// distilled values, not user content — kept tight for sanity).
+const RUNTIME_META_STRING_MAX = 128;
+
+function validateOptionalEnum(value, allowed, fieldName) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'string' || !allowed.has(value)) {
+    return { error: 'ValidationError', message: `${fieldName} must be one of: ${[...allowed].join(', ')} (or null).` };
+  }
+  return null;
+}
+function validateOptionalString(value, fieldName, maxLen = RUNTIME_META_STRING_MAX) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'string' || value.length > maxLen) {
+    return { error: 'ValidationError', message: `${fieldName} must be a string (≤${maxLen} chars) or null.` };
+  }
+  return null;
+}
+function validateOptionalNonNegInt(value, fieldName) {
+  if (value === undefined || value === null) return null;
+  if (!Number.isInteger(value) || value < 0) {
+    return { error: 'ValidationError', message: `${fieldName} must be a non-negative integer or null.` };
+  }
+  return null;
+}
+
 router.post('/presence/event', (req, res) => {
-  const { agent_id, daemon_state, session_state, cursor_position, lock_held, sse_connected, last_hook_at, reason } = req.body || {};
+  const {
+    agent_id, daemon_state, session_state, cursor_position, lock_held,
+    sse_connected, last_hook_at, reason, events_consumer_count,
+    // v0.5.7 runtime-meta (all optional)
+    current_model, current_tool, last_tool_name, last_tool_status,
+    last_compaction_reason, last_compaction_at, last_stop_reason,
+    last_session_source, subagent_active_count
+  } = req.body || {};
 
   if (typeof agent_id !== 'string' || !AGENT_ID_RE.test(agent_id)) {
     return res.status(400).json({ error: 'ValidationError', message: 'agent_id is required and must match [a-zA-Z0-9._:@/-] (1-64 chars).' });
@@ -270,6 +313,37 @@ router.post('/presence/event', (req, res) => {
   if (last_hook_at !== undefined && last_hook_at !== null && typeof last_hook_at !== 'string') {
     return res.status(400).json({ error: 'ValidationError', message: 'last_hook_at must be an ISO-8601 string or null.' });
   }
+  // v0.5.6: events_consumer_count optional (older daemons don't send); when sent, must be non-negative integer or null
+  if (events_consumer_count !== undefined && events_consumer_count !== null
+      && (!Number.isInteger(events_consumer_count) || events_consumer_count < 0)) {
+    return res.status(400).json({ error: 'ValidationError', message: 'events_consumer_count must be a non-negative integer or null.' });
+  }
+  // v0.5.7 runtime-meta validation. All optional; strict whitelists for
+  // enum-shaped fields; bounded strings for free-text; non-negative ints.
+  // Privacy-by-design: server doesn't accept arbitrary content here — only
+  // values the daemon's distillation layer is supposed to produce.
+  for (const [val, allowed, name] of [
+    [last_tool_status, TOOL_STATUS_VALUES, 'last_tool_status'],
+    [last_compaction_reason, COMPACTION_REASON_VALUES, 'last_compaction_reason'],
+    [last_stop_reason, STOP_REASON_VALUES, 'last_stop_reason'],
+    [last_session_source, SESSION_SOURCE_VALUES, 'last_session_source'],
+  ]) {
+    const e = validateOptionalEnum(val, allowed, name);
+    if (e) return res.status(400).json(e);
+  }
+  for (const [val, name] of [
+    [current_model, 'current_model'],
+    [current_tool, 'current_tool'],
+    [last_tool_name, 'last_tool_name'],
+    [last_compaction_at, 'last_compaction_at'],
+  ]) {
+    const e = validateOptionalString(val, name);
+    if (e) return res.status(400).json(e);
+  }
+  {
+    const e = validateOptionalNonNegInt(subagent_active_count, 'subagent_active_count');
+    if (e) return res.status(400).json(e);
+  }
 
   const violation = enforceDaemonBinding(req, agent_id);
   if (violation) {
@@ -284,7 +358,18 @@ router.post('/presence/event', (req, res) => {
     lock_held: !!lock_held,
     sse_connected: !!sse_connected,
     last_hook_at: last_hook_at ?? null,
-    reason: reason ?? null
+    reason: reason ?? null,
+    events_consumer_count: events_consumer_count ?? null,
+    // v0.5.7 runtime-meta passthrough (db.js applies COALESCE/raw semantics).
+    current_model: current_model ?? null,
+    current_tool: current_tool ?? null,
+    last_tool_name: last_tool_name ?? null,
+    last_tool_status: last_tool_status ?? null,
+    last_compaction_reason: last_compaction_reason ?? null,
+    last_compaction_at: last_compaction_at ?? null,
+    last_stop_reason: last_stop_reason ?? null,
+    last_session_source: last_session_source ?? null,
+    subagent_active_count: subagent_active_count ?? null
   });
 
   return res.status(200).json({ presence });
@@ -293,7 +378,10 @@ router.post('/presence/event', (req, res) => {
 function presenceEtag(rows) {
   const hash = crypto.createHash('sha256');
   for (const row of rows) {
-    hash.update(`${row.agent_id}:${row.daemon_state}:${row.session_state}:${row.cursor_position ?? ''}:${row.lock_held ? 1 : 0}:${row.last_state_change_at}\n`);
+    // v0.5.7: include runtime-meta in ETag so dashboard refreshes when meta
+    // changes even if session_state/label don't. current_tool especially is
+    // a fast-moving field that the dashboard wants reflected within seconds.
+    hash.update(`${row.agent_id}:${row.daemon_state}:${row.session_state}:${row.cursor_position ?? ''}:${row.lock_held ? 1 : 0}:${row.last_state_change_at}:${row.current_model ?? ''}:${row.current_tool ?? ''}:${row.last_tool_name ?? ''}:${row.last_tool_status ?? ''}:${row.subagent_active_count ?? ''}:${row.last_stop_reason ?? ''}\n`);
   }
   return `"${hash.digest('hex').slice(0, 16)}"`;
 }
@@ -331,15 +419,20 @@ router.get('/presence/:agent_id', (req, res) => {
 
 router.get('/stream', streamHandler);
 
-router.get('/spec', (req, res) => {
+// Canonical-doc name validator: lowercase letters/digits/dot/dash/underscore,
+// must end in .md. Rejects anything that could traverse paths or load
+// non-markdown content (no slashes, no leading dots, no .. segments).
+const CANONICAL_NAME_RE = /^[a-z0-9][a-z0-9._-]*\.md$/i;
+
+function serveCanonical(res, absPath, sourceLabel) {
   let buf;
   try {
-    buf = fs.readFileSync(config.specPath);
+    buf = fs.readFileSync(absPath);
   } catch (err) {
     if (err.code === 'ENOENT') {
       return res.status(404).json({
         error: 'NotFound',
-        message: `spec file not configured or missing at ${config.specPath}`
+        message: `canonical doc not present at ${sourceLabel}`
       });
     }
     throw err;
@@ -349,11 +442,143 @@ router.get('/spec', (req, res) => {
   res.set('ETag', etag);
   res.set('Cache-Control', 'no-cache');
 
-  if (req.headers['if-none-match'] === etag) {
+  if (res.req.headers['if-none-match'] === etag) {
     return res.status(304).end();
   }
 
   res.set('Content-Type', 'text/markdown; charset=utf-8');
+  return res.status(200).send(buf);
+}
+
+// GET /spec — backward-compat. Serves yaklog.md from the canonical-docs
+// directory if present; falls back to the legacy single-file specPath if
+// not. New consumers should prefer GET /spec/<name> for explicit doc choice.
+router.get('/spec', (req, res) => {
+  const dirYaklog = path.join(config.specDir, 'yaklog.md');
+  if (fs.existsSync(dirYaklog)) {
+    return serveCanonical(res, dirYaklog, dirYaklog);
+  }
+  return serveCanonical(res, config.specPath, config.specPath);
+});
+
+// GET /spec/:name — serve any canonical doc by basename from specDir.
+// Name must match CANONICAL_NAME_RE (basename only, .md only) to prevent
+// path traversal and accidental non-doc content service.
+router.get('/spec/:name', (req, res) => {
+  const name = req.params.name;
+  if (!CANONICAL_NAME_RE.test(name)) {
+    return res.status(400).json({
+      error: 'ValidationError',
+      message: 'canonical doc name must match [a-z0-9][a-z0-9._-]*\\.md (basename only).'
+    });
+  }
+  const absPath = path.join(config.specDir, name);
+  // Belt-and-suspenders: ensure resolved path stays under specDir.
+  if (!path.resolve(absPath).startsWith(path.resolve(config.specDir) + path.sep)) {
+    return res.status(400).json({
+      error: 'ValidationError',
+      message: 'canonical doc name resolved outside specDir.'
+    });
+  }
+  return serveCanonical(res, absPath, name);
+});
+
+// GET /canonical/:repo/:treeish/* — serve any blob from an allowlisted
+// bare-git repo. Use case: Mac substrate (or any client) needs canonical
+// hooks/scripts/docs from agent-tooling.git or agent-globals.git without
+// SSH or git client. Path is express splat (req.params[0]).
+//
+// Safety: repo must be allowlisted; treeish + path validated against
+// strict regexes (no .., no leading dash, no shell meta); git is invoked
+// via execFileSync with explicit args (no shell). ETag from blob sha.
+const REPO_RE = /^[a-z0-9][a-z0-9._-]*$/i;
+// Treeish: sha-ish (hex) OR branch/tag name. Reject leading dash (could be
+// parsed as git option). Allow `/` for refs like `refs/heads/main`.
+const TREEISH_RE = /^[a-z0-9][a-z0-9._/-]*$/i;
+// Path: blob-path within repo. No leading dash; no .. segments. `@` is allowed
+// (load-bearing for systemd template-unit filenames like `monitor-watchdog@.service`,
+// per secops #5621 finding when Mac substrate tried to fetch via /canonical).
+const CANONICAL_BLOB_PATH_RE = /^[a-z0-9][a-z0-9._/@-]*$/i;
+
+function canonicalContentType(blobPath) {
+  if (blobPath.endsWith('.md')) return 'text/markdown; charset=utf-8';
+  if (blobPath.endsWith('.json')) return 'application/json; charset=utf-8';
+  if (blobPath.endsWith('.sh') || blobPath.endsWith('.py') || blobPath.endsWith('.js')) {
+    return 'text/plain; charset=utf-8';
+  }
+  return 'application/octet-stream';
+}
+
+router.get('/canonical/:repo/:treeish/*', (req, res) => {
+  const { repo, treeish } = req.params;
+  const blobPath = req.params[0];
+
+  if (!REPO_RE.test(repo) || !config.canonicalRepoAllowlist.has(repo)) {
+    return res.status(404).json({
+      error: 'NotFound',
+      message: `repo "${repo}" not in canonical allowlist.`
+    });
+  }
+  if (!TREEISH_RE.test(treeish) || treeish.includes('..')) {
+    return res.status(400).json({
+      error: 'ValidationError',
+      message: 'treeish must match [a-z0-9][a-z0-9._/-]* with no .. segments.'
+    });
+  }
+  if (!CANONICAL_BLOB_PATH_RE.test(blobPath) || blobPath.split('/').some((seg) => seg === '..')) {
+    return res.status(400).json({
+      error: 'ValidationError',
+      message: 'path must match [a-z0-9][a-z0-9._/-]* with no .. segments.'
+    });
+  }
+
+  const gitDir = path.join(config.bareGitDir, `${repo}.git`);
+  if (!fs.existsSync(gitDir)) {
+    return res.status(404).json({
+      error: 'NotFound',
+      message: `bare-git repo "${repo}.git" not present at ${gitDir}.`
+    });
+  }
+
+  // Resolve blob sha for ETag (cheap; fails fast on bad treeish/path).
+  let blobSha;
+  try {
+    blobSha = execFileSync('git', ['--git-dir', gitDir, 'rev-parse', `${treeish}:${blobPath}`], {
+      encoding: 'utf-8',
+      timeout: 5000,
+      stdio: ['ignore', 'pipe', 'pipe']
+    }).trim();
+  } catch (err) {
+    return res.status(404).json({
+      error: 'NotFound',
+      message: `blob "${treeish}:${blobPath}" not found in ${repo}.git.`
+    });
+  }
+
+  const etag = `"${blobSha}"`;
+  res.set('ETag', etag);
+  res.set('Cache-Control', 'no-cache');
+  if (req.headers['if-none-match'] === etag) {
+    return res.status(304).end();
+  }
+
+  // Stream blob content via git cat-file (binary-safe).
+  let buf;
+  try {
+    buf = execFileSync('git', ['--git-dir', gitDir, 'cat-file', 'blob', blobSha], {
+      timeout: 10000,
+      maxBuffer: 16 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+  } catch (err) {
+    return res.status(500).json({
+      error: 'InternalServerError',
+      message: 'failed to read blob from bare-git.'
+    });
+  }
+
+  res.set('Content-Type', canonicalContentType(blobPath));
+  res.set('X-Canonical-Blob-Sha', blobSha);
   return res.status(200).send(buf);
 });
 

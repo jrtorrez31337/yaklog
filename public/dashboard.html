@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>yaklog cluster · eyes-on-glass</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg: #0f1116;
+    --panel: #161922;
+    --border: #262b38;
+    --text: #d8dde6;
+    --muted: #8a93a6;
+    --green: #4ade80;
+    --green-bg: #103021;
+    --yellow: #facc15;
+    --yellow-bg: #3a2c0a;
+    --red: #f87171;
+    --red-bg: #371919;
+    --blue: #60a5fa;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); font: 14px/1.5 ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+  header { padding: 14px 18px; background: var(--panel); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+  h1 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: 0.5px; }
+  h1 .muted { color: var(--muted); font-weight: 400; }
+  .counts { display: flex; gap: 12px; flex-wrap: wrap; }
+  .count { padding: 3px 9px; border-radius: 4px; font-size: 12px; font-weight: 500; }
+  .count.online { background: var(--green-bg); color: var(--green); }
+  .count.daemon_only { background: #25282d; color: #8a93a6; }
+  .count.stalled { background: var(--yellow-bg); color: var(--yellow); }
+  .count.offline { background: var(--red-bg); color: var(--red); }
+  .meta { margin-left: auto; color: var(--muted); font-size: 12px; display: flex; gap: 14px; align-items: center; }
+  .hwm-badge { padding: 3px 9px; border-radius: 4px; background: #1a2540; color: var(--blue); font-weight: 500; font-size: 12px; }
+  .pulse { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 6px var(--green); margin-right: 5px; vertical-align: middle; }
+  .pulse.stale { background: var(--yellow); box-shadow: 0 0 6px var(--yellow); }
+  .pulse.error { background: var(--red); box-shadow: 0 0 6px var(--red); }
+  #banner { display: none; padding: 9px 18px; background: var(--red-bg); color: var(--red); border-bottom: 1px solid var(--red); font-size: 13px; }
+  #banner.visible { display: block; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { padding: 9px 14px; text-align: left; border-bottom: 1px solid var(--border); font-size: 13px; }
+  th { background: var(--panel); color: var(--muted); font-weight: 500; cursor: pointer; user-select: none; position: sticky; top: 0; z-index: 1; }
+  th:hover { color: var(--text); }
+  th .arrow { color: var(--blue); margin-left: 4px; }
+  tr:hover td { background: rgba(255,255,255,0.02); }
+  td.agent { font-weight: 500; }
+  td.label-cell { font-size: 12px; }
+  td.label-cell .badge { padding: 2px 7px; border-radius: 3px; font-weight: 500; }
+  .label-online .badge,
+  .label-online_idle .badge,
+  .label-online_idle_between_tools .badge,
+  .label-online_tool_running .badge { background: var(--green-bg); color: var(--green); }
+  .label-online_compacting .badge { background: #1a2540; color: var(--blue); }
+  .label-daemon_only .badge { background: #25282d; color: #8a93a6; }
+  .label-stop_failure .badge { background: var(--red-bg); color: var(--red); border: 1px solid var(--red); }
+  .label-stalled .badge,
+  .label-unknown .badge { background: var(--yellow-bg); color: var(--yellow); }
+  .label-offline .badge { background: var(--red-bg); color: var(--red); }
+  td.ts { color: var(--muted); font-size: 12px; white-space: nowrap; }
+  td.ts.recent { color: var(--text); }
+  td.ts.stale { color: var(--yellow); }
+  td.ts.old { color: var(--muted); opacity: 0.6; }
+  td.cursor { color: var(--muted); font-size: 12px; text-align: right; }
+  /* v0.5.7 runtime-meta columns */
+  td.model, td.tool, td.subagents { font-size: 12px; color: var(--muted); white-space: nowrap; }
+  td.model.has-value, td.tool.has-value { color: var(--text); }
+  td.tool.error { color: var(--red); }
+  td.subagents.active { color: var(--blue); font-weight: 500; }
+  td.tool .pill { padding: 1px 6px; border-radius: 3px; background: rgba(96,165,250,0.15); color: var(--blue); font-size: 11px; }
+  footer { padding: 10px 18px; color: var(--muted); font-size: 11px; text-align: center; border-top: 1px solid var(--border); }
+  footer a { color: var(--blue); text-decoration: none; }
+  footer a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<header>
+  <h1>yaklog <span class="muted">· cluster presence · eyes-on-glass</span></h1>
+  <div class="counts" id="counts"></div>
+  <div class="meta">
+    <span id="hwm" class="hwm-badge" title="Global highest message id across all channels. Per-agent cursors below are filtered streams (own-sender + mention-set), so cursor &lt; global HWM is the normal case, not a desync.">global HWM: —</span>
+    <span id="status"><span class="pulse" id="pulse"></span><span id="status-text">connecting…</span></span>
+    <span id="last-update">never</span>
+  </div>
+</header>
+<div id="banner"></div>
+<table>
+  <thead>
+    <tr id="thead-row">
+      <th data-sort="agent_id">agent_id</th>
+      <th data-sort="daemon_state">daemon</th>
+      <th data-sort="session_state">session</th>
+      <th data-sort="label">label</th>
+      <th data-sort="current_model" title="Active CC model (from SessionStart.payload.model; v0.5.7+ daemons populate; pre-v0.5.7 daemons leave blank).">model</th>
+      <th data-sort="current_tool" title="Currently-running tool (from PreToolUse.payload.tool_name; cleared on PostToolUse). When blank, shows last completed tool. Red text = last tool errored.">tool</th>
+      <th data-sort="subagent_active_count" style="text-align: right;" title="Number of subagents currently dispatched (SubagentStart - SubagentStop). Blue when &gt;0.">subs</th>
+      <th data-sort="last_hook_at">last hook</th>
+      <th data-sort="last_heartbeat_at">last heartbeat</th>
+      <th data-sort="cursor_position" style="text-align: right;" title="Per-agent filtered-stream cursor. Each agent's daemon consumes its own filter (mentions + aliases, exclude own-sender). cursor &lt; global HWM is normal — that's the count of recent messages not matched to this agent's filter, not a consume lag.">cursor</th>
+    </tr>
+  </thead>
+  <tbody id="rows"></tbody>
+</table>
+<footer>polling <code>/api/v1/presence/public</code> every 2s · ETag-cached · server: <code id="origin"></code></footer>
+
+<script src="/dashboard.js"></script>
+</body>
+</html>
