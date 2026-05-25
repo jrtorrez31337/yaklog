@@ -20,14 +20,27 @@ receivers:
         endpoint: 0.0.0.0:4318  # exposed on host as 4328
 
 processors:
-  # Resource processor: ensures plexus.agent_id resource attribute is preserved
-  # end-to-end (set by per-agent OTEL_RESOURCE_ATTRIBUTES env var on the
-  # client side; this just ensures we don't accidentally strip it).
-  resource:
-    attributes:
-      - key: plexus.collector_received_at
-        action: insert
-        value: "true"  # presence flag; could become a timestamp transform later
+  # Resource processor: explicitly a no-op in Stage 1.
+  # CP1 attempt: had `insert plexus.collector_received_at="true"` as a
+  # "presence flag" -- this produced a literal "true" string as a Prom label
+  # value on EVERY series (caught during CP2 canary 2026-05-25). Useless as
+  # a label, just noise + cardinality. Removed.
+  #
+  # Identity + fingerprint fields (user_email, user_id, user_account_id,
+  # user_account_uuid, organization_id, host_arch, os_type, os_version,
+  # terminal_type, service_version) intentionally NOT scrubbed here -- in
+  # this cluster each agent runs under its own unix UID + its own Claude
+  # Pro/Max account, so those fields are legitimate per-account slicing
+  # dims (per Jon-direct 2026-05-25 mid CP4 design; see feedback memory
+  # feedback_plexus_identity_overlay_not_columns). Presentation-layer
+  # hygiene (overlay popup vs splattered columns) is a dashboard-side
+  # concern, NOT a collector-side scrub.
+  #
+  # If a future deployment IS multi-org-multi-user and DOES need to scrub
+  # PII at the collector boundary, add a resource processor here with
+  # `delete` actions on the relevant keys -- but that's a per-deployment
+  # config choice, not a Stage 1 default.
+
   # Batch processor: standard performance optimization; group exports.
   batch:
     timeout: 5s
@@ -60,11 +73,11 @@ service:
   pipelines:
     metrics:
       receivers: [otlp]
-      processors: [resource, batch]
+      processors: [batch]  # resource processor removed mid-CP4; was injecting useless literal "true" label
       exporters: [prometheus, debug]
     logs:
       receivers: [otlp]
-      processors: [resource, batch]
+      processors: [batch]
       exporters: [debug]  # Stage 1: stdout-only for audit visibility;
                           # Stage 1 CP4 may add a file sink for retention
   telemetry:
