@@ -94,8 +94,55 @@
   .uplot .u-legend .u-value { color: var(--text); }
   .uplot .u-cursor-x, .uplot .u-cursor-y { border-color: var(--blue) !important; opacity: 0.5; }
 
-  /* Section divider before existing presence table. */
-  .section-divider { padding: 14px 18px 8px; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; border-top: 1px solid var(--border); margin-top: 4px; }
+  /* Section divider. */
+  .section-divider { padding: 14px 18px 8px; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; border-top: 1px solid var(--border); margin-top: 4px; display: flex; align-items: baseline; gap: 10px; }
+
+  /* CP6.3 — AgentCard grid (replaces presence table). One card per
+     cluster agent; each card has 4 dot-tab views (Live/Activity/Cost/Identity). */
+  .cards-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 10px; padding: 4px 18px 18px; }
+  .agent-card { background: var(--panel); border: 1px solid var(--border); border-radius: 4px; overflow: hidden; display: flex; flex-direction: column; min-height: 240px; }
+  .agent-card.is-offline { opacity: 0.55; }
+  .agent-card.has-error { border-color: var(--red); }
+  .agent-card-head { padding: 9px 12px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-height: 38px; }
+  .agent-card-head .name { font-weight: 600; color: var(--text); font-size: 13px; }
+  .agent-card-head .label-badge { padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 500; margin-left: 4px; }
+  .agent-card-body { flex: 1; padding: 10px 12px; min-height: 150px; position: relative; font-size: 12px; }
+  .agent-card-dots { padding: 6px 12px 8px; display: flex; justify-content: center; gap: 14px; border-top: 1px solid var(--border); background: rgba(255,255,255,0.01); }
+  .agent-card-dots button { background: transparent; border: 0; padding: 4px 2px; cursor: pointer; color: var(--muted); font-size: 18px; line-height: 1; position: relative; }
+  .agent-card-dots button:hover { color: var(--text); }
+  .agent-card-dots button.active { color: var(--blue); }
+  .agent-card-dots button::after {
+    content: attr(data-view-label);
+    position: absolute; bottom: -16px; left: 50%; transform: translateX(-50%);
+    font-size: 9px; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--muted); opacity: 0; transition: opacity 0.1s;
+    white-space: nowrap; pointer-events: none;
+  }
+  .agent-card-dots button:hover::after, .agent-card-dots button.active::after { opacity: 1; }
+  .agent-card-dots { padding-bottom: 22px; }
+
+  /* Per-view styles inside .agent-card-body */
+  .view-live dl { margin: 0; display: grid; grid-template-columns: 80px 1fr; gap: 4px 10px; }
+  .view-live dt { color: var(--muted); font-size: 11px; }
+  .view-live dd { margin: 0; color: var(--text); font-size: 12px; word-break: break-all; }
+  .view-live dd.muted { color: var(--muted); }
+  .view-live .stat-row { display: flex; justify-content: space-between; gap: 8px; padding: 4px 0; font-variant-numeric: tabular-nums; }
+  .view-live .stat-row .k { color: var(--muted); font-size: 11px; }
+  .view-live .stat-row .v { color: var(--text); font-size: 12px; font-weight: 500; }
+  .view-activity .chart-host, .view-cost .chart-host { height: 130px; }
+  .view-cost .cum { font-size: 22px; font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; padding-bottom: 4px; }
+  .view-cost .cum-sub { color: var(--muted); font-size: 10px; padding-bottom: 6px; }
+  .view-identity dl { margin: 0; display: grid; grid-template-columns: 100px 1fr; gap: 2px 8px; }
+  .view-identity dt { color: var(--muted); font-size: 10px; }
+  .view-identity dd { margin: 0; color: var(--text); font-size: 11px; word-break: break-all; }
+  .view-identity h4 { margin: 8px 0 2px; font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; font-weight: 500; }
+  .view-identity h4:first-child { margin-top: 0; }
+  .view-empty { color: var(--muted); font-size: 11px; text-align: center; padding: 30px 6px; opacity: 0.8; }
+  .agent-card-pills { display: flex; gap: 4px; margin-left: auto; }
+  .agent-card .otel-pill, .agent-card .mon-pill { padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 500; cursor: help; }
+  .agent-card .otel-pill.live { background: var(--green-bg); color: var(--green); }
+  .agent-card .otel-pill.quiet { background: rgba(250,204,21,0.10); color: var(--yellow); }
+  .agent-card .mon-pill { background: rgba(251,146,60,0.12); color: #fb923c; }
 
   table { width: 100%; border-collapse: collapse; }
   th, td { padding: 9px 14px; text-align: left; border-bottom: 1px solid var(--border); font-size: 13px; }
@@ -261,20 +308,12 @@
     </div>
   </div>
 
-  <div class="section-divider">cluster presence</div>
-  <table>
-    <thead>
-      <tr id="thead-row">
-        <th data-sort="agent_id" title="Click any agent name to open identity + runtime fingerprint + raw daemon/session/hook timing.">agent_id</th>
-        <th data-sort="label" title="Derived state. Click an agent name for raw daemon × session breakdown.">label</th>
-        <th data-sort="current_tool" title="Currently-running tool (from PreToolUse.payload.tool_name; cleared on PostToolUse). When session_state=tool_running but tool_name unavailable, shows (running). Otherwise shows last completed tool prefixed 'last:'.">tool</th>
-        <th data-sort="subagent_active_count" style="text-align: right;" title="Number of subagents currently dispatched (SubagentStart - SubagentStop). Blue when &gt;0.">subs</th>
-        <th data-sort="last_heartbeat_at" title="Recency. Heartbeat tracks daemon liveness (~30s cadence); last hook timing is in the popover.">last heartbeat</th>
-        <th data-sort="cursor_position" style="text-align: right;" title="Per-agent filtered-stream cursor. cursor &lt; global HWM is normal — that's the count of recent messages not matched to this agent's filter, not a consume lag.">cursor</th>
-      </tr>
-    </thead>
-    <tbody id="rows"></tbody>
-  </table>
+  <div class="section-divider">
+    cluster agents <span id="cards-meta" style="text-transform: none; letter-spacing: 0; font-size: 11px;">—</span>
+  </div>
+  <div id="cards-grid" class="cards-grid">
+    <div class="chart-loading">loading agents…</div>
+  </div>
 </section>
 
 <!-- Cost tab: full per-account attribution view (CP3). -->

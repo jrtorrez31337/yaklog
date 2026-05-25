@@ -60,7 +60,12 @@
   }
   function clearChildren(node) { while (node.firstChild) node.removeChild(node.firstChild); }
 
-  function makeRow(r) {
+  // CP6.3: makeRow + thead-click handler retired with the presence table.
+  // Presence data now feeds AgentCard grid via render() → renderCards().
+  // _UNUSED_ — kept as deadcode reference for v0.5.7-era tooling that
+  // looked for the table; safe to delete in a later commit. Compiler-
+  // unused; kept as comment only.
+  function _retired_makeRow(r) {
     const labelStr = r.label || '';
     const tr = el('tr', { class: 'label-' + labelStr });
     // CP3 + CP4 a11y: agent cell is a popover trigger; keyboard-focusable.
@@ -184,18 +189,8 @@
     if (counts.stop_failure > 0) countsNode.appendChild(el('span', { class: 'count offline', title: 'sessions terminated by API/rate-limit error (v0.5.7)' }, counts.stop_failure + ' stop_failure'));
     countsNode.appendChild(el('span', { class: 'count offline' }, counts.offline + ' offline'));
 
-    const rowsNode = $('rows'); clearChildren(rowsNode);
-    for (const r of rows) rowsNode.appendChild(makeRow(r));
-
-    document.querySelectorAll('#thead-row th[data-sort]').forEach(th => {
-      const k = th.getAttribute('data-sort');
-      clearChildren(th);
-      th.appendChild(document.createTextNode(COLUMN_LABELS[k] || k));
-      if (k === sort.key) {
-        th.appendChild(document.createTextNode(' '));
-        th.appendChild(el('span', { class: 'arrow' }, sort.dir === 'desc' ? '▼' : '▲'));
-      }
-    });
+    // CP6.3: feed cards instead of a table.
+    renderCards(rows);
   }
 
   function setStatus(state, text) {
@@ -234,16 +229,9 @@
     pollTimer = setTimeout(poll, backoff);
   }
 
-  document.querySelectorAll('#thead-row th[data-sort]').forEach(th => {
-    th.addEventListener('click', () => {
-      const k = th.getAttribute('data-sort');
-      if (sort.key === k) sort.dir = sort.dir === 'desc' ? 'asc' : 'desc';
-      else { sort.key = k; sort.dir = 'desc'; }
-      if (lastData) render(lastData);
-    });
-  });
-
-  setInterval(() => { if (lastData) render(lastData); }, 1000);
+  // CP6.3: 1s ticker re-renders cards so "last hook age" / freshness
+  // counters tick without a server roundtrip.
+  setInterval(() => { if (lastData) renderCards(lastData.presence); }, 1000);
 
   // ────────────────────────────────────────────────────────────────────
   // CP2: tab navigation (URL-fragment-persisted; #live default / #cost).
@@ -676,6 +664,347 @@
     for (const c of charts) c._tickStatus();
     if (acctState.lastFrameMs) renderAcctNumbers();
   }, 1000);
+
+  // ────────────────────────────────────────────────────────────────────
+  // CP6.3 — AgentCard grid (replaces presence table).
+  // One card per presence row. 4 dot-tab views per card:
+  //   Live · Activity · Cost · Identity
+  // Cards reuse SSE frame cache for per-agent telemetry; identity is
+  // lazy-fetched via the agent.identity.byAgentId instant template.
+  // ────────────────────────────────────────────────────────────────────
+
+  const VIEW_LABELS = ['Live', 'Activity', 'Cost', 'Identity'];
+  const cardInstances = new Map();    // agent_id → AgentCard
+  // Per-agent latest SSE frame slices (for chart views).
+  const perAgentFrames = {
+    tokensByAgent: null,    // tokens.rate.byAgent matrix
+    costByAgent: null,      // cost.rate.byAgent matrix
+    activeTimeByAgent: null,// active_time.rate.byAgent matrix
+    costCumByAgent: null,   // cluster.cost.topAgents (cumulative)
+  };
+
+  function noteAgentFrame(payload) {
+    if (!payload || !payload.template) return;
+    switch (payload.template) {
+      case 'tokens.rate.byAgent':       perAgentFrames.tokensByAgent = payload; break;
+      case 'cost.rate.byAgent':         perAgentFrames.costByAgent = payload; break;
+      case 'active_time.rate.byAgent':  perAgentFrames.activeTimeByAgent = payload; break;
+      case 'cluster.cost.topAgents':    perAgentFrames.costCumByAgent = payload; break;
+      default: return;
+    }
+    // Push to any cards currently showing Activity or Cost view
+    for (const card of cardInstances.values()) {
+      if (card.currentView === 1 || card.currentView === 2) card.rerenderBody();
+    }
+  }
+  // Subscribe via the same SSE listener pattern the accounting card uses.
+  // The accounting connect-monkeypatch already installed an event listener;
+  // we need to ALSO get cluster.cost.topAgents + the per-agent rate frames
+  // to flow into per-card state. The cleanest hook is to extend the existing
+  // PlexusLiveStream.connect monkey-patch.
+  const _origConnectForCards = PlexusLiveStream.prototype.connect;
+  PlexusLiveStream.prototype.connect = function () {
+    _origConnectForCards.call(this);
+    if (!this.es) return;
+    this.es.addEventListener('frame', (ev) => {
+      try { noteAgentFrame(JSON.parse(ev.data)); } catch { /* ignore */ }
+    });
+  };
+
+  // Filter Prom matrix-series to those whose plexus_agent_id matches.
+  function seriesForAgent(payload, agentId) {
+    if (!payload || !payload.data || !payload.data.result) return [];
+    return payload.data.result.filter(s => s.metric && s.metric.plexus_agent_id === agentId);
+  }
+
+  // Convert filtered matrix series to a single aggregate uPlot data array
+  // (sum across all matching series at each timestamp). Returns null if no
+  // data at all. Keeps cards visually simple — one line per chart.
+  function aggregateSeriesToUplot(series) {
+    if (!series.length) return null;
+    const tsSet = new Set();
+    for (const s of series) for (const [t] of s.values) tsSet.add(t);
+    const tsList = [...tsSet].sort((a, b) => a - b);
+    const tsIndex = new Map(tsList.map((t, i) => [t, i]));
+    const sum = new Array(tsList.length).fill(0);
+    const has = new Array(tsList.length).fill(false);
+    for (const s of series) {
+      for (const [t, v] of s.values) {
+        const i = tsIndex.get(t);
+        const parsed = parseFloat(v);
+        if (Number.isFinite(parsed)) { sum[i] += parsed; has[i] = true; }
+      }
+    }
+    const vals = sum.map((v, i) => has[i] ? v : null);
+    return [tsList, vals];
+  }
+
+  // Tiny inline chart helper (smaller than PlexusChart; no legend; fixed height).
+  function tinyChart(hostEl, data, opts = {}) {
+    if (hostEl._uplot) { hostEl._uplot.destroy(); hostEl._uplot = null; }
+    clearChildren(hostEl);
+    if (!data || !data[0].length) {
+      hostEl.appendChild(el('div', { class: 'view-empty' }, opts.emptyText || 'no data'));
+      return;
+    }
+    hostEl._uplot = new uPlot({
+      width: hostEl.clientWidth - 4,
+      height: 130,
+      series: [
+        { label: 't' },
+        { label: opts.label || 'value', stroke: opts.stroke || '#60a5fa', width: 1.5,
+          fill: opts.fill || 'rgba(96,165,250,0.08)',
+          value: (u, v) => v == null ? '—' : (opts.fmt ? opts.fmt(v) : v.toFixed(2)) },
+      ],
+      scales: { x: { time: true } },
+      axes: [
+        { stroke: '#8a93a6', grid: { stroke: 'rgba(255,255,255,0.04)' }, size: 24 },
+        { stroke: '#8a93a6', grid: { stroke: 'rgba(255,255,255,0.04)' }, size: 40 },
+      ],
+      legend: { show: false },
+      cursor: { drag: { x: true, y: false }, points: { show: true } },
+    }, data, hostEl);
+  }
+
+  // POPOVER_IDENTITY_FIELDS + POPOVER_SECTIONS are defined further below
+  // (CP3 popover code); we reference them at view-render time so the
+  // identity view shares its schema with the popover (when popover still
+  // exists post-CP6.3 — TODO consider removing popover since cards now
+  // show identity inline).
+
+  class AgentCard {
+    constructor(agentId) {
+      this.agentId = agentId;
+      this.currentView = 0;
+      this.identityCache = null;   // lazy-fetched on first Identity view
+      this.identityFetching = false;
+      this.presence = null;        // latest presence row
+      this.el = el('div', { class: 'agent-card', 'data-agent-id': agentId });
+      this.headEl = el('div', { class: 'agent-card-head' });
+      this.bodyEl = el('div', { class: 'agent-card-body' });
+      this.dotsEl = el('div', { class: 'agent-card-dots' });
+      this.el.appendChild(this.headEl);
+      this.el.appendChild(this.bodyEl);
+      this.el.appendChild(this.dotsEl);
+      this._buildDots();
+    }
+    _buildDots() {
+      for (let i = 0; i < 4; i++) {
+        const btn = el('button', {
+          type: 'button',
+          'data-view': String(i),
+          'data-view-label': VIEW_LABELS[i],
+          'aria-label': `${VIEW_LABELS[i]} view`,
+        }, i === 0 ? '●' : '○');
+        if (i === 0) btn.classList.add('active');
+        btn.addEventListener('click', () => this.setView(i));
+        this.dotsEl.appendChild(btn);
+      }
+    }
+    setView(idx) {
+      if (idx === this.currentView) return;
+      this.currentView = idx;
+      const dots = this.dotsEl.querySelectorAll('button');
+      dots.forEach((b, i) => {
+        b.textContent = (i === idx) ? '●' : '○';
+        b.classList.toggle('active', i === idx);
+      });
+      this.rerenderBody();
+    }
+    update(presenceRow) {
+      this.presence = presenceRow;
+      this._renderHead();
+      this.rerenderBody();
+    }
+    _renderHead() {
+      clearChildren(this.headEl);
+      const r = this.presence || {};
+      this.headEl.appendChild(el('span', { class: 'name' }, r.agent_id || this.agentId));
+      const lbl = r.label || '';
+      this.headEl.appendChild(el('span', {
+        class: 'label-badge label-' + lbl,
+        title: `daemon=${r.daemon_state || '?'} · session=${r.session_state || '?'}`,
+      }, lbl));
+      const pills = el('span', { class: 'agent-card-pills' });
+      const otel = agentOtelStatus(this.agentId);
+      if (otel) {
+        const tip = otel.kind === 'live'
+          ? `Plexus OTel data observed ${otel.ageS}s ago`
+          : `OTel data stale (${Math.floor(otel.ageS/60)}m ago)`;
+        pills.appendChild(el('span', { class: 'otel-pill ' + otel.kind, title: tip },
+          otel.kind === 'live' ? 'OTel' : 'OTel quiet'));
+      }
+      if (r.events_consumer_count === 0 && r.daemon_state === 'up') {
+        pills.appendChild(el('span', {
+          class: 'mon-pill',
+          title: 'events.ndjson Monitor subprocess is dead',
+        }, 'Monitor dead'));
+      }
+      this.headEl.appendChild(pills);
+      // Online/offline visual treatment
+      this.el.classList.toggle('is-offline', r.label === 'offline');
+    }
+    rerenderBody() {
+      switch (this.currentView) {
+        case 0: this._renderLive(); break;
+        case 1: this._renderActivity(); break;
+        case 2: this._renderCost(); break;
+        case 3: this._renderIdentity(); break;
+      }
+    }
+    _renderLive() {
+      clearChildren(this.bodyEl);
+      this.bodyEl.className = 'agent-card-body view-live';
+      const r = this.presence || {};
+      const dl = el('dl');
+      const fields = [
+        ['daemon', r.daemon_state || '—'],
+        ['session', r.session_state || '—'],
+        ['model', shortenModel(r.current_model) || '—'],
+        ['tool', r.current_tool
+          || (r.session_state === 'tool_running' ? '(running)' : (r.last_tool_name ? `last: ${r.last_tool_name}` : '—'))],
+        ['last hook', fmtAge(r.last_hook_at)],
+        ['heartbeat', fmtAge(r.last_heartbeat_at)],
+        ['subs', r.subagent_active_count == null ? '—' : String(r.subagent_active_count)],
+        ['cursor', r.cursor_position == null ? '—' : String(r.cursor_position)],
+      ];
+      for (const [k, v] of fields) {
+        dl.appendChild(el('dt', null, k));
+        dl.appendChild(el('dd', null, String(v)));
+      }
+      this.bodyEl.appendChild(dl);
+    }
+    _renderActivity() {
+      clearChildren(this.bodyEl);
+      this.bodyEl.className = 'agent-card-body view-activity';
+      const series = seriesForAgent(perAgentFrames.tokensByAgent, this.agentId);
+      const data = aggregateSeriesToUplot(series);
+      const host = el('div', { class: 'chart-host' });
+      this.bodyEl.appendChild(el('div', { class: 'view-live' },
+        el('div', { class: 'stat-row' },
+          el('span', { class: 'k' }, 'tokens/s (5m rate, all types)'),
+          el('span', { class: 'v', id: 'rate-now-' + this.agentId },
+            data && data[1] ? (data[1][data[1].length - 1] || 0).toFixed(2) : '—'))));
+      this.bodyEl.appendChild(host);
+      tinyChart(host, data, {
+        label: 'tok/s',
+        fmt: (v) => v.toFixed(2) + ' tok/s',
+        emptyText: 'no OTel — install Path A',
+      });
+    }
+    _renderCost() {
+      clearChildren(this.bodyEl);
+      this.bodyEl.className = 'agent-card-body view-cost';
+      // Cumulative cost (instant; from cluster.cost.topAgents matrix)
+      let cum = null;
+      const cumPayload = perAgentFrames.costCumByAgent;
+      if (cumPayload && cumPayload.data && cumPayload.data.result) {
+        const match = cumPayload.data.result.find(s => s.metric.plexus_agent_id === this.agentId);
+        if (match) cum = parseFloat(match.value[1]);
+      }
+      this.bodyEl.appendChild(el('div', { class: 'cum' },
+        cum == null ? '—' : (cum >= 1 ? '$' + cum.toFixed(2) : '$' + cum.toFixed(4))));
+      this.bodyEl.appendChild(el('div', { class: 'cum-sub' }, 'cumulative all-time spend'));
+      // 1h cost rate trend
+      const series = seriesForAgent(perAgentFrames.costByAgent, this.agentId);
+      const data = aggregateSeriesToUplot(series);
+      const host = el('div', { class: 'chart-host' });
+      this.bodyEl.appendChild(host);
+      tinyChart(host, data, {
+        label: '$/s',
+        fmt: (v) => '$' + v.toFixed(6) + '/s',
+        emptyText: 'no OTel — install Path A',
+      });
+    }
+    async _renderIdentity() {
+      clearChildren(this.bodyEl);
+      this.bodyEl.className = 'agent-card-body view-identity';
+      if (this.identityCache === null && !this.identityFetching) {
+        this.identityFetching = true;
+        this.bodyEl.appendChild(el('div', { class: 'view-empty' }, 'fetching…'));
+        try {
+          const qs = new URLSearchParams({ template: 'agent.identity.byAgentId', agent_id: this.agentId });
+          const res = await fetch('/api/v1/plexus/public/query?' + qs.toString(), { cache: 'no-store' });
+          if (res.ok) {
+            const respBody = await res.json();
+            const results = respBody.data && respBody.data.result;
+            this.identityCache = (results && results.length > 0) ? results[0].metric : false;
+          } else {
+            this.identityCache = false;
+          }
+        } catch (e) { this.identityCache = false; }
+        this.identityFetching = false;
+        if (this.currentView !== 3) return;   // user moved on
+        clearChildren(this.bodyEl);
+      }
+      const metric = this.identityCache;
+      if (!metric) {
+        this.bodyEl.appendChild(el('div', { class: 'view-empty' },
+          'no OTel data — agent has not opted in to Plexus telemetry'));
+        return;
+      }
+      for (const sec of POPOVER_SECTIONS) {
+        const fields = POPOVER_IDENTITY_FIELDS.filter(f => f.section === sec.id && metric[f.key] != null);
+        if (!fields.length) continue;
+        this.bodyEl.appendChild(el('h4', null, sec.title));
+        const dl = el('dl');
+        for (const f of fields) {
+          const v = metric[f.key];
+          const display = f.truncate ? truncMid(v, f.truncate) : v;
+          dl.appendChild(el('dt', null, f.label));
+          dl.appendChild(el('dd', { title: v }, display));
+        }
+        this.bodyEl.appendChild(dl);
+      }
+    }
+  }
+
+  function renderCards(presence) {
+    const grid = $('cards-grid');
+    if (!grid) return;
+    // Sort: online states first, then by label, then by name
+    const sorted = presence.slice().sort((a, b) => {
+      const aOn = a.label && a.label.startsWith('online') ? 0 : 1;
+      const bOn = b.label && b.label.startsWith('online') ? 0 : 1;
+      if (aOn !== bOn) return aOn - bOn;
+      const ag = (a.label || '').localeCompare(b.label || '');
+      if (ag !== 0) return ag;
+      return (a.agent_id || '').localeCompare(b.agent_id || '');
+    });
+    // Build/update cards
+    const seenIds = new Set();
+    let firstPaint = false;
+    if (grid.querySelector('.chart-loading')) { clearChildren(grid); firstPaint = true; }
+    for (const r of sorted) {
+      seenIds.add(r.agent_id);
+      let card = cardInstances.get(r.agent_id);
+      if (!card) {
+        card = new AgentCard(r.agent_id);
+        cardInstances.set(r.agent_id, card);
+        grid.appendChild(card.el);
+      }
+      card.update(r);
+    }
+    // Remove cards for agents no longer in presence
+    for (const id of [...cardInstances.keys()]) {
+      if (!seenIds.has(id)) {
+        const card = cardInstances.get(id);
+        if (card && card.el && card.el.parentNode) card.el.parentNode.removeChild(card.el);
+        cardInstances.delete(id);
+      }
+    }
+    // Reorder DOM to match sort (cards may have been appended in old order)
+    for (const r of sorted) {
+      const card = cardInstances.get(r.agent_id);
+      if (card && card.el) grid.appendChild(card.el);
+    }
+    // Update meta
+    const metaEl = $('cards-meta');
+    if (metaEl) {
+      const otelN = sorted.filter(r => agentOtelStatus(r.agent_id)).length;
+      metaEl.textContent = `${sorted.length} agents · ${otelN} emitting OTel`;
+    }
+  }
 
   // ────────────────────────────────────────────────────────────────────
   // CP3: AgentPopover — click-to-open identity + runtime fingerprint card.
