@@ -48,11 +48,15 @@ const config = require('./config');
 
 const FRAMES = [
   {
-    name: 'tokens.rate.byAgent',
+    // v0.5.7.2: aggregate-only token rate per Jon-direct 2026-05-25
+    // ("only show aggregate not each agent, we will do each agent at
+    // another time"). Per-agent + per-type breakdown will come back as
+    // a separate template/panel when cluster adoption is broader.
+    name: 'tokens.rate.cluster',
     kind: 'range',
     lookbackS: 3600,
     step: '15s',
-    promql: 'sum by (plexus_agent_id, model, type) (rate(claude_code_token_usage_tokens_total[5m]))',
+    promql: 'sum(rate(claude_code_token_usage_tokens_total[5m]))',
   },
   {
     name: 'cost.rate.byAgent',
@@ -62,11 +66,22 @@ const FRAMES = [
     promql: 'sum by (plexus_agent_id, model) (rate(claude_code_cost_usage_USD_total[5m]))',
   },
   {
-    name: 'session.count.byAgent',
+    // v0.5.7.2: replaced cumulative-per-agent session count (was flat at
+    // 1 with only yaklog-dev-agent emitting → looked "not populating" to
+    // operator). Now reports "agents currently emitting OTel" — count
+    // of distinct plexus_agent_id with any RECENT active_time series.
+    //
+    // Why active_time and not session_count: session_count only emits
+    // ONCE per CC session (SessionStart event), so after ~5min of no new
+    // CC sessions starting Prom drops it from instant queries (staleness
+    // window). active_time_seconds_total pushes on every tool use, so it
+    // stays fresh as long as the agent is actively working — the correct
+    // signal for "is this agent currently emitting OTel right now."
+    name: 'agents.emitting.count',
     kind: 'range',
     lookbackS: 3600,
     step: '15s',
-    promql: 'sum by (plexus_agent_id) (claude_code_session_count_total)',
+    promql: 'count(count by (plexus_agent_id) (claude_code_active_time_seconds_total))',
   },
   {
     name: 'active_time.rate.byAgent',

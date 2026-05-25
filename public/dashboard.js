@@ -543,10 +543,15 @@
   };
 
   // Instantiate the 3 Live-tab charts + subscribe each to the live stream.
+  // v0.5.7.2: tokens chart is now cluster-aggregate (single line, no per-agent
+  // breakdown) per Jon-direct 2026-05-25. sessions chart now shows count of
+  // distinct agents currently emitting OTel (replaces the previously-flat
+  // per-agent cumulative counter that looked "not populating" with single
+  // emitter).
   const charts = [
     new PlexusChart(document.querySelector('[data-chart="tokens"]'), {
-      template: 'tokens.rate.byAgent',
-      otherFields: ['model', 'type'],
+      template: 'tokens.rate.cluster',
+      otherFields: [],
       valueFmt: (v) => v.toFixed(2) + ' tok/s',
     }),
     new PlexusChart(document.querySelector('[data-chart="cost"]'), {
@@ -555,9 +560,9 @@
       valueFmt: (v) => '$' + v.toFixed(6) + '/s',
     }),
     new PlexusChart(document.querySelector('[data-chart="sessions"]'), {
-      template: 'session.count.byAgent',
+      template: 'agents.emitting.count',
       otherFields: [],
-      valueFmt: (v) => String(Math.round(v)),
+      valueFmt: (v) => String(Math.round(v)) + ' agents',
     }),
   ];
   for (const c of charts) liveStream.subscribe(c.template, c);
