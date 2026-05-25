@@ -88,15 +88,27 @@
       class: 'model' + (modelStr ? ' has-value' : ''),
       title: r.current_model || 'pre-v0.5.7 daemon, or never reported SessionStart',
     }, modelStr || '—'));
+    // v0.5.7.1 (2026-05-25): when session_state=tool_running but current_tool
+    // is missing (CC 2.1.144 hooks fire with empty stdin in production, so
+    // tool_name never reaches the daemon), show "(running)" rather than
+    // falling back to a stale last_tool_name from sessions ago. Also prefix
+    // historical names with "last:" so operators can tell at a glance.
     const toolTd = el('td', { class: 'tool' });
+    const inFlight = (r.session_state === 'tool_running');
     if (r.current_tool) {
       toolTd.classList.add('has-value');
       toolTd.appendChild(el('span', { class: 'pill', title: 'currently running' }, r.current_tool));
+    } else if (inFlight) {
+      toolTd.classList.add('has-value');
+      toolTd.setAttribute('title', 'session_state=tool_running but CC did not deliver tool_name on hook stdin (CC 2.1.144 behavior)');
+      const pill = el('span', { class: 'pill' }, '(running)');
+      pill.style.opacity = '0.6';
+      toolTd.appendChild(pill);
     } else if (r.last_tool_name) {
       toolTd.classList.add('has-value');
       if (r.last_tool_status === 'error') toolTd.classList.add('error');
       toolTd.setAttribute('title', `last tool (${r.last_tool_status || '?'})`);
-      toolTd.appendChild(document.createTextNode(r.last_tool_name));
+      toolTd.appendChild(document.createTextNode('last: ' + r.last_tool_name));
     } else {
       toolTd.appendChild(document.createTextNode('—'));
     }
