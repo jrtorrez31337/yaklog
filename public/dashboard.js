@@ -530,21 +530,16 @@
     wireChartLegendPopovers(this);
   };
 
-  // Live-tab top: tokens (left) + cost-accounting card (middle) + agents-emitting (right).
-  // CP6.2 (refactor-in-place per Jon-direct): cost-rate-byAgent slot was REPLACED
-  // with an accounting view rendering CFO-grade numbers (today/7d/MTD/projEOM)
-  // + top-spenders ranked by agent or account. Per-agent cost-rate breakdown
-  // moves down into the AgentCard grid (CP6.3).
+  // Live-tab top: tokens (left) + cost-accounting card (right).
+  // CP6.6 (per Jon-direct 2026-05-25): removed the "agents emitting OTel"
+  // card — adoption-count info now lives in the card-grid section
+  // divider's "N agents · M emitting OTel" meta instead, freeing up
+  // top-row real estate.
   const charts = [
     new PlexusChart(document.querySelector('[data-chart="tokens"]'), {
       template: 'tokens.rate.cluster',
       otherFields: [],
       valueFmt: (v) => v.toFixed(2) + ' tok/s',
-    }),
-    new PlexusChart(document.querySelector('[data-chart="sessions"]'), {
-      template: 'agents.emitting.count',
-      otherFields: [],
-      valueFmt: (v) => String(Math.round(v)) + ' agents',
     }),
   ];
   for (const c of charts) liveStream.subscribe(c.template, c);
