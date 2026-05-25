@@ -685,14 +685,16 @@
 
   function noteAgentFrame(payload) {
     if (!payload || !payload.template) return;
+    const now = Date.now();
     switch (payload.template) {
-      case 'tokens.rate.byAgent':       perAgentFrames.tokensByAgent = payload; break;
-      case 'cost.rate.byAgent':         perAgentFrames.costByAgent = payload; break;
-      case 'active_time.rate.byAgent':  perAgentFrames.activeTimeByAgent = payload; break;
-      case 'cluster.cost.topAgents':    perAgentFrames.costCumByAgent = payload; break;
+      case 'tokens.rate.byAgent':       perAgentFrames.tokensByAgent = payload; perAgentFrames._tokensTs = now; break;
+      case 'cost.rate.byAgent':         perAgentFrames.costByAgent = payload; perAgentFrames._costTs = now; break;
+      case 'active_time.rate.byAgent':  perAgentFrames.activeTimeByAgent = payload; perAgentFrames._activeTs = now; break;
+      case 'cluster.cost.topAgents':    perAgentFrames.costCumByAgent = payload; perAgentFrames._cumTs = now; break;
       default: return;
     }
-    // Push to any cards currently showing Activity or Cost view
+    // Push to any cards currently showing Activity (1) or Cost (2) view.
+    // Perf: cards on Live (0) or Identity (3) don't redraw on telemetry frames.
     for (const card of cardInstances.values()) {
       if (card.currentView === 1 || card.currentView === 2) card.rerenderBody();
     }
@@ -764,6 +766,16 @@
       legend: { show: false },
       cursor: { drag: { x: true, y: false }, points: { show: true } },
     }, data, hostEl);
+  }
+
+  // CP6.4: freshness footer for chart views inside cards. Returns a small
+  // muted-text element showing "live · Ns ago" since the relevant frame
+  // last touched (matches the accounting card pattern).
+  function _freshnessEl(tsMs) {
+    if (!tsMs) return el('div', { class: 'view-freshness' }, 'no frame yet');
+    const ageS = Math.floor((Date.now() - tsMs) / 1000);
+    return el('div', { class: 'view-freshness' },
+      `live · ${ageS < 2 ? 'just now' : ageS + 's ago'}`);
   }
 
   // POPOVER_IDENTITY_FIELDS + POPOVER_SECTIONS are defined further below
@@ -879,23 +891,23 @@
       this.bodyEl.className = 'agent-card-body view-activity';
       const series = seriesForAgent(perAgentFrames.tokensByAgent, this.agentId);
       const data = aggregateSeriesToUplot(series);
-      const host = el('div', { class: 'chart-host' });
       this.bodyEl.appendChild(el('div', { class: 'view-live' },
         el('div', { class: 'stat-row' },
           el('span', { class: 'k' }, 'tokens/s (5m rate, all types)'),
-          el('span', { class: 'v', id: 'rate-now-' + this.agentId },
-            data && data[1] ? (data[1][data[1].length - 1] || 0).toFixed(2) : '—'))));
+          el('span', { class: 'v' },
+            data && data[1] && data[1].length ? (data[1][data[1].length - 1] || 0).toFixed(2) : '—'))));
+      const host = el('div', { class: 'chart-host' });
       this.bodyEl.appendChild(host);
       tinyChart(host, data, {
         label: 'tok/s',
         fmt: (v) => v.toFixed(2) + ' tok/s',
         emptyText: 'no OTel — install Path A',
       });
+      this.bodyEl.appendChild(_freshnessEl(perAgentFrames._tokensTs));
     }
     _renderCost() {
       clearChildren(this.bodyEl);
       this.bodyEl.className = 'agent-card-body view-cost';
-      // Cumulative cost (instant; from cluster.cost.topAgents matrix)
       let cum = null;
       const cumPayload = perAgentFrames.costCumByAgent;
       if (cumPayload && cumPayload.data && cumPayload.data.result) {
@@ -905,7 +917,6 @@
       this.bodyEl.appendChild(el('div', { class: 'cum' },
         cum == null ? '—' : (cum >= 1 ? '$' + cum.toFixed(2) : '$' + cum.toFixed(4))));
       this.bodyEl.appendChild(el('div', { class: 'cum-sub' }, 'cumulative all-time spend'));
-      // 1h cost rate trend
       const series = seriesForAgent(perAgentFrames.costByAgent, this.agentId);
       const data = aggregateSeriesToUplot(series);
       const host = el('div', { class: 'chart-host' });
@@ -915,6 +926,7 @@
         fmt: (v) => '$' + v.toFixed(6) + '/s',
         emptyText: 'no OTel — install Path A',
       });
+      this.bodyEl.appendChild(_freshnessEl(perAgentFrames._costTs));
     }
     async _renderIdentity() {
       clearChildren(this.bodyEl);
