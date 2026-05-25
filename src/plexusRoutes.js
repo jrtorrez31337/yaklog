@@ -144,8 +144,14 @@ const templates = {
   },
 
   // ── Overlay-popup identity fetch ──────────────────────────────────────
-  // For CP3: hover/click an agent name → look up its identity+fingerprint
-  // labels from the most recent session_count series. One-shot, instant only.
+  // CP6.7 (2026-05-25): switched from claude_code_session_count_total to
+  // claude_code_active_time_seconds_total. session_count only emits at
+  // SessionStart (once per CC session) — Prom drops it from instant
+  // queries after 5min staleness, so long-running sessions had no
+  // identity data. active_time pushes on every tool use + carries the
+  // same identity labels (user_email, user_account_id, organization_id,
+  // host_arch, os_*, terminal_type, service_version, plexus.*) but
+  // stays fresh as long as the agent is actively working.
   'agent.identity.byAgentId': {
     kind: 'instant',
     params: {
@@ -153,7 +159,7 @@ const templates = {
     },
     build({ agent_id }) {
       requireSafeLabelValue('agent_id', agent_id);
-      return `claude_code_session_count_total{plexus_agent_id="${escapeLabelValue(agent_id)}"}`;
+      return `claude_code_active_time_seconds_total{plexus_agent_id="${escapeLabelValue(agent_id)}"}`;
     },
   },
 

@@ -65,6 +65,18 @@ const FRAMES = [
     step: '15s',
     promql: 'sum by (plexus_agent_id, model) (rate(claude_code_cost_usage_USD_total[5m]))',
   },
+  {
+    // CP6.7 (2026-05-25): missing per-agent token-rate SSE frame.
+    // Activity view in AgentCards reads from this; previously only the
+    // aggregate (tokens.rate.cluster) was streamed, so per-agent cards
+    // got empty data + showed "no OTel — install Path A" even for
+    // actively-emitting agents. Add as proper SSE frame.
+    name: 'tokens.rate.byAgent',
+    kind: 'range',
+    lookbackS: 3600,
+    step: '15s',
+    promql: 'sum by (plexus_agent_id, model, type) (rate(claude_code_token_usage_tokens_total[5m]))',
+  },
   // CP6.6 (2026-05-25): agents.emitting.count FRAME removed per Jon-direct
   // ("don't think we need the OTEL graph as it's not really useful"). The
   // dashboard's card-grid section divider already shows the same info
