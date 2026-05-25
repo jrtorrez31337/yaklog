@@ -668,7 +668,7 @@
   // lazy-fetched via the agent.identity.byAgentId instant template.
   // ────────────────────────────────────────────────────────────────────
 
-  const VIEW_LABELS = ['Live', 'Activity', 'Cost', 'Identity'];
+  const VIEW_LABELS = ['Live', 'Activity', 'Cost', 'Identity', 'Env'];
   const cardInstances = new Map();    // agent_id → AgentCard
   // Per-agent latest SSE frame slices (for chart views).
   // SSE templates have FIXED lookback (1h); these are the default-window cache.
@@ -852,7 +852,7 @@
       this._buildDots();
     }
     _buildDots() {
-      for (let i = 0; i < 4; i++) {
+      for (let i = 0; i < VIEW_LABELS.length; i++) {
         const btn = el('button', {
           type: 'button',
           'data-view': String(i),
@@ -916,6 +916,7 @@
         case 1: this._renderActivity(); break;
         case 2: this._renderCost(); break;
         case 3: this._renderIdentity(); break;
+        case 4: this._renderEnvironment(); break;
       }
     }
     _renderLive() {
@@ -1048,6 +1049,47 @@
         }
         this.bodyEl.appendChild(dl);
       }
+    }
+    // CP6.9: Environment view — daemon-host context (cwd, uid/gid,
+    // hostname). Sourced from presence row's runtime_* fields per
+    // CP6.8 (yaklog-sub v0.5.7.3+). Graceful degradation: any field
+    // not yet reported by an older daemon shows "(not reported)".
+    _renderEnvironment() {
+      clearChildren(this.bodyEl);
+      this.bodyEl.className = 'agent-card-body view-identity';
+      const r = this.presence || {};
+      const has = (k) => r[k] != null && r[k] !== '';
+      const anyEnv = has('runtime_uid') || has('runtime_gid') || has('runtime_hostname') || has('current_cwd');
+      if (!anyEnv) {
+        this.bodyEl.appendChild(el('div', { class: 'view-empty' },
+          'no runtime env data — daemon < v0.5.7.3 or not yet reported'));
+        return;
+      }
+      this.bodyEl.appendChild(el('h4', null, 'Daemon host'));
+      const hostDl = el('dl');
+      const hostFields = [
+        ['hostname', has('runtime_hostname') ? r.runtime_hostname : '(not reported)'],
+        ['uid', has('runtime_uid') ? String(r.runtime_uid) : '(not reported)'],
+        ['gid', has('runtime_gid') ? String(r.runtime_gid) : '(not reported)'],
+      ];
+      for (const [k, v] of hostFields) {
+        hostDl.appendChild(el('dt', null, k));
+        hostDl.appendChild(el('dd', null, v));
+      }
+      this.bodyEl.appendChild(hostDl);
+      this.bodyEl.appendChild(el('h4', null, 'CC session'));
+      const sessDl = el('dl');
+      const sessFields = [
+        ['cwd', has('current_cwd') ? r.current_cwd
+              : 'not reported (CC SessionStart hook stdin empty?)'],
+        ['model', shortenModel(r.current_model) || '—'],
+        ['source', r.last_session_source || '—'],
+      ];
+      for (const [k, v] of sessFields) {
+        sessDl.appendChild(el('dt', null, k));
+        sessDl.appendChild(el('dd', { title: String(v) }, String(v)));
+      }
+      this.bodyEl.appendChild(sessDl);
     }
   }
 

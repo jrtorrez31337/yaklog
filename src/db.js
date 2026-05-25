@@ -163,6 +163,13 @@ function initializeDb() {
     ['last_stop_reason', 'TEXT'],         // 'natural'|'failure'|NULL
     ['last_session_source', 'TEXT'],      // 'startup'|'resume'|'clear'|'compact'|NULL
     ['subagent_active_count', 'INTEGER'], // running count; floor 0
+    // v0.5.7.3 (2026-05-25): runtime-environment fields for AgentCard
+    // Environment view (CP6.8). Captured by yaklog-sub at daemon start
+    // (uid/gid/hostname) + from CC SessionStart payload (cwd).
+    ['runtime_uid', 'INTEGER'],           // os.getuid() of daemon process
+    ['runtime_gid', 'INTEGER'],           // os.getgid() of daemon process
+    ['runtime_hostname', 'TEXT'],         // socket.gethostname()
+    ['current_cwd', 'TEXT'],              // CC SessionStart.payload.cwd
   ];
   for (const [colName, colType] of RUNTIME_META_COLUMNS) {
     if (!presenceColNames.has(colName)) {
@@ -565,7 +572,9 @@ function upsertPresence({
   // v0.5.7 runtime-meta (all optional; null when daemon < v0.5.7)
   current_model, current_tool, last_tool_name, last_tool_status,
   last_compaction_reason, last_compaction_at, last_stop_reason,
-  last_session_source, subagent_active_count
+  last_session_source, subagent_active_count,
+  // v0.5.7.3 runtime-environment (all optional; null when daemon < v0.5.7.3)
+  runtime_uid, runtime_gid, runtime_hostname, current_cwd
 }) {
   const database = getDb();
   const now = new Date().toISOString();
@@ -589,7 +598,8 @@ function upsertPresence({
       last_state_change_at,
       current_model, current_tool, last_tool_name, last_tool_status,
       last_compaction_reason, last_compaction_at, last_stop_reason,
-      last_session_source, subagent_active_count
+      last_session_source, subagent_active_count,
+      runtime_uid, runtime_gid, runtime_hostname, current_cwd
     )
     VALUES (
       @agent_id, @daemon_state, @session_state, @cursor_position, @lock_held,
@@ -597,7 +607,8 @@ function upsertPresence({
       @last_state_change_at,
       @current_model, @current_tool, @last_tool_name, @last_tool_status,
       @last_compaction_reason, @last_compaction_at, @last_stop_reason,
-      @last_session_source, @subagent_active_count
+      @last_session_source, @subagent_active_count,
+      @runtime_uid, @runtime_gid, @runtime_hostname, @current_cwd
     )
     ON CONFLICT(agent_id) DO UPDATE SET
       daemon_state = excluded.daemon_state,
@@ -625,7 +636,15 @@ function upsertPresence({
       last_compaction_at = COALESCE(excluded.last_compaction_at, presence.last_compaction_at),
       last_stop_reason = COALESCE(excluded.last_stop_reason, presence.last_stop_reason),
       last_session_source = COALESCE(excluded.last_session_source, presence.last_session_source),
-      subagent_active_count = COALESCE(excluded.subagent_active_count, presence.subagent_active_count)
+      subagent_active_count = COALESCE(excluded.subagent_active_count, presence.subagent_active_count),
+      -- v0.5.7.3 runtime-env: COALESCE so a v0.5.7.2 daemon heartbeat
+      -- doesn't clobber a previously-captured uid/gid/hostname from a
+      -- v0.5.7.3 daemon. cwd is "current" — use raw assign so a session-end
+      -- (cwd=null) clears it cleanly.
+      runtime_uid = COALESCE(excluded.runtime_uid, presence.runtime_uid),
+      runtime_gid = COALESCE(excluded.runtime_gid, presence.runtime_gid),
+      runtime_hostname = COALESCE(excluded.runtime_hostname, presence.runtime_hostname),
+      current_cwd = COALESCE(excluded.current_cwd, presence.current_cwd)
   `);
   stmt.run({
     agent_id,
@@ -646,7 +665,11 @@ function upsertPresence({
     last_compaction_at: last_compaction_at ?? null,
     last_stop_reason: last_stop_reason ?? null,
     last_session_source: last_session_source ?? null,
-    subagent_active_count: (subagent_active_count == null) ? null : Number(subagent_active_count)
+    subagent_active_count: (subagent_active_count == null) ? null : Number(subagent_active_count),
+    runtime_uid: (runtime_uid == null) ? null : Number(runtime_uid),
+    runtime_gid: (runtime_gid == null) ? null : Number(runtime_gid),
+    runtime_hostname: runtime_hostname ?? null,
+    current_cwd: current_cwd ?? null
   });
 
   if (stateChanged) {
@@ -681,7 +704,12 @@ function getPresenceByAgent(agent_id) {
     last_compaction_at: row.last_compaction_at,
     last_stop_reason: row.last_stop_reason,
     last_session_source: row.last_session_source,
-    subagent_active_count: row.subagent_active_count
+    subagent_active_count: row.subagent_active_count,
+    // v0.5.7.3 runtime-env
+    runtime_uid: row.runtime_uid,
+    runtime_gid: row.runtime_gid,
+    runtime_hostname: row.runtime_hostname,
+    current_cwd: row.current_cwd
   };
 }
 
@@ -709,7 +737,12 @@ function listPresence() {
     last_compaction_at: row.last_compaction_at,
     last_stop_reason: row.last_stop_reason,
     last_session_source: row.last_session_source,
-    subagent_active_count: row.subagent_active_count
+    subagent_active_count: row.subagent_active_count,
+    // v0.5.7.3 runtime-env
+    runtime_uid: row.runtime_uid,
+    runtime_gid: row.runtime_gid,
+    runtime_hostname: row.runtime_hostname,
+    current_cwd: row.current_cwd
   }));
 }
 
