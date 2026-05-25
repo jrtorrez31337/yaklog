@@ -104,6 +104,14 @@ app.get('/dashboard.js', noCacheDashboard, (req, res) => {
   res.type('application/javascript');
   res.sendFile(path.join(__dirname, '..', 'public', 'dashboard.js'));
 });
+// CP2: vendored frontend libs (uPlot etc.). Versioned content, served with
+// long-lived browser cache. express.static handles content-type, range,
+// etag, and 404-on-missing without us hand-rolling each file.
+app.use('/vendor', express.static(path.join(__dirname, '..', 'public', 'vendor'), {
+  maxAge: '7d',
+  immutable: false,  // we DO update vendored libs occasionally; allow revalidation
+  fallthrough: false,
+}));
 
 // /register endpoints mount BEFORE the global Bearer auth middleware because
 // per ADR-0025 §Authority matrix POST /register is open-submission (any agent;
@@ -111,10 +119,15 @@ app.get('/dashboard.js', noCacheDashboard, (req, res) => {
 // heterogeneous custom auth (enforceRegistrantToken / enforceOpsKey /
 // enforceSenderBinding) wired per-route inside registerRoutes.
 app.use('/api/v1/register', registerRoutes);
-// Plexus query proxy: read-only, sits BEHIND the global Bearer auth (any
-// agent with a yaklog token may query the allowlisted templates). Mounted
-// before the main routes module just to keep the new surface visually
-// grouped with /register; functional position behind auth is what matters.
+// Plexus public mirror — MUST mount BEFORE the auth'd /api/v1/plexus mount
+// below (Express tries mounts in order; longer-prefix-first wins). Mirrors
+// the /api/v1/presence/public pattern: read-only, allowlisted (only the
+// registered templates can run), exists because the /dashboard browser
+// surface cannot easily hold a Bearer YAKLOG_TOKEN. Production multi-tenant
+// will swap this for cookie-auth — flagged in PLAN-C-STAGE-2-DESIGN.md §5.
+app.use('/api/v1/plexus/public', plexusRoutes.publicRouter);
+// Plexus query proxy (auth'd): server-to-server callers (other agents,
+// scripts) use this with a Bearer YAKLOG_TOKEN.
 app.use('/api/v1/plexus', auth, plexusRoutes);
 app.use('/api/v1', auth, routes);
 

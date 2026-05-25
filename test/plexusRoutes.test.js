@@ -259,3 +259,49 @@ test('Prom unreachable (fetch throws) → 502 upstream_unreachable', async () =>
   assert.equal(r.body.error, 'prom_upstream_error');
   assert.equal(r.body.promResponse.errorType, 'upstream_unreachable');
 });
+
+// ── /public sub-router (no auth; dashboard browser surface) ───────────
+
+test('/plexus/public/query accepts request WITHOUT Bearer', async () => {
+  nextFetchResponse = { status: 200, body: { status: 'success', data: { result: [] } } };
+  const r = await request(app)
+    .get('/api/v1/plexus/public/query?template=session.count.byAgent');
+    // NO .set(authed) — public surface
+  assert.equal(r.statusCode, 200);
+  assert.equal(r.body.template, 'session.count.byAgent');
+});
+
+test('/plexus/public/query_range works without Bearer', async () => {
+  nextFetchResponse = { status: 200, body: { status: 'success', data: { resultType: 'matrix', result: [] } } };
+  const r = await request(app)
+    .get('/api/v1/plexus/public/query_range?template=tokens.rate.byAgent&from=1779000000&to=1779001000&step=15s');
+  assert.equal(r.statusCode, 200);
+  assert.equal(r.body.range.step, '15s');
+});
+
+test('/plexus/public/templates exposes the allowlist (browser discovery)', async () => {
+  const r = await request(app).get('/api/v1/plexus/public/templates');
+  assert.equal(r.statusCode, 200);
+  assert.ok(r.body.templates['tokens.rate.byAgent']);
+});
+
+test('/plexus/public enforces SAME allowlist as auth surface (no bypass)', async () => {
+  // Verify the public surface can't escape the allowlist (no auth ≠ no validation)
+  const r = await request(app)
+    .get('/api/v1/plexus/public/query?template=cost.cumulative.byDim&dim=password');
+  assert.equal(r.statusCode, 400);
+  assert.match(r.body.error, /dim must be one of/);
+});
+
+test('/plexus/public enforces SAME unknown-template handling', async () => {
+  const r = await request(app)
+    .get('/api/v1/plexus/public/query?template=arbitrary_promql_attempt');
+  assert.equal(r.statusCode, 422);
+});
+
+test('/plexus auth-required path still rejects unauth even though /public exists', async () => {
+  const r = await request(app)
+    .get('/api/v1/plexus/query?template=session.count.byAgent');
+    // NO .set(authed) — should still 401 on the protected path
+  assert.equal(r.statusCode, 401);
+});

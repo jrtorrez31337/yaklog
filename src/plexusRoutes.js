@@ -18,6 +18,7 @@ const express = require('express');
 const config = require('./config');
 
 const router = express.Router();
+const publicRouter = express.Router();
 
 // ──────────────────────────────────────────────────────────────────────
 // Query templates (allowlist).
@@ -252,7 +253,7 @@ function validateStep(v) {
 // Routes
 // ──────────────────────────────────────────────────────────────────────
 
-router.get('/templates', (req, res) => {
+function templatesHandler(req, res) {
   // Discovery endpoint — lists allowlist for frontend + curl debugging.
   const out = {};
   for (const [name, spec] of Object.entries(templates)) {
@@ -268,9 +269,10 @@ router.get('/templates', (req, res) => {
     };
   }
   res.json({ templates: out });
-});
+}
+router.get('/templates', templatesHandler);
 
-router.get('/query', async (req, res) => {
+async function queryHandler(req, res) {
   const name = req.query.template;
   if (!name) return res.status(400).json({ error: 'missing param: template' });
   const tmpl = templates[name];
@@ -305,9 +307,10 @@ router.get('/query', async (req, res) => {
   cacheSet(key, out);
   res.set('X-Plexus-Cache', 'miss');
   res.json(out);
-});
+}
+router.get('/query', queryHandler);
 
-router.get('/query_range', async (req, res) => {
+async function queryRangeHandler(req, res) {
   const name = req.query.template;
   if (!name) return res.status(400).json({ error: 'missing param: template' });
   const tmpl = templates[name];
@@ -347,7 +350,29 @@ router.get('/query_range', async (req, res) => {
   cacheSet(key, out);
   res.set('X-Plexus-Cache', 'miss');
   res.json(out);
-});
+}
+router.get('/query_range', queryRangeHandler);
+
+// ──────────────────────────────────────────────────────────────────────
+// Public sub-router — mirrors /query + /query_range without auth.
+// Mounted at /api/v1/plexus/public/ in app.js.
+//
+// Why public: the /dashboard browser surface cannot easily hold a Bearer
+// token (no cookie-auth session today). Mirrors the existing
+// /api/v1/presence/public pattern. The allowlist + cache + Prom proxy
+// behaviour is IDENTICAL; only auth differs.
+//
+// Security posture: on devel single-tenant, the data exposed here is
+// the same Jon's-own-data already visible via /presence/public. The
+// allowlist guarantees no arbitrary PromQL can be executed via this
+// surface. For production multi-tenant deployments, the dashboard
+// must grow a cookie-auth session and this /public surface goes away.
+// Flagged in PLAN-C-STAGE-2-DESIGN.md §5 (auth deferred work).
+// ──────────────────────────────────────────────────────────────────────
+publicRouter.get('/query', queryHandler);
+publicRouter.get('/query_range', queryRangeHandler);
+publicRouter.get('/templates', templatesHandler);
 
 module.exports = router;
+module.exports.publicRouter = publicRouter;
 module.exports._internals = { templates, cache, COST_DIM_ALLOWLIST, RATE_WINDOW_ALLOWLIST };

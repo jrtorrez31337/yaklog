@@ -2,8 +2,9 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>yaklog cluster · eyes-on-glass</title>
+<title>yaklog · Plexus dashboard</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/vendor/uPlot/uPlot.min.css">
 <style>
   :root {
     --bg: #0f1116;
@@ -18,6 +19,8 @@
     --red: #f87171;
     --red-bg: #371919;
     --blue: #60a5fa;
+    --blue-bg: #14254a;
+    --purple: #c084fc;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); font: 14px/1.5 ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
@@ -37,6 +40,39 @@
   .pulse.error { background: var(--red); box-shadow: 0 0 6px var(--red); }
   #banner { display: none; padding: 9px 18px; background: var(--red-bg); color: var(--red); border-bottom: 1px solid var(--red); font-size: 13px; }
   #banner.visible { display: block; }
+
+  /* CP2 tab navigation. */
+  nav.tabs { display: flex; gap: 0; background: var(--panel); border-bottom: 1px solid var(--border); padding: 0 18px; }
+  nav.tabs button { background: transparent; color: var(--muted); border: 0; padding: 12px 16px; font: inherit; cursor: pointer; border-bottom: 2px solid transparent; transition: color 0.1s; }
+  nav.tabs button:hover { color: var(--text); }
+  nav.tabs button.active { color: var(--blue); border-bottom-color: var(--blue); }
+  nav.tabs .badge-new { display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 3px; background: var(--blue-bg); color: var(--blue); font-size: 10px; vertical-align: middle; }
+
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+
+  /* CP2 charts panel grid (Live tab top section). */
+  .charts-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 12px; padding: 12px 18px; background: var(--bg); }
+  .chart-card { background: var(--panel); border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+  .chart-card-head { padding: 9px 14px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+  .chart-card-head h2 { margin: 0; font-size: 13px; font-weight: 500; color: var(--text); }
+  .chart-card-head .sub { color: var(--muted); font-size: 11px; }
+  .chart-card-body { padding: 8px 4px 4px 4px; min-height: 220px; position: relative; }
+  .chart-empty { color: var(--muted); font-size: 12px; text-align: center; padding: 80px 0; }
+  .chart-error { color: var(--red); font-size: 12px; text-align: center; padding: 80px 14px; }
+  .chart-loading { color: var(--muted); font-size: 12px; text-align: center; padding: 80px 0; opacity: 0.6; }
+
+  /* uPlot in dark theme — override defaults to match dashboard palette. */
+  .uplot { width: 100%; font-family: ui-monospace, "SF Mono", Menlo, monospace; color: var(--text); }
+  .uplot text, .u-legend { color: var(--muted) !important; fill: var(--muted) !important; }
+  .uplot .u-axis { color: var(--muted) !important; }
+  .uplot .u-legend th { color: var(--text); }
+  .uplot .u-legend .u-value { color: var(--text); }
+  .uplot .u-cursor-x, .uplot .u-cursor-y { border-color: var(--blue) !important; opacity: 0.5; }
+
+  /* Section divider before existing presence table. */
+  .section-divider { padding: 14px 18px 8px; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; border-top: 1px solid var(--border); margin-top: 4px; }
+
   table { width: 100%; border-collapse: collapse; }
   th, td { padding: 9px 14px; text-align: left; border-bottom: 1px solid var(--border); font-size: 13px; }
   th { background: var(--panel); color: var(--muted); font-weight: 500; cursor: pointer; user-select: none; position: sticky; top: 0; z-index: 1; }
@@ -61,20 +97,26 @@
   td.ts.stale { color: var(--yellow); }
   td.ts.old { color: var(--muted); opacity: 0.6; }
   td.cursor { color: var(--muted); font-size: 12px; text-align: right; }
-  /* v0.5.7 runtime-meta columns */
   td.model, td.tool, td.subagents { font-size: 12px; color: var(--muted); white-space: nowrap; }
   td.model.has-value, td.tool.has-value { color: var(--text); }
   td.tool.error { color: var(--red); }
   td.subagents.active { color: var(--blue); font-weight: 500; }
   td.tool .pill { padding: 1px 6px; border-radius: 3px; background: rgba(96,165,250,0.15); color: var(--blue); font-size: 11px; }
+
+  /* Cost tab stub. */
+  .stub-panel { padding: 80px 18px; text-align: center; color: var(--muted); }
+  .stub-panel h2 { font-size: 16px; color: var(--text); margin: 0 0 12px; }
+  .stub-panel code { background: var(--panel); border: 1px solid var(--border); padding: 2px 6px; border-radius: 3px; font-size: 12px; }
+
   footer { padding: 10px 18px; color: var(--muted); font-size: 11px; text-align: center; border-top: 1px solid var(--border); }
   footer a { color: var(--blue); text-decoration: none; }
   footer a:hover { text-decoration: underline; }
+  footer code { background: rgba(255,255,255,0.04); padding: 1px 4px; border-radius: 2px; }
 </style>
 </head>
 <body>
 <header>
-  <h1>yaklog <span class="muted">· cluster presence · eyes-on-glass</span></h1>
+  <h1>yaklog <span class="muted">· Plexus dashboard</span></h1>
   <div class="counts" id="counts"></div>
   <div class="meta">
     <span id="hwm" class="hwm-badge" title="Global highest message id across all channels. Per-agent cursors below are filtered streams (own-sender + mention-set), so cursor &lt; global HWM is the normal case, not a desync.">global HWM: —</span>
@@ -83,25 +125,73 @@
   </div>
 </header>
 <div id="banner"></div>
-<table>
-  <thead>
-    <tr id="thead-row">
-      <th data-sort="agent_id">agent_id</th>
-      <th data-sort="daemon_state">daemon</th>
-      <th data-sort="session_state">session</th>
-      <th data-sort="label">label</th>
-      <th data-sort="current_model" title="Active CC model (from SessionStart.payload.model; v0.5.7+ daemons populate; pre-v0.5.7 daemons leave blank).">model</th>
-      <th data-sort="current_tool" title="Currently-running tool (from PreToolUse.payload.tool_name; cleared on PostToolUse). When blank, shows last completed tool. Red text = last tool errored.">tool</th>
-      <th data-sort="subagent_active_count" style="text-align: right;" title="Number of subagents currently dispatched (SubagentStart - SubagentStop). Blue when &gt;0.">subs</th>
-      <th data-sort="last_hook_at">last hook</th>
-      <th data-sort="last_heartbeat_at">last heartbeat</th>
-      <th data-sort="cursor_position" style="text-align: right;" title="Per-agent filtered-stream cursor. Each agent's daemon consumes its own filter (mentions + aliases, exclude own-sender). cursor &lt; global HWM is normal — that's the count of recent messages not matched to this agent's filter, not a consume lag.">cursor</th>
-    </tr>
-  </thead>
-  <tbody id="rows"></tbody>
-</table>
-<footer>polling <code>/api/v1/presence/public</code> every 2s · ETag-cached · server: <code id="origin"></code></footer>
 
+<nav class="tabs" id="tabs">
+  <button class="tab-btn active" data-tab="live">Live</button>
+  <button class="tab-btn" data-tab="cost">Cost<span class="badge-new">CP3</span></button>
+</nav>
+
+<!-- Live tab: top-of-page Plexus charts + existing presence table preserved. -->
+<section class="tab-panel active" data-tab="live" id="tab-live">
+  <div class="charts-grid">
+    <div class="chart-card" data-chart="tokens">
+      <div class="chart-card-head">
+        <h2>Token rate <span class="sub">rate(5m) · per agent · per model · per type</span></h2>
+        <span class="sub" data-chart-status>—</span>
+      </div>
+      <div class="chart-card-body"><div class="chart-loading">loading…</div></div>
+    </div>
+    <div class="chart-card" data-chart="cost">
+      <div class="chart-card-head">
+        <h2>Cost rate <span class="sub">rate(5m) · USD/sec · per agent · per model</span></h2>
+        <span class="sub" data-chart-status>—</span>
+      </div>
+      <div class="chart-card-body"><div class="chart-loading">loading…</div></div>
+    </div>
+    <div class="chart-card" data-chart="sessions">
+      <div class="chart-card-head">
+        <h2>Session count <span class="sub">cumulative · per agent</span></h2>
+        <span class="sub" data-chart-status>—</span>
+      </div>
+      <div class="chart-card-body"><div class="chart-loading">loading…</div></div>
+    </div>
+  </div>
+
+  <div class="section-divider">cluster presence</div>
+  <table>
+    <thead>
+      <tr id="thead-row">
+        <th data-sort="agent_id">agent_id</th>
+        <th data-sort="daemon_state">daemon</th>
+        <th data-sort="session_state">session</th>
+        <th data-sort="label">label</th>
+        <th data-sort="current_model" title="Active CC model (from SessionStart.payload.model; v0.5.7+ daemons populate; pre-v0.5.7 daemons leave blank).">model</th>
+        <th data-sort="current_tool" title="Currently-running tool (from PreToolUse.payload.tool_name; cleared on PostToolUse). When blank, shows last completed tool. Red text = last tool errored.">tool</th>
+        <th data-sort="subagent_active_count" style="text-align: right;" title="Number of subagents currently dispatched (SubagentStart - SubagentStop). Blue when &gt;0.">subs</th>
+        <th data-sort="last_hook_at">last hook</th>
+        <th data-sort="last_heartbeat_at">last heartbeat</th>
+        <th data-sort="cursor_position" style="text-align: right;" title="Per-agent filtered-stream cursor. Each agent's daemon consumes its own filter (mentions + aliases, exclude own-sender). cursor &lt; global HWM is normal — that's the count of recent messages not matched to this agent's filter, not a consume lag.">cursor</th>
+      </tr>
+    </thead>
+    <tbody id="rows"></tbody>
+  </table>
+</section>
+
+<!-- Cost tab: CP3 stub. -->
+<section class="tab-panel" data-tab="cost" id="tab-cost">
+  <div class="stub-panel">
+    <h2>Cost tab — coming in CP3</h2>
+    <p>Per-account cost attribution. Slice by <code>plexus_agent_id</code> / <code>user_email</code> / <code>organization_id</code> / <code>model</code>.</p>
+    <p style="opacity:0.7;font-size:12px;">Backend templates already live: <code>cost.cumulative.byDim</code>, <code>cost.rate.byDim</code>. Frontend dim-picker + drill-down + date-range picker land in CP3.</p>
+  </div>
+</section>
+
+<footer>
+  Live tab: presence polled <code>/api/v1/presence/public</code> @ 2s · charts query <code>/api/v1/plexus/public/query_range</code> @ 15s ·
+  server: <code id="origin"></code>
+</footer>
+
+<script src="/vendor/uPlot/uPlot.iife.min.js"></script>
 <script src="/dashboard.js"></script>
 </body>
 </html>
