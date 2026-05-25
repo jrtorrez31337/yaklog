@@ -352,14 +352,16 @@
     }
     // Called by PlexusLiveStream when a frame for this template arrives.
     onFrame(payload) {
+      this.lastFrameMs = Date.now();
       const result = payload.data && payload.data.result;
       if (!result || result.length === 0) {
         this.renderEmpty('no data in window (no opted-in agents pushing?)');
-        this.setStatus(`empty · ${new Date().toLocaleTimeString()}`);
+        this._tickStatus();
         return;
       }
       const { data, series, agentIds } = promMatrixToUplot(result, this.otherFields);
       this.lastAgentIds = agentIds;
+      this.lastSeriesCount = result.length;
       // Signature = label list. Same labels → setData (fast); different → rebuild.
       const sig = series.map(s => s.label).join('|');
       if (this.uplot && sig === this.lastSeriesSig) {
@@ -381,7 +383,21 @@
         }, data, this.bodyEl);
         this.lastSeriesSig = sig;
       }
-      this.setStatus(`${result.length} series · live · ${new Date().toLocaleTimeString()}`);
+      this._tickStatus();
+    }
+    // CP5: status string is "freshness since last frame" so the cell stays
+    // honest between deduped-quiet broadcasts. Updated on each frame +
+    // ticked by the dashboard-wide 1s renderer.
+    _tickStatus() {
+      if (!this.statusEl) return;
+      const seriesPart = this.lastSeriesCount != null ? `${this.lastSeriesCount} series` : '—';
+      let freshnessPart = 'no frame yet';
+      if (this.lastFrameMs) {
+        const ageS = Math.floor((Date.now() - this.lastFrameMs) / 1000);
+        freshnessPart = ageS < 2 ? 'live · just now' : `live · ${ageS}s ago`;
+      }
+      this.statusEl.textContent = `${seriesPart} · ${freshnessPart}`;
+      this.statusEl.style.color = '';
     }
     resize() {
       if (!this.uplot) return;
@@ -495,6 +511,12 @@
   ];
   for (const c of charts) liveStream.subscribe(c.template, c);
   liveStream.connect();
+
+  // CP5: 1s ticker keeps the "live · Ns ago" indicator honest between
+  // dedup-skipped server broadcasts. Charts only re-render on data
+  // change; the status freshness ticks every second so operators can
+  // see the channel is alive at a glance.
+  setInterval(() => { for (const c of charts) c._tickStatus(); }, 1000);
 
   // ────────────────────────────────────────────────────────────────────
   // CP3: AgentPopover — click-to-open identity + runtime fingerprint card.
