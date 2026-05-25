@@ -6,6 +6,7 @@ apiVersion: 1
 
 datasources:
   - name: Plexus-Prometheus
+    uid: Plexus-Prometheus  # stable; dashboards reference this UID. Without explicit uid Grafana auto-generates a hash UID and breaks dashboard JSON (found mid-CP2 canary 2026-05-25).
     type: prometheus
     access: proxy
     url: http://plexus-prometheus:9090

@@ -57,7 +57,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "Plexus-Prometheus" },
-          "expr": "sum by (plexus_agent_id, model, type) (rate(claude_code_token_usage_total[5m]))",
+          "expr": "sum by (plexus_agent_id, model, type) (rate(claude_code_token_usage_tokens_total[5m]))",
           "legendFormat": "{{plexus_agent_id}} · {{model}} · {{type}}",
           "refId": "A"
         }
@@ -89,7 +89,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "Plexus-Prometheus" },
-          "expr": "sum by (plexus_agent_id) (claude_code_cost_usage_total)",
+          "expr": "sum by (plexus_agent_id) (claude_code_cost_usage_USD_total)",
           "legendFormat": "{{plexus_agent_id}}",
           "refId": "A"
         }
