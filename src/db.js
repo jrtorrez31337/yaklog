@@ -537,13 +537,23 @@ const PRESENCE_LABELS = {
 };
 
 // v0.5.6: daemon_only label per yaklog #5061 + Jon-direct #5452.
-// Daemon up + zero non-self consumers of events.ndjson = substrate alive
-// but no client process is consuming the stream. Distinct from 'stalled'
-// (which now narrowly means consumer>0 + session_state=unknown — actual
+// v0.5.7.2 (2026-05-25): only short-circuit to daemon_only when
+// session_state is 'unknown'. Pre-fix the short-circuit OVERRODE an
+// active session_state (tool_running / idle_between_tools / compacting /
+// active / idle), causing actively-working agents to display as
+// "daemon_only" if their events.ndjson Monitor was dead (= conflated
+// two orthogonal health signals: message-stream consumption vs hook-
+// driven session activity). Now: if session_state is known-active,
+// honor it. The Monitor-dead signal (events_consumer_count===0) is
+// still surfaced separately via the dashboard's Monitor pill.
+//
+// Daemon up + zero non-self consumers of events.ndjson = substrate
+// alive but no client process is consuming the stream. Distinct from
+// 'stalled' (which means consumer>0 + session_state=unknown — actual
 // wedge candidate). Pre-v0.5.6 daemons that don't send the field
 // (events_consumer_count IS NULL) fall back to v0.5.5 derivation.
 function deriveLabel(daemon_state, session_state, events_consumer_count) {
-  if (daemon_state === 'up' && events_consumer_count === 0) {
+  if (daemon_state === 'up' && events_consumer_count === 0 && session_state === 'unknown') {
     return 'daemon_only';
   }
   return (PRESENCE_LABELS[daemon_state] || {})[session_state] || 'offline';

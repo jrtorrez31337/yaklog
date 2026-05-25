@@ -85,6 +85,18 @@
           : `Plexus OTel data observed but stale (${Math.floor(otel.ageS/60)}m ago) — was emitting but quiet now`;
         agentCell.appendChild(el('span', { class: cls, title: tip }, otel.kind === 'live' ? 'OTel' : 'OTel quiet'));
       }
+      // v0.5.7.2: Monitor-dead pill. Shown when events_consumer_count===0
+      // (= no process is tailing this agent's events.ndjson stream). This
+      // is the original v0.5.6 daemon_only signal, now surfaced as a
+      // separate pill rather than overriding session_state in the label
+      // column. Common cause: CC's tail|jq Monitor subprocess died (often
+      // post rate-limit class wedge).
+      if (r.events_consumer_count === 0 && r.daemon_state === 'up') {
+        agentCell.appendChild(el('span', {
+          class: 'mon-pill',
+          title: 'events.ndjson Monitor subprocess is dead (events_consumer_count=0). Agent will MISS live @-mentions until the Monitor restarts. Session_state still reflects hook activity correctly.',
+        }, 'Monitor dead'));
+      }
     }
     tr.appendChild(agentCell);
     // 2026-05-25 dedup pass: daemon + session + model columns removed
