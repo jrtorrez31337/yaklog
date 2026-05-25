@@ -26,11 +26,19 @@
 #
 # What this does NOT do:
 #   - Does NOT modify any shell rc, systemd EnvironmentFile, or runtime.sh.
-#   - Does NOT bake the token into the JSON. We use ${YAKLOG_TOKEN}
-#     reference; CC expands env-var refs at session start from the parent
-#     shell's environment. If your CC session doesn't have YAKLOG_TOKEN
-#     exported, use --inline-token to bake the literal token (warning:
-#     settings.local.json must be gitignored).
+#   - Does NOT bake the real yaklog token into the JSON. Per s345-agent
+#     catch (yaklog #6360 + cluster-converged #6365/#6366/#6368): Stage-1
+#     collector accepts ANY non-empty bearer + attribution is via
+#     plexus.agent_id in OTEL_RESOURCE_ATTRIBUTES (NOT the bearer). So
+#     default = placeholder bearer `<agent-id>-plexus-stage1`. Zero
+#     token-at-rest; functionally identical for Stage 1; agrees with
+#     [[feedback_secrets_no_yaklog]] discipline.
+#
+# Bearer modes (in increasing token-at-rest risk):
+#   default          placeholder bearer `<agent-id>-plexus-stage1`
+#   --token-ref      `${YAKLOG_TOKEN}` reference (CC expands at session start)
+#   --inline-token   literal token value (settings.local.json MUST be
+#                    gitignored; installer warns)
 #
 # Usage:
 #   bash install-plexus-otel.sh <agent-id>                          # full install (default workspace)
@@ -55,7 +63,7 @@ set -euo pipefail
 
 # ── arg parsing ───────────────────────────────────────────────────────
 DRY_RUN=0
-INLINE_TOKEN=0
+BEARER_MODE="placeholder"   # placeholder | tokenref | inline
 UNINSTALL=0
 WORKSPACE=""
 AGENT_ID=""
@@ -63,7 +71,8 @@ AGENT_ID=""
 while (( $# )); do
   case "$1" in
     --dry-run)        DRY_RUN=1 ;;
-    --inline-token)   INLINE_TOKEN=1 ;;
+    --inline-token)   BEARER_MODE="inline" ;;
+    --token-ref)      BEARER_MODE="tokenref" ;;
     --uninstall)      UNINSTALL=1 ;;
     --workspace=*)    WORKSPACE="${1#--workspace=}" ;;
     --workspace)      shift; WORKSPACE="${1:?--workspace requires a path}" ;;
@@ -103,9 +112,13 @@ if ! command -v python3 >/dev/null 2>&1; then
   err "python3 not found — required for safe JSON merge"; exit 2
 fi
 TOKEN_FILE="$HOME/.config/yaklog/token"
-if [[ ! -r "$TOKEN_FILE" && -z "${YAKLOG_TOKEN:-}" ]]; then
-  err "no YAKLOG_TOKEN env var and $TOKEN_FILE not readable — can't bootstrap"
-  exit 2
+# Token is only required for --inline-token mode. Placeholder + tokenref
+# modes don't read the real token at install time.
+if [[ "$BEARER_MODE" == "inline" ]]; then
+  if [[ ! -r "$TOKEN_FILE" && -z "${YAKLOG_TOKEN:-}" ]]; then
+    err "no YAKLOG_TOKEN env var and $TOKEN_FILE not readable — can't bootstrap --inline-token"
+    exit 2
+  fi
 fi
 if [[ ! -d "$WORKSPACE" ]]; then
   err "workspace does not exist: $WORKSPACE"
@@ -144,21 +157,26 @@ PYEOF
   exit 0
 fi
 
-# ── token resolution ──────────────────────────────────────────────────
-if [[ -z "${YAKLOG_TOKEN:-}" ]]; then
-  YAKLOG_TOKEN="$(cat "$TOKEN_FILE")"
-fi
-
-# OTLP Bearer: either literal token or ${YAKLOG_TOKEN} reference.
-# CC's settings.local.json env values are subject to shell-style ${...}
-# expansion at session start (per CC docs); reference is the safer
-# default. Inline is opt-in for envs where YAKLOG_TOKEN isn't exported
-# in the shell that launches claude.
-if (( INLINE_TOKEN )); then
-  OTLP_BEARER="Authorization=Bearer ${YAKLOG_TOKEN}"
-else
-  OTLP_BEARER='Authorization=Bearer ${YAKLOG_TOKEN}'
-fi
+# ── bearer resolution ─────────────────────────────────────────────────
+# Per cluster-converged design (s345 #6360 → admin #6365 → parch #6366
+# → aieng #6368): the Stage-1 collector accepts ANY non-empty bearer
+# and attribution is via plexus.agent_id in OTEL_RESOURCE_ATTRIBUTES,
+# NOT the bearer. So the default = non-secret placeholder. Zero
+# token-at-rest in settings.local.json.
+case "$BEARER_MODE" in
+  placeholder)
+    OTLP_BEARER="Authorization=Bearer ${AGENT_ID}-plexus-stage1"
+    ;;
+  tokenref)
+    OTLP_BEARER='Authorization=Bearer ${YAKLOG_TOKEN}'
+    ;;
+  inline)
+    if [[ -z "${YAKLOG_TOKEN:-}" ]]; then
+      YAKLOG_TOKEN="$(cat "$TOKEN_FILE")"
+    fi
+    OTLP_BEARER="Authorization=Bearer ${YAKLOG_TOKEN}"
+    ;;
+esac
 
 # ── env keyset (Profile C minus TOOL_CONTENT per Plan C Q4 Jon-ratify) ─
 # Order is preserved in the JSON output via Python's dict-insertion-order.
@@ -198,7 +216,11 @@ declare -A OTEL_VALS=(
 log "agent=$AGENT_ID"
 log "workspace=$WORKSPACE"
 log "settings file=$SETTINGS_FILE"
-log "token: $([ $INLINE_TOKEN = 1 ] && echo 'INLINE (literal)' || echo 'reference ${YAKLOG_TOKEN}')"
+case "$BEARER_MODE" in
+  placeholder) log "bearer: PLACEHOLDER (${AGENT_ID}-plexus-stage1) — zero token-at-rest [default]" ;;
+  tokenref)    log "bearer: REFERENCE (\${YAKLOG_TOKEN}) — expanded by CC from shell env" ;;
+  inline)      log "bearer: INLINE (literal token) — settings.local.json MUST be gitignored" ;;
+esac
 
 # Serialize the OTel keyset as JSON for the merge step.
 JSON_KV="$(
@@ -219,7 +241,15 @@ mkdir -p "$CLAUDE_DIR"
 if (( DRY_RUN )); then
   log "would create/update: $SETTINGS_FILE"
   log "  env keys to merge:"
-  for k in "${OTEL_KEYS[@]}"; do log "    $k=${OTEL_VALS[$k]}"; done
+  for k in "${OTEL_KEYS[@]}"; do
+    # Redact the bearer in dry-run output so --inline-token doesn't leak
+    # the real token to a log/screenshot/transcript.
+    if [[ "$k" == "OTEL_EXPORTER_OTLP_HEADERS" && "$BEARER_MODE" == "inline" ]]; then
+      log "    $k=Authorization=Bearer <REDACTED-literal-token-${#YAKLOG_TOKEN}-chars>"
+    else
+      log "    $k=${OTEL_VALS[$k]}"
+    fi
+  done
   log "  marker: _plexus_managed_env_keys = [${OTEL_KEYS[*]}]"
   exit 0
 fi
