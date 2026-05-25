@@ -75,10 +75,16 @@ services:
     image: grafana/grafana:11.6.0
     container_name: plexus-grafana
     restart: unless-stopped
+    # CP4 hardening 2026-05-25: admin creds moved to per-host env_file
+    # outside this repo. The file at ${PLEXUS_GRAFANA_ENV_FILE:-...} MUST
+    # exist on the host BEFORE first-time `docker compose up`, OR the
+    # container will spin up with Grafana's default admin/admin (security
+    # hole). Production deploys should fail-fast on missing file; for
+    # devel we accept the env_file lookup will error out the container
+    # which is fail-safe enough.
+    env_file:
+      - ${PLEXUS_GRAFANA_ENV_FILE:-/home/jon/.config/yaklog/plexus-grafana.env}
     environment:
-      # Stage 1 default creds; CP4 hardening rotates + injects via env_file
-      GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: plexus-stage-1
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_AUTH_ANONYMOUS_ENABLED: "false"
       GF_INSTALL_PLUGINS: ""

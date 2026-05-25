@@ -36,3 +36,7 @@ docs/plans/*-design.md
 
 # Docker compose safety captures (taken before infra changes).
 docker-compose.yml.bak*
+
+# Plexus secrets (CP4 rotation). Per-host env_files MUST stay out of repo.
+*plexus-grafana.env
+*plexus-*.env
