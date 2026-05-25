@@ -373,6 +373,12 @@ publicRouter.get('/query', queryHandler);
 publicRouter.get('/query_range', queryRangeHandler);
 publicRouter.get('/templates', templatesHandler);
 
+// CP5 / Stage 2.5: SSE push channel for the Live-tab frames. Server runs
+// one poll loop per frame; clients receive deltas as Server-Sent Events.
+// See src/plexusStreamer.js for the architecture rationale.
+const { streamHandler: plexusStreamHandler } = require('./plexusStreamer');
+publicRouter.get('/stream', plexusStreamHandler);
+
 module.exports = router;
 module.exports.publicRouter = publicRouter;
 module.exports._internals = { templates, cache, COST_DIM_ALLOWLIST, RATE_WINDOW_ALLOWLIST };

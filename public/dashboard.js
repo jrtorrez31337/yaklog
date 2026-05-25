@@ -249,9 +249,9 @@
   // Prom-matrix → uPlot data conversion + multi-series legend.
   // ────────────────────────────────────────────────────────────────────
 
-  const CHART_REFRESH_MS = 15000;        // matches Prom scrape interval
-  const CHART_LOOKBACK_S = 3600;          // 1h default window
-  const CHART_STEP = '15s';
+  // CP5: chart refresh cadence + lookback now owned server-side by
+  // plexusStreamer.js (which polls Prom + pushes to SSE subscribers).
+  // No client-side polling constants needed anymore.
 
   // Color palette for series. Cycles through a Plexus-themed set.
   const CHART_COLORS = [
@@ -318,25 +318,20 @@
     return { data: seriesData, series: seriesDefs, agentIds };
   }
 
+  // CP5 / Stage 2.5: PlexusChart is now push-driven. No more fetch loops.
+  // It registers with PlexusLiveStream (shared EventSource) and renders
+  // frames as they arrive. Server sends an initial snapshot on connect +
+  // deltas on change.
   class PlexusChart {
     constructor(cardEl, opts) {
       this.cardEl = cardEl;
       this.bodyEl = cardEl.querySelector('.chart-card-body');
       this.statusEl = cardEl.querySelector('[data-chart-status]');
       this.template = opts.template;
-      this.params = opts.params || {};
-      this.otherFields = opts.otherFields || [];   // extra labels for legend
+      this.otherFields = opts.otherFields || [];
       this.valueFmt = opts.valueFmt || ((v) => v.toFixed(3));
       this.uplot = null;
-      this.refreshTimer = null;
-    }
-    async start() {
-      await this.refresh();
-      this.refreshTimer = setInterval(() => this.refresh().catch(() => {}), CHART_REFRESH_MS);
-    }
-    stop() {
-      if (this.refreshTimer) clearInterval(this.refreshTimer);
-      this.refreshTimer = null;
+      this.lastSeriesSig = null;  // signature for "did series structure change?"
     }
     setStatus(text, isError) {
       if (!this.statusEl) return;
@@ -347,50 +342,31 @@
       clearChildren(this.bodyEl);
       this.bodyEl.appendChild(el('div', { class: 'chart-empty' }, msg));
       if (this.uplot) { this.uplot.destroy(); this.uplot = null; }
+      this.lastSeriesSig = null;
     }
     renderError(msg) {
       clearChildren(this.bodyEl);
       this.bodyEl.appendChild(el('div', { class: 'chart-error' }, msg));
       if (this.uplot) { this.uplot.destroy(); this.uplot = null; }
+      this.lastSeriesSig = null;
     }
-    async refresh() {
-      try {
-        const to = Math.floor(Date.now() / 1000);
-        const from = to - CHART_LOOKBACK_S;
-        const qs = new URLSearchParams({
-          template: this.template,
-          ...this.params,
-          from: String(from),
-          to: String(to),
-          step: CHART_STEP,
-        });
-        const res = await fetch('/api/v1/plexus/public/query_range?' + qs.toString(), { cache: 'no-store' });
-        if (!res.ok) throw new Error('HTTP ' + res.status);
-        const cacheHdr = res.headers.get('X-Plexus-Cache');
-        const body = await res.json();
-        if (body.status !== 'success') throw new Error(body.error || 'prom returned non-success');
-
-        const result = body.data && body.data.result;
-        if (!result || result.length === 0) {
-          this.renderEmpty('no data in window (no opted-in agents pushing?)');
-          this.setStatus(`empty · ${new Date().toLocaleTimeString()}`);
-          return;
-        }
-
-        const { data, series, agentIds } = promMatrixToUplot(result, this.otherFields);
-        // Stash agentIds on the instance so wireChartLegendPopovers can hydrate
-        // popover triggers without text-parsing the legend label (which now
-        // omits the agent prefix in the single-agent case).
-        this.lastAgentIds = agentIds;
-        if (this.uplot) {
-          // Series structure can change between refreshes (new agent appears,
-          // legend prefix toggles single↔multi); rebuild rather than setData
-          // to keep the chart in sync.
-          this.uplot.destroy(); this.uplot = null;
-          clearChildren(this.bodyEl);
-        } else {
-          clearChildren(this.bodyEl);
-        }
+    // Called by PlexusLiveStream when a frame for this template arrives.
+    onFrame(payload) {
+      const result = payload.data && payload.data.result;
+      if (!result || result.length === 0) {
+        this.renderEmpty('no data in window (no opted-in agents pushing?)');
+        this.setStatus(`empty · ${new Date().toLocaleTimeString()}`);
+        return;
+      }
+      const { data, series, agentIds } = promMatrixToUplot(result, this.otherFields);
+      this.lastAgentIds = agentIds;
+      // Signature = label list. Same labels → setData (fast); different → rebuild.
+      const sig = series.map(s => s.label).join('|');
+      if (this.uplot && sig === this.lastSeriesSig) {
+        this.uplot.setData(data);
+      } else {
+        if (this.uplot) { this.uplot.destroy(); this.uplot = null; }
+        clearChildren(this.bodyEl);
         this.uplot = new uPlot({
           width: this.bodyEl.clientWidth - 8,
           height: 220,
@@ -403,17 +379,72 @@
           legend: { live: true },
           cursor: { drag: { x: true, y: false } },
         }, data, this.bodyEl);
-        this.setStatus(`${result.length} series · ${cacheHdr || '—'} · ${new Date().toLocaleTimeString()}`);
-      } catch (e) {
-        this.renderError('error: ' + e.message);
-        this.setStatus('error', true);
+        this.lastSeriesSig = sig;
       }
+      this.setStatus(`${result.length} series · live · ${new Date().toLocaleTimeString()}`);
     }
     resize() {
       if (!this.uplot) return;
       this.uplot.setSize({ width: this.bodyEl.clientWidth - 8, height: 220 });
     }
   }
+
+  // ────────────────────────────────────────────────────────────────────
+  // CP5: PlexusLiveStream — single EventSource shared by all Live charts.
+  // Server pushes "frame" events on change. Client routes by template name
+  // to subscribed charts. Replaces N per-chart fetch loops with one push
+  // connection.
+  // ────────────────────────────────────────────────────────────────────
+  class PlexusLiveStream {
+    constructor() {
+      this.es = null;
+      this.subscribers = new Map();   // template-name → [chart, …]
+      this.reconnectAttempt = 0;
+      this.reconnectTimer = null;
+    }
+    subscribe(template, chart) {
+      if (!this.subscribers.has(template)) this.subscribers.set(template, []);
+      this.subscribers.get(template).push(chart);
+    }
+    connect() {
+      try {
+        this.es = new EventSource('/api/v1/plexus/public/stream');
+      } catch (e) {
+        this._scheduleReconnect();
+        return;
+      }
+      this.es.addEventListener('open', () => {
+        this.reconnectAttempt = 0;
+      });
+      this.es.addEventListener('frame', (ev) => {
+        let payload;
+        try { payload = JSON.parse(ev.data); } catch { return; }
+        const subs = this.subscribers.get(payload.template);
+        if (!subs) return;
+        for (const chart of subs) {
+          try { chart.onFrame(payload); } catch (e) { /* one chart's render error shouldn't kill others */ }
+        }
+      });
+      this.es.addEventListener('error', () => {
+        // EventSource auto-reconnects on its own for normal drops; this fires
+        // on hard errors. Belt-and-suspenders explicit reconnect with backoff.
+        this._scheduleReconnect();
+      });
+    }
+    _scheduleReconnect() {
+      if (this.reconnectTimer) return;
+      const delay = Math.min(30000, 1000 * Math.pow(2, this.reconnectAttempt));
+      this.reconnectAttempt++;
+      this.reconnectTimer = setTimeout(() => {
+        this.reconnectTimer = null;
+        if (this.es) { try { this.es.close(); } catch {} ; this.es = null; }
+        this.connect();
+      }, delay);
+    }
+  }
+
+  // CP5: instantiate the shared live stream + register the Live tab charts.
+  const liveStream = new PlexusLiveStream();
 
   // CP3: wire popover triggers on chart legend rows. Extracts agent_id
   // from "agent · model · type" labels (first segment).
@@ -436,13 +467,15 @@
       th.setAttribute('aria-label', `${agentId} — open identity card`);
     });
   }
-  const _origPlexusRefresh = PlexusChart.prototype.refresh;
-  PlexusChart.prototype.refresh = async function () {
-    await _origPlexusRefresh.call(this);
+  // CP5: wire popover triggers after each onFrame instead of after each
+  // refresh (refresh is gone in the push model).
+  const _origOnFrame = PlexusChart.prototype.onFrame;
+  PlexusChart.prototype.onFrame = function (payload) {
+    _origOnFrame.call(this, payload);
     wireChartLegendPopovers(this);
   };
 
-  // Instantiate the 3 Live-tab charts.
+  // Instantiate the 3 Live-tab charts + subscribe each to the live stream.
   const charts = [
     new PlexusChart(document.querySelector('[data-chart="tokens"]'), {
       template: 'tokens.rate.byAgent',
@@ -460,7 +493,8 @@
       valueFmt: (v) => String(Math.round(v)),
     }),
   ];
-  for (const c of charts) c.start();
+  for (const c of charts) liveStream.subscribe(c.template, c);
+  liveStream.connect();
 
   // ────────────────────────────────────────────────────────────────────
   // CP3: AgentPopover — click-to-open identity + runtime fingerprint card.
