@@ -397,8 +397,8 @@
           series,
           scales: { x: { time: true } },
           axes: [
-            { stroke: 'var(--muted)', grid: { stroke: 'rgba(255,255,255,0.04)' } },
-            { stroke: 'var(--muted)', grid: { stroke: 'rgba(255,255,255,0.04)' }, size: 56 },
+            { stroke: '#8a93a6', grid: { stroke: 'rgba(255,255,255,0.04)' } },
+            { stroke: '#8a93a6', grid: { stroke: 'rgba(255,255,255,0.04)' }, size: 56 },
           ],
           legend: { live: true },
           cursor: { drag: { x: true, y: false } },
@@ -925,8 +925,8 @@
           series: seriesDefs,
           scales: { x: { time: true } },
           axes: [
-            { stroke: 'var(--muted)', grid: { stroke: 'rgba(255,255,255,0.04)' } },
-            { stroke: 'var(--muted)', grid: { stroke: 'rgba(255,255,255,0.04)' }, size: 64 },
+            { stroke: '#8a93a6', grid: { stroke: 'rgba(255,255,255,0.04)' } },
+            { stroke: '#8a93a6', grid: { stroke: 'rgba(255,255,255,0.04)' }, size: 64 },
           ],
           legend: { live: true },
           cursor: { drag: { x: true, y: false } },
