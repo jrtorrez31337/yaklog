@@ -676,12 +676,35 @@
   const VIEW_LABELS = ['Live', 'Activity', 'Cost', 'Identity'];
   const cardInstances = new Map();    // agent_id → AgentCard
   // Per-agent latest SSE frame slices (for chart views).
+  // SSE templates have FIXED lookback (1h); these are the default-window cache.
   const perAgentFrames = {
-    tokensByAgent: null,    // tokens.rate.byAgent matrix
-    costByAgent: null,      // cost.rate.byAgent matrix
-    activeTimeByAgent: null,// active_time.rate.byAgent matrix
-    costCumByAgent: null,   // cluster.cost.topAgents (cumulative)
+    tokensByAgent: null,    // tokens.rate.byAgent matrix (1h)
+    costByAgent: null,      // cost.rate.byAgent matrix (1h)
+    activeTimeByAgent: null,// active_time.rate.byAgent matrix (1h)
+    costCumByAgent: null,   // cluster.cost.topAgents (cumulative; instant)
   };
+  // CP6.5: global history window for AgentCard Activity + Cost views.
+  // 1h uses the SSE cache above (instant; pushed). Longer windows do
+  // on-demand /query_range fetches with scaled step.
+  const cardsWindow = { windowS: 3600, fetchSeq: 0 };
+  // Per-agent on-demand fetch cache keyed by (template, windowS).
+  // Map<`${tpl}::${agent}::${ws}`, {data, ts}>
+  const cardsFetchCache = new Map();
+  const CARDS_FETCH_TTL_MS = 60000;   // 60s; matches server cache TTL
+  function pickStep(ws) {
+    if (ws <= 3600)   return '15s';
+    if (ws <= 21600)  return '1m';
+    if (ws <= 86400)  return '5m';
+    return '30m';
+  }
+  // CP6.5: scale rate-window with lookback so sparse-usage agents still
+  // show non-zero buckets. Allowlist (RATE_WINDOW_ALLOWLIST in
+  // plexusRoutes) caps at '1h'; 24h + 7d both use 1h.
+  function pickRateWindow(ws) {
+    if (ws <= 3600)   return '5m';
+    if (ws <= 21600)  return '15m';
+    return '1h';
+  }
 
   function noteAgentFrame(payload) {
     if (!payload || !payload.template) return;
@@ -717,6 +740,32 @@
   function seriesForAgent(payload, agentId) {
     if (!payload || !payload.data || !payload.data.result) return [];
     return payload.data.result.filter(s => s.metric && s.metric.plexus_agent_id === agentId);
+  }
+
+  // CP6.5: on-demand range fetch for AgentCard chart views when the
+  // window > 1h (SSE-cached default). Returns Promise<series-array> for
+  // the named agent, or empty array on miss/error. Cached per
+  // (template, agent_id, windowS) with 60s TTL.
+  async function fetchAgentSeries(template, agentId, windowS) {
+    const cacheKey = `${template}::${agentId}::${windowS}`;
+    const cached = cardsFetchCache.get(cacheKey);
+    if (cached && (Date.now() - cached.ts) < CARDS_FETCH_TTL_MS) {
+      return cached.series;
+    }
+    try {
+      const to = Math.floor(Date.now() / 1000);
+      const from = to - windowS;
+      const step = pickStep(windowS);
+      const window = pickRateWindow(windowS);
+      const qs = new URLSearchParams({ template, window, from: String(from), to: String(to), step });
+      const res = await fetch('/api/v1/plexus/public/query_range?' + qs.toString(), { cache: 'no-store' });
+      if (!res.ok) return [];
+      const body = await res.json();
+      const results = (body.data && body.data.result) || [];
+      const series = results.filter(s => s.metric && s.metric.plexus_agent_id === agentId);
+      cardsFetchCache.set(cacheKey, { series, ts: Date.now() });
+      return series;
+    } catch (e) { return []; }
   }
 
   // Convert filtered matrix series to a single aggregate uPlot data array
@@ -776,6 +825,13 @@
     const ageS = Math.floor((Date.now() - tsMs) / 1000);
     return el('div', { class: 'view-freshness' },
       `live · ${ageS < 2 ? 'just now' : ageS + 's ago'}`);
+  }
+  // CP6.5: human-readable window label
+  function _windowLabel(ws) {
+    if (ws <= 3600)   return '1h';
+    if (ws <= 21600)  return '6h';
+    if (ws <= 86400)  return '24h';
+    return '7d';
   }
 
   // POPOVER_IDENTITY_FIELDS + POPOVER_SECTIONS are defined further below
@@ -853,8 +909,11 @@
         }, 'Monitor dead'));
       }
       this.headEl.appendChild(pills);
-      // Online/offline visual treatment
-      this.el.classList.toggle('is-offline', r.label === 'offline');
+      // CP6.5: status-color left border + dimmed offline cards
+      // Strip prior status- classes, add the current one
+      this.el.className = 'agent-card';
+      if (r.label) this.el.classList.add('status-' + r.label);
+      if (r.label === 'offline') this.el.classList.add('is-offline');
     }
     rerenderBody() {
       switch (this.currentView) {
@@ -886,14 +945,27 @@
       }
       this.bodyEl.appendChild(dl);
     }
-    _renderActivity() {
+    async _renderActivity() {
       clearChildren(this.bodyEl);
       this.bodyEl.className = 'agent-card-body view-activity';
-      const series = seriesForAgent(perAgentFrames.tokensByAgent, this.agentId);
+      const ws = cardsWindow.windowS;
+      let series, fromSse = false;
+      if (ws === 3600) {
+        // Default 1h: use the SSE cache (no extra fetch)
+        series = seriesForAgent(perAgentFrames.tokensByAgent, this.agentId);
+        fromSse = true;
+      } else {
+        // Longer window: lazy-fetch via /query_range
+        this.bodyEl.appendChild(el('div', { class: 'view-loading-inline' }, `fetching ${ws/3600}h…`));
+        const seq = ++cardsWindow.fetchSeq;
+        series = await fetchAgentSeries('tokens.rate.byAgent', this.agentId, ws);
+        if (seq !== cardsWindow.fetchSeq || this.currentView !== 1) return;  // stale
+        clearChildren(this.bodyEl);
+      }
       const data = aggregateSeriesToUplot(series);
       this.bodyEl.appendChild(el('div', { class: 'view-live' },
         el('div', { class: 'stat-row' },
-          el('span', { class: 'k' }, 'tokens/s (5m rate, all types)'),
+          el('span', { class: 'k' }, `tokens/s (5m rate, ${_windowLabel(ws)})`),
           el('span', { class: 'v' },
             data && data[1] && data[1].length ? (data[1][data[1].length - 1] || 0).toFixed(2) : '—'))));
       const host = el('div', { class: 'chart-host' });
@@ -903,9 +975,9 @@
         fmt: (v) => v.toFixed(2) + ' tok/s',
         emptyText: 'no OTel — install Path A',
       });
-      this.bodyEl.appendChild(_freshnessEl(perAgentFrames._tokensTs));
+      this.bodyEl.appendChild(_freshnessEl(fromSse ? perAgentFrames._tokensTs : Date.now()));
     }
-    _renderCost() {
+    async _renderCost() {
       clearChildren(this.bodyEl);
       this.bodyEl.className = 'agent-card-body view-cost';
       let cum = null;
@@ -917,7 +989,20 @@
       this.bodyEl.appendChild(el('div', { class: 'cum' },
         cum == null ? '—' : (cum >= 1 ? '$' + cum.toFixed(2) : '$' + cum.toFixed(4))));
       this.bodyEl.appendChild(el('div', { class: 'cum-sub' }, 'cumulative all-time spend'));
-      const series = seriesForAgent(perAgentFrames.costByAgent, this.agentId);
+      const ws = cardsWindow.windowS;
+      let series, fromSse = false;
+      if (ws === 3600) {
+        series = seriesForAgent(perAgentFrames.costByAgent, this.agentId);
+        fromSse = true;
+      } else {
+        this.bodyEl.appendChild(el('div', { class: 'view-loading-inline' }, `fetching ${ws/3600}h…`));
+        const seq = ++cardsWindow.fetchSeq;
+        series = await fetchAgentSeries('cost.rate.byAgent', this.agentId, ws);
+        if (seq !== cardsWindow.fetchSeq || this.currentView !== 2) return;
+        // Remove only the loading-inline el (keep cum + cum-sub)
+        const loadingEl = this.bodyEl.querySelector('.view-loading-inline');
+        if (loadingEl) loadingEl.remove();
+      }
       const data = aggregateSeriesToUplot(series);
       const host = el('div', { class: 'chart-host' });
       this.bodyEl.appendChild(host);
@@ -926,7 +1011,7 @@
         fmt: (v) => '$' + v.toFixed(6) + '/s',
         emptyText: 'no OTel — install Path A',
       });
-      this.bodyEl.appendChild(_freshnessEl(perAgentFrames._costTs));
+      this.bodyEl.appendChild(_freshnessEl(fromSse ? perAgentFrames._costTs : Date.now()));
     }
     async _renderIdentity() {
       clearChildren(this.bodyEl);
@@ -970,6 +1055,28 @@
       }
     }
   }
+
+  // CP6.5: history-window toggle (1h / 6h / 24h / 7d).
+  // Triggers rerender of any card currently showing Activity or Cost view.
+  document.querySelectorAll('#cards-window-toggle button').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const ws = parseInt(btn.dataset.windowS, 10);
+      if (ws === cardsWindow.windowS) return;
+      cardsWindow.windowS = ws;
+      // Update toggle visuals
+      document.querySelectorAll('#cards-window-toggle button').forEach((x) => {
+        x.classList.toggle('active', x === btn);
+        x.style.color = (x === btn) ? 'var(--blue)' : 'var(--muted)';
+      });
+      // Invalidate cache (the 60s TTL would auto-expire, but switching window
+      // demands instant refresh)
+      cardsFetchCache.clear();
+      // Rerender visible chart cards
+      for (const card of cardInstances.values()) {
+        if (card.currentView === 1 || card.currentView === 2) card.rerenderBody();
+      }
+    });
+  });
 
   function renderCards(presence) {
     const grid = $('cards-grid');

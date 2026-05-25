@@ -100,9 +100,19 @@
   /* CP6.3 — AgentCard grid (replaces presence table). One card per
      cluster agent; each card has 4 dot-tab views (Live/Activity/Cost/Identity). */
   .cards-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 10px; padding: 4px 18px 18px; }
-  .agent-card { background: var(--panel); border: 1px solid var(--border); border-radius: 4px; overflow: hidden; display: flex; flex-direction: column; min-height: 240px; }
+  .agent-card { background: var(--panel); border: 1px solid var(--border); border-radius: 4px; overflow: hidden; display: flex; flex-direction: column; min-height: 240px; border-left-width: 4px; border-left-color: var(--border); transition: border-left-color 0.2s; }
   .agent-card.is-offline { opacity: 0.55; }
-  .agent-card.has-error { border-color: var(--red); }
+  /* CP6.5: status-color left border matches the v0.5.7 presence-table badge palette */
+  .agent-card.status-online,
+  .agent-card.status-online_idle,
+  .agent-card.status-online_idle_between_tools,
+  .agent-card.status-online_tool_running { border-left-color: var(--green); }
+  .agent-card.status-online_compacting   { border-left-color: var(--blue); }
+  .agent-card.status-daemon_only         { border-left-color: var(--muted); }
+  .agent-card.status-stalled,
+  .agent-card.status-unknown             { border-left-color: var(--yellow); }
+  .agent-card.status-offline             { border-left-color: var(--red); }
+  .agent-card.status-stop_failure        { border-left-color: var(--red); border-color: var(--red); }
   .agent-card-head { padding: 9px 12px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-height: 38px; }
   .agent-card-head .name { font-weight: 600; color: var(--text); font-size: 12px; word-break: break-all; line-height: 1.3; flex: 1 1 140px; min-width: 0; }
   .agent-card-head .label-badge { padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 500; white-space: nowrap; flex-shrink: 0; }
@@ -139,6 +149,11 @@
   .view-identity h4:first-child { margin-top: 0; }
   .view-empty { color: var(--muted); font-size: 11px; text-align: center; padding: 30px 6px; opacity: 0.8; }
   .view-freshness { color: var(--muted); font-size: 9px; text-align: right; padding-top: 4px; font-variant-numeric: tabular-nums; }
+  /* CP6.5: history window toggle in cards section divider */
+  #cards-window-toggle button.active { background: var(--blue-bg) !important; color: var(--blue) !important; }
+  #cards-window-toggle button:hover:not(.active) { color: var(--text) !important; }
+  /* CP6.5: per-card loading state for on-demand range fetches */
+  .agent-card .view-loading-inline { color: var(--muted); font-size: 10px; opacity: 0.6; text-align: center; padding: 4px 0; }
   .agent-card-pills { display: flex; gap: 4px; margin-left: auto; }
   .agent-card .otel-pill, .agent-card .mon-pill { padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 500; cursor: help; }
   .agent-card .otel-pill.live { background: var(--green-bg); color: var(--green); }
@@ -311,6 +326,15 @@
 
   <div class="section-divider">
     cluster agents <span id="cards-meta" style="text-transform: none; letter-spacing: 0; font-size: 11px;">—</span>
+    <span style="margin-left: auto; display: inline-flex; align-items: center; gap: 6px;">
+      <span style="font-size: 10px;">history:</span>
+      <span class="by-toggle" id="cards-window-toggle" style="display: inline-flex; gap: 0; border: 1px solid var(--border); border-radius: 3px; overflow: hidden;">
+        <button data-window-s="3600"  class="active" style="background: transparent; color: var(--blue); border: 0; padding: 3px 8px; font: inherit; font-size: 10px; cursor: pointer; border-right: 1px solid var(--border);">1h</button>
+        <button data-window-s="21600"            style="background: transparent; color: var(--muted); border: 0; padding: 3px 8px; font: inherit; font-size: 10px; cursor: pointer; border-right: 1px solid var(--border);">6h</button>
+        <button data-window-s="86400"            style="background: transparent; color: var(--muted); border: 0; padding: 3px 8px; font: inherit; font-size: 10px; cursor: pointer; border-right: 1px solid var(--border);">24h</button>
+        <button data-window-s="604800"           style="background: transparent; color: var(--muted); border: 0; padding: 3px 8px; font: inherit; font-size: 10px; cursor: pointer;">7d</button>
+      </span>
+    </span>
   </div>
   <div id="cards-grid" class="cards-grid">
     <div class="chart-loading">loading agents…</div>
