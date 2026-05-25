@@ -542,37 +542,192 @@
     wireChartLegendPopovers(this);
   };
 
-  // Instantiate the 3 Live-tab charts + subscribe each to the live stream.
-  // v0.5.7.2: tokens chart is now cluster-aggregate (single line, no per-agent
-  // breakdown) per Jon-direct 2026-05-25. sessions chart now shows count of
-  // distinct agents currently emitting OTel (replaces the previously-flat
-  // per-agent cumulative counter that looked "not populating" with single
-  // emitter).
-  const charts = [
-    new PlexusChart(document.querySelector('[data-chart="tokens"]'), {
-      template: 'tokens.rate.cluster',
-      otherFields: [],
-      valueFmt: (v) => v.toFixed(2) + ' tok/s',
-    }),
-    new PlexusChart(document.querySelector('[data-chart="cost"]'), {
-      template: 'cost.rate.byAgent',
-      otherFields: ['model'],
-      valueFmt: (v) => '$' + v.toFixed(6) + '/s',
-    }),
-    new PlexusChart(document.querySelector('[data-chart="sessions"]'), {
-      template: 'agents.emitting.count',
-      otherFields: [],
-      valueFmt: (v) => String(Math.round(v)) + ' agents',
-    }),
-  ];
-  for (const c of charts) liveStream.subscribe(c.template, c);
+  // ────────────────────────────────────────────────────────────────────
+  // CP6.2 — Cluster accounting hero. Replaces the 3 top-of-Live charts
+  // (tokens/cost/sessions) with CFO-grade numbers + spark + top drivers.
+  // Wires to cluster.cost.{today,7d,mtd,topAgents,byAccount,spark24h}
+  // frames pushed by the streamer.
+  // ────────────────────────────────────────────────────────────────────
+  const heroState = {
+    today: null, mtd: null, sevend: null,
+    spark: null, topAgents: null, byAccount: null,
+    by: 'agent',           // 'agent' or 'account'
+    sparkChart: null,
+    lastFrameMs: 0,
+  };
+  const fmtUSD = (v) => {
+    if (v == null || Number.isNaN(v)) return '—';
+    if (v >= 1000) return '$' + v.toFixed(0);
+    if (v >= 1)    return '$' + v.toFixed(2);
+    return '$' + v.toFixed(4);
+  };
+  const valFromVector = (payload) => {
+    const r = payload && payload.data && payload.data.result;
+    if (!r || r.length === 0) return null;
+    const v = parseFloat(r[0].value[1]);
+    return Number.isFinite(v) ? v : null;
+  };
+
+  function renderHeroNumbers() {
+    $('hero-today').textContent = fmtUSD(heroState.today);
+    $('hero-7d').textContent    = fmtUSD(heroState.sevend);
+    $('hero-mtd').textContent   = fmtUSD(heroState.mtd);
+    // Projected EOM: linear extrapolation from MTD rate.
+    let proj = null, projSub = 'linear extrapolation';
+    if (heroState.mtd != null && heroState.mtd > 0) {
+      const now = new Date();
+      const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+      const monthEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+      const elapsedMs = now - monthStart;
+      const totalMs = monthEnd - monthStart;
+      const fraction = elapsedMs / totalMs;
+      if (fraction > 0) {
+        proj = heroState.mtd / fraction;
+        const elapsedDays = elapsedMs / 86400000;
+        const totalDays = totalMs / 86400000;
+        projSub = `${elapsedDays.toFixed(1)}d of ${totalDays.toFixed(0)}d elapsed`;
+      }
+    }
+    $('hero-proj').textContent = fmtUSD(proj);
+    $('hero-proj-sub').textContent = projSub;
+
+    const ageS = heroState.lastFrameMs ? Math.floor((Date.now() - heroState.lastFrameMs) / 1000) : null;
+    $('hero-status').textContent = ageS == null ? 'no data yet' : `live · ${ageS < 2 ? 'just now' : ageS + 's ago'}`;
+  }
+
+  function renderSpark() {
+    const body = $('hero-spark-body');
+    const result = heroState.spark && heroState.spark.data && heroState.spark.data.result;
+    if (!result || result.length === 0 || !result[0].values || result[0].values.length < 2) {
+      clearChildren(body);
+      body.appendChild(el('div', { class: 'chart-empty' }, 'no spend in 24h window'));
+      if (heroState.sparkChart) { heroState.sparkChart.destroy(); heroState.sparkChart = null; }
+      $('hero-spark-status').textContent = 'empty';
+      return;
+    }
+    const pts = result[0].values;
+    const ts = pts.map(p => p[0]);
+    const vals = pts.map(p => { const f = parseFloat(p[1]); return Number.isFinite(f) ? f : null; });
+    const data = [ts, vals];
+    const series = [
+      { label: 'time' },
+      { label: '$ / 15m', stroke: '#60a5fa', width: 1.5, fill: 'rgba(96,165,250,0.10)', value: (u, v) => v == null ? '—' : '$' + v.toFixed(4) },
+    ];
+    if (heroState.sparkChart) { heroState.sparkChart.destroy(); heroState.sparkChart = null; }
+    clearChildren(body);
+    heroState.sparkChart = new uPlot({
+      width: body.clientWidth - 8,
+      height: 80,
+      series,
+      scales: { x: { time: true } },
+      axes: [
+        { stroke: '#8a93a6', grid: { stroke: 'rgba(255,255,255,0.04)' }, size: 30 },
+        { stroke: '#8a93a6', grid: { stroke: 'rgba(255,255,255,0.04)' }, size: 48 },
+      ],
+      legend: { show: false },
+      cursor: { drag: { x: true, y: false }, points: { show: true } },
+    }, data, body);
+    $('hero-spark-status').textContent = `${pts.length} bins`;
+  }
+
+  function renderDrivers() {
+    const body = $('drivers-body');
+    clearChildren(body);
+    const payload = heroState.by === 'agent' ? heroState.topAgents : heroState.byAccount;
+    const result = payload && payload.data && payload.data.result;
+    if (!result || result.length === 0) {
+      body.appendChild(el('div', { class: 'chart-empty' }, `no ${heroState.by} cost data yet`));
+      return;
+    }
+    const labelFor = (m) => heroState.by === 'agent'
+      ? (m.plexus_agent_id || '(unknown)')
+      : (m.user_email || m.user_account_id || '(unknown)');
+    const rows = result.map(s => ({
+      name: labelFor(s.metric),
+      cost: parseFloat(s.value[1]) || 0,
+    })).sort((a, b) => b.cost - a.cost);
+    const totalCost = rows.reduce((acc, r) => acc + r.cost, 0);
+    const max = rows[0].cost || 1;
+    const table = el('table', { class: 'drivers-table' });
+    const tbody = el('tbody');
+    for (const r of rows) {
+      const tr = el('tr');
+      tr.appendChild(el('td', { class: 'driver-name' }, r.name));
+      const barTd = el('td', { class: 'driver-bar-wrap' });
+      const bar = el('div', { class: 'driver-bar' });
+      const fill = el('div', { class: 'driver-bar-fill' });
+      fill.style.width = ((r.cost / max) * 100).toFixed(1) + '%';
+      bar.appendChild(fill); barTd.appendChild(bar); tr.appendChild(barTd);
+      tr.appendChild(el('td', { class: 'driver-cost' }, fmtUSD(r.cost)));
+      const pct = totalCost > 0 ? (r.cost / totalCost) * 100 : 0;
+      tr.appendChild(el('td', { class: 'driver-pct' }, pct.toFixed(0) + '%'));
+      tbody.appendChild(tr);
+    }
+    table.appendChild(tbody);
+    body.appendChild(table);
+  }
+
+  // CP6.2 — hero frame routing. Each cluster.cost.* template populates one
+  // slot; on every frame, recompute the panels that depend on it.
+  function noteHeroFrame(payload) {
+    if (!payload || !payload.template) return false;
+    let touched = false;
+    heroState.lastFrameMs = Date.now();
+    switch (payload.template) {
+      case 'cluster.cost.today':    heroState.today  = valFromVector(payload); touched = true; break;
+      case 'cluster.cost.7d':       heroState.sevend = valFromVector(payload); touched = true; break;
+      case 'cluster.cost.mtd':      heroState.mtd    = valFromVector(payload); touched = true; break;
+      case 'cluster.cost.topAgents':heroState.topAgents = payload; renderDrivers(); break;
+      case 'cluster.cost.byAccount':heroState.byAccount = payload; renderDrivers(); break;
+      case 'cluster.cost.spark24h': heroState.spark = payload; renderSpark(); break;
+      default: return false;
+    }
+    if (touched) renderHeroNumbers();
+    return true;
+  }
+
+  // by-agent / by-account toggle
+  document.querySelectorAll('#drivers-by button').forEach((b) => {
+    b.addEventListener('click', () => {
+      document.querySelectorAll('#drivers-by button').forEach((x) => x.classList.remove('active'));
+      b.classList.add('active');
+      heroState.by = b.dataset.by;
+      renderDrivers();
+    });
+  });
+
+  // Connect the live stream + hook noteHeroFrame into the SSE addEventListener.
+  // PlexusLiveStream.connect already adds the 'frame' listener that calls
+  // chart subscribers; we ALSO want hero updates. Monkey-patch the connect
+  // to add a parallel listener (simpler than rewriting PlexusLiveStream).
+  const _origConnect = PlexusLiveStream.prototype.connect;
+  PlexusLiveStream.prototype.connect = function () {
+    _origConnect.call(this);
+    if (!this.es) return;
+    this.es.addEventListener('frame', (ev) => {
+      try {
+        const payload = JSON.parse(ev.data);
+        noteHeroFrame(payload);
+      } catch { /* ignore */ }
+    });
+  };
+
+  // No PlexusChart subscriptions on Live tab anymore (old token/cost/sessions
+  // cards were removed in CP6.2). Hero owns the Live tab top section.
   liveStream.connect();
 
-  // CP5: 1s ticker keeps the "live · Ns ago" indicator honest between
-  // dedup-skipped server broadcasts. Charts only re-render on data
-  // change; the status freshness ticks every second so operators can
-  // see the channel is alive at a glance.
-  setInterval(() => { for (const c of charts) c._tickStatus(); }, 1000);
+  // 1s ticker keeps hero freshness honest between deduped quiet broadcasts.
+  setInterval(() => {
+    if (heroState.lastFrameMs) renderHeroNumbers();
+  }, 1000);
+
+  // Re-render spark on viewport resize (uPlot doesn't auto-resize).
+  window.addEventListener('resize', () => {
+    clearTimeout(window._heroResizeTimer);
+    window._heroResizeTimer = setTimeout(() => {
+      if (heroState.sparkChart && heroState.spark) renderSpark();
+    }, 150);
+  });
 
   // ────────────────────────────────────────────────────────────────────
   // CP3: AgentPopover — click-to-open identity + runtime fingerprint card.
