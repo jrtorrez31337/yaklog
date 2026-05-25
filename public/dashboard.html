@@ -213,16 +213,12 @@
   <table>
     <thead>
       <tr id="thead-row">
-        <th data-sort="agent_id">agent_id</th>
-        <th data-sort="daemon_state">daemon</th>
-        <th data-sort="session_state">session</th>
-        <th data-sort="label">label</th>
-        <th data-sort="current_model" title="Active CC model (from SessionStart.payload.model; v0.5.7+ daemons populate; pre-v0.5.7 daemons leave blank).">model</th>
-        <th data-sort="current_tool" title="Currently-running tool (from PreToolUse.payload.tool_name; cleared on PostToolUse). When blank, shows last completed tool. Red text = last tool errored.">tool</th>
+        <th data-sort="agent_id" title="Click any agent name to open identity + runtime fingerprint + raw daemon/session/hook timing.">agent_id</th>
+        <th data-sort="label" title="Derived state. Click an agent name for raw daemon × session breakdown.">label</th>
+        <th data-sort="current_tool" title="Currently-running tool (from PreToolUse.payload.tool_name; cleared on PostToolUse). When session_state=tool_running but tool_name unavailable, shows (running). Otherwise shows last completed tool prefixed 'last:'.">tool</th>
         <th data-sort="subagent_active_count" style="text-align: right;" title="Number of subagents currently dispatched (SubagentStart - SubagentStop). Blue when &gt;0.">subs</th>
-        <th data-sort="last_hook_at">last hook</th>
-        <th data-sort="last_heartbeat_at">last heartbeat</th>
-        <th data-sort="cursor_position" style="text-align: right;" title="Per-agent filtered-stream cursor. Each agent's daemon consumes its own filter (mentions + aliases, exclude own-sender). cursor &lt; global HWM is normal — that's the count of recent messages not matched to this agent's filter, not a consume lag.">cursor</th>
+        <th data-sort="last_heartbeat_at" title="Recency. Heartbeat tracks daemon liveness (~30s cadence); last hook timing is in the popover.">last heartbeat</th>
+        <th data-sort="cursor_position" style="text-align: right;" title="Per-agent filtered-stream cursor. cursor &lt; global HWM is normal — that's the count of recent messages not matched to this agent's filter, not a consume lag.">cursor</th>
       </tr>
     </thead>
     <tbody id="rows"></tbody>

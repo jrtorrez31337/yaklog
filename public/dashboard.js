@@ -13,10 +13,9 @@
   let pollTimer = null;
 
   const COLUMN_LABELS = {
-    agent_id: 'agent_id', daemon_state: 'daemon', session_state: 'session',
-    label: 'label', current_model: 'model', current_tool: 'tool',
-    subagent_active_count: 'subs', last_hook_at: 'last hook',
-    last_heartbeat_at: 'last heartbeat', cursor_position: 'cursor',
+    agent_id: 'agent_id', label: 'label', current_tool: 'tool',
+    subagent_active_count: 'subs', last_heartbeat_at: 'last heartbeat',
+    cursor_position: 'cursor',
   };
 
   function shortenModel(m) { if (!m) return ''; return m.replace(/^claude-/, ''); }
@@ -78,16 +77,15 @@
       agentCell.appendChild(trigger);
     }
     tr.appendChild(agentCell);
-    tr.appendChild(el('td', null, r.daemon_state || ''));
-    tr.appendChild(el('td', null, r.session_state || ''));
-    const labelTd = el('td', { class: 'label-cell' });
+    // 2026-05-25 dedup pass: daemon + session + model columns removed
+    // (label encodes daemon×session derivation; model lives in popover +
+    // chart legends). Click an agent name for the raw breakdown.
+    const labelTd = el('td', {
+      class: 'label-cell',
+      title: `daemon=${r.daemon_state || '?'}, session=${r.session_state || '?'}, model=${shortenModel(r.current_model) || '?'}`,
+    });
     labelTd.appendChild(el('span', { class: 'badge' }, labelStr));
     tr.appendChild(labelTd);
-    const modelStr = shortenModel(r.current_model);
-    tr.appendChild(el('td', {
-      class: 'model' + (modelStr ? ' has-value' : ''),
-      title: r.current_model || 'pre-v0.5.7 daemon, or never reported SessionStart',
-    }, modelStr || '—'));
     // v0.5.7.1 (2026-05-25): when session_state=tool_running but current_tool
     // is missing (CC 2.1.144 hooks fire with empty stdin in production, so
     // tool_name never reaches the daemon), show "(running)" rather than
@@ -120,13 +118,12 @@
       title: subN == null ? 'pre-v0.5.7 daemon' : `${subN} active subagent dispatch(es)`,
     }, subN == null || subN === 0 ? '—' : String(subN));
     tr.appendChild(subTd);
-    tr.appendChild(el('td', {
-      class: 'ts ' + ageClass(r.last_hook_at),
-      title: r.last_hook_at || '',
-    }, fmtAge(r.last_hook_at)));
+    // 2026-05-25 dedup: last_hook_at column dropped (popover has it; heartbeat
+    // tracks the same recency at finer cadence). Tooltip on heartbeat surfaces
+    // both timestamps for quick comparison without a popover open.
     tr.appendChild(el('td', {
       class: 'ts ' + ageClass(r.last_heartbeat_at),
-      title: r.last_heartbeat_at || '',
+      title: `heartbeat=${r.last_heartbeat_at || '—'}\nlast hook=${r.last_hook_at || '—'}`,
     }, fmtAge(r.last_heartbeat_at)));
     tr.appendChild(el('td', { class: 'cursor' },
       r.cursor_position == null ? '—' : String(r.cursor_position)));
@@ -264,13 +261,18 @@
   function seriesColor(i) { return CHART_COLORS[i % CHART_COLORS.length]; }
 
   // Build the human-readable legend label for a Prom series given its metric labels.
-  // Strategy: agent first; then any other interesting labels.
-  function seriesLabel(metric, otherFields) {
+  // 2026-05-25 dedup: when the chart has only ONE distinct plexus_agent_id
+  // across all series, drop the agent prefix (it's the same on every line —
+  // pure noise). When multi-agent, keep the prefix for disambiguation. The
+  // actual agent_id is always stored in a data attribute on the legend row
+  // (via wireChartLegendPopovers) so the popover trigger still works.
+  function seriesLabel(metric, otherFields, omitAgentPrefix) {
     const agent = metric.plexus_agent_id || '(no agent)';
     const tail = (otherFields || [])
       .map(f => metric[f])
       .filter(v => v != null && v !== '')
       .join(' · ');
+    if (omitAgentPrefix) return tail || agent;
     return tail ? `${agent} · ${tail}` : agent;
   }
 
@@ -279,15 +281,22 @@
   // uPlot wants: [ [t0, t1, …], [s0_v0, s0_v1, …], [s1_v0, s1_v1, …], … ]
   // Series timestamps may differ; we unify on the sorted union, fill missing as null.
   function promMatrixToUplot(result, otherFields) {
-    if (!result || result.length === 0) return { data: [[]], series: [{ label: 'time' }] };
+    if (!result || result.length === 0) return { data: [[]], series: [{ label: 'time' }], agentIds: [] };
 
     const tsSet = new Set();
     for (const s of result) for (const [t] of s.values) tsSet.add(t);
     const tsList = [...tsSet].sort((a, b) => a - b);
     const tsIndex = new Map(tsList.map((t, i) => [t, i]));
 
+    // 2026-05-25 dedup: detect single-agent case → omit agent prefix on legend.
+    const distinctAgents = new Set(result.map(s => s.metric.plexus_agent_id || '(no agent)'));
+    const omitAgentPrefix = (distinctAgents.size === 1);
+
     const seriesDefs = [{ label: 'time' }];
     const seriesData = [tsList];
+    // Track per-legend-row agent_id so popover wiring can use a data attr,
+    // not text parsing (which would break when agent prefix is omitted).
+    const agentIds = [null];
 
     result.forEach((s, idx) => {
       const valuesAligned = new Array(tsList.length).fill(null);
@@ -296,7 +305,7 @@
         valuesAligned[tsIndex.get(t)] = Number.isFinite(parsed) ? parsed : null;
       }
       seriesDefs.push({
-        label: seriesLabel(s.metric, otherFields),
+        label: seriesLabel(s.metric, otherFields, omitAgentPrefix),
         stroke: seriesColor(idx),
         width: 1.5,
         spanGaps: false,
@@ -304,8 +313,9 @@
         value: (u, v) => v == null ? '—' : v.toFixed(4),
       });
       seriesData.push(valuesAligned);
+      agentIds.push(s.metric.plexus_agent_id || null);
     });
-    return { data: seriesData, series: seriesDefs };
+    return { data: seriesData, series: seriesDefs, agentIds };
   }
 
   class PlexusChart {
@@ -367,24 +377,32 @@
           return;
         }
 
-        const { data, series } = promMatrixToUplot(result, this.otherFields);
+        const { data, series, agentIds } = promMatrixToUplot(result, this.otherFields);
+        // Stash agentIds on the instance so wireChartLegendPopovers can hydrate
+        // popover triggers without text-parsing the legend label (which now
+        // omits the agent prefix in the single-agent case).
+        this.lastAgentIds = agentIds;
         if (this.uplot) {
-          this.uplot.setData(data);
+          // Series structure can change between refreshes (new agent appears,
+          // legend prefix toggles single↔multi); rebuild rather than setData
+          // to keep the chart in sync.
+          this.uplot.destroy(); this.uplot = null;
+          clearChildren(this.bodyEl);
         } else {
           clearChildren(this.bodyEl);
-          this.uplot = new uPlot({
-            width: this.bodyEl.clientWidth - 8,
-            height: 220,
-            series,
-            scales: { x: { time: true } },
-            axes: [
-              { stroke: 'var(--muted)', grid: { stroke: 'rgba(255,255,255,0.04)' } },
-              { stroke: 'var(--muted)', grid: { stroke: 'rgba(255,255,255,0.04)' }, size: 56 },
-            ],
-            legend: { live: true },
-            cursor: { drag: { x: true, y: false } },
-          }, data, this.bodyEl);
         }
+        this.uplot = new uPlot({
+          width: this.bodyEl.clientWidth - 8,
+          height: 220,
+          series,
+          scales: { x: { time: true } },
+          axes: [
+            { stroke: 'var(--muted)', grid: { stroke: 'rgba(255,255,255,0.04)' } },
+            { stroke: 'var(--muted)', grid: { stroke: 'rgba(255,255,255,0.04)' }, size: 56 },
+          ],
+          legend: { live: true },
+          cursor: { drag: { x: true, y: false } },
+        }, data, this.bodyEl);
         this.setStatus(`${result.length} series · ${cacheHdr || '—'} · ${new Date().toLocaleTimeString()}`);
       } catch (e) {
         this.renderError('error: ' + e.message);
@@ -399,28 +417,29 @@
 
   // CP3: wire popover triggers on chart legend rows. Extracts agent_id
   // from "agent · model · type" labels (first segment).
-  function wireChartLegendPopovers(uplot) {
-    if (!uplot || !uplot.root) return;
-    const legendRows = uplot.root.querySelectorAll('.u-legend .u-series th');
+  // 2026-05-25 dedup: agent_id is no longer text-parseable from the legend
+  // label (single-agent charts omit the prefix). Use the agentIds array
+  // stashed on the PlexusChart instance during render.
+  function wireChartLegendPopovers(chart) {
+    if (!chart || !chart.uplot || !chart.uplot.root) return;
+    const legendRows = chart.uplot.root.querySelectorAll('.u-legend .u-series th');
+    const agentIds = chart.lastAgentIds || [];
     legendRows.forEach((th, idx) => {
       if (idx === 0) return;
-      const labelStr = th.textContent.split('·')[0].trim();
-      if (!labelStr || labelStr === '(no agent)') return;
+      const agentId = agentIds[idx];
+      if (!agentId) return;
       th.classList.add('agent-clickable');
-      th.dataset.agentId = labelStr;
+      th.dataset.agentId = agentId;
       th.style.cursor = 'pointer';
-      // CP4 a11y: chart legend popover triggers also focusable
       th.setAttribute('tabindex', '0');
       th.setAttribute('role', 'button');
-      th.setAttribute('aria-label', `${labelStr} — open identity card`);
+      th.setAttribute('aria-label', `${agentId} — open identity card`);
     });
   }
-  // Patch PlexusChart.refresh post-hook so legend rows become popover triggers
-  // after each render. Keeps the CP3 popover concern out of PlexusChart core.
   const _origPlexusRefresh = PlexusChart.prototype.refresh;
   PlexusChart.prototype.refresh = async function () {
     await _origPlexusRefresh.call(this);
-    wireChartLegendPopovers(this.uplot);
+    wireChartLegendPopovers(this);
   };
 
   // Instantiate the 3 Live-tab charts.
