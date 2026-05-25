@@ -80,6 +80,13 @@
   th .arrow { color: var(--blue); margin-left: 4px; }
   tr:hover td { background: rgba(255,255,255,0.02); }
   td.agent { font-weight: 500; }
+  /* 2026-05-25: per-agent OTel-status pill. Live = data observed in last
+     N min via SSE frames. Indicates "agent has restarted CC since Plexus
+     opt-in" (alive Path A). Absent = no Plexus data ever observed for
+     this agent (= hasn't restarted, or hasn't installed Path A). */
+  td.agent .otel-pill { display: inline-block; margin-left: 7px; padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 500; vertical-align: middle; cursor: help; }
+  td.agent .otel-pill.live { background: var(--green-bg); color: var(--green); }
+  td.agent .otel-pill.quiet { background: rgba(250,204,21,0.10); color: var(--yellow); }
   td.label-cell { font-size: 12px; }
   td.label-cell .badge { padding: 2px 7px; border-radius: 3px; font-weight: 500; }
   .label-online .badge,

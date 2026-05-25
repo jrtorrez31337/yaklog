@@ -75,6 +75,16 @@
         'aria-label': `${r.agent_id} — open identity card`,
       }, r.agent_id);
       agentCell.appendChild(trigger);
+      // 2026-05-25: OTel-status pill — shows whether this agent has pushed
+      // OTel data recently (= restarted CC since Path A install).
+      const otel = agentOtelStatus(r.agent_id);
+      if (otel) {
+        const cls = 'otel-pill ' + otel.kind;
+        const tip = otel.kind === 'live'
+          ? `Plexus OTel data observed ${Math.floor(otel.ageS)}s ago — agent has restarted CC since Path A install`
+          : `Plexus OTel data observed but stale (${Math.floor(otel.ageS/60)}m ago) — was emitting but quiet now`;
+        agentCell.appendChild(el('span', { class: cls, title: tip }, otel.kind === 'live' ? 'OTel' : 'OTel quiet'));
+      }
     }
     tr.appendChild(agentCell);
     // 2026-05-25 dedup pass: daemon + session + model columns removed
@@ -435,6 +445,11 @@
       this.es.addEventListener('frame', (ev) => {
         let payload;
         try { payload = JSON.parse(ev.data); } catch { return; }
+        // 2026-05-25: refresh the OTel-presence map BEFORE routing to charts.
+        // Even templates a chart doesn't subscribe to contribute agent-id
+        // observations (e.g. session.count carries plexus_agent_id even if
+        // no chart on this dashboard cares).
+        noteFrameOtelAgents(payload);
         const subs = this.subscribers.get(payload.template);
         if (!subs) return;
         for (const chart of subs) {
@@ -461,6 +476,30 @@
 
   // CP5: instantiate the shared live stream + register the Live tab charts.
   const liveStream = new PlexusLiveStream();
+
+  // 2026-05-25: per-agent OTel-presence tracker. Every incoming SSE frame
+  // carries series with plexus_agent_id labels; populate this map so the
+  // presence table can show a "live OTel" badge next to agents that are
+  // currently emitting (= they restarted CC since the Path A install).
+  // Map<agent_id, lastSeenMs>
+  const otelLastSeen = new Map();
+  const OTEL_LIVE_WINDOW_MS = 10 * 60 * 1000;   // 10 min = "recently emitted"
+  function noteFrameOtelAgents(payload) {
+    const now = Date.now();
+    const result = payload && payload.data && payload.data.result;
+    if (!result) return;
+    for (const s of result) {
+      const id = s.metric && s.metric.plexus_agent_id;
+      if (id) otelLastSeen.set(id, now);
+    }
+  }
+  function agentOtelStatus(agentId) {
+    const t = otelLastSeen.get(agentId);
+    if (!t) return null;                                  // never seen
+    const ageS = Math.floor((Date.now() - t) / 1000);
+    if (ageS < OTEL_LIVE_WINDOW_MS / 1000) return { kind: 'live', ageS };
+    return { kind: 'quiet', ageS };
+  }
 
   // CP3: wire popover triggers on chart legend rows. Extracts agent_id
   // from "agent · model · type" labels (first segment).
