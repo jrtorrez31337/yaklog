@@ -64,10 +64,17 @@
   function makeRow(r) {
     const labelStr = r.label || '';
     const tr = el('tr', { class: 'label-' + labelStr });
-    // CP3: agent cell is a popover trigger.
+    // CP3 + CP4 a11y: agent cell is a popover trigger; keyboard-focusable.
     const agentCell = el('td', { class: 'agent' });
     if (r.agent_id) {
-      const trigger = el('span', { class: 'agent-clickable', 'data-agent-id': r.agent_id, title: 'click for identity + runtime details' }, r.agent_id);
+      const trigger = el('span', {
+        class: 'agent-clickable',
+        'data-agent-id': r.agent_id,
+        title: 'click for identity + runtime details',
+        tabindex: '0',
+        role: 'button',
+        'aria-label': `${r.agent_id} — open identity card`,
+      }, r.agent_id);
       agentCell.appendChild(trigger);
     }
     tr.appendChild(agentCell);
@@ -390,6 +397,10 @@
       th.classList.add('agent-clickable');
       th.dataset.agentId = labelStr;
       th.style.cursor = 'pointer';
+      // CP4 a11y: chart legend popover triggers also focusable
+      th.setAttribute('tabindex', '0');
+      th.setAttribute('role', 'button');
+      th.setAttribute('aria-label', `${labelStr} — open identity card`);
     });
   }
   // Patch PlexusChart.refresh post-hook so legend rows become popover triggers
@@ -452,6 +463,7 @@
 
   const popoverEl = $('agent-popover');
   let popoverFetchSeq = 0;
+  let popoverPrevFocus = null;  // CP4 a11y: restore focus to trigger on close
 
   function truncMid(s, keep) {
     if (!s) return '';
@@ -477,6 +489,12 @@
     popoverEl.classList.remove('visible');
     popoverEl.setAttribute('aria-hidden', 'true');
     clearChildren(popoverEl);
+    // CP4 a11y: restore keyboard focus to the trigger that opened us, so
+    // tab order resumes naturally for screen-reader / keyboard users.
+    if (popoverPrevFocus && typeof popoverPrevFocus.focus === 'function') {
+      try { popoverPrevFocus.focus(); } catch (e) { /* trigger removed */ }
+    }
+    popoverPrevFocus = null;
   }
 
   function findPresenceRowFor(agentId) {
@@ -545,10 +563,16 @@
 
   async function openPopoverFor(agentId, triggerEl) {
     const seq = ++popoverFetchSeq;
+    // CP4 a11y: remember the trigger so closePopover() can restore focus.
+    popoverPrevFocus = (document.activeElement && document.activeElement !== document.body)
+      ? document.activeElement : triggerEl;
     const { body } = buildPopoverShell(agentId);
     popoverEl.classList.add('visible');
     popoverEl.setAttribute('aria-hidden', 'false');
     positionPopover(triggerEl);
+    // CP4 a11y: focus the close button so keyboard users can dismiss with Enter/Space.
+    const closeBtn = popoverEl.querySelector('.close');
+    if (closeBtn) closeBtn.focus();
     body.appendChild(el('div', { class: 'pop-loading' }, 'fetching identity…'));
 
     const presenceRow = findPresenceRowFor(agentId);
@@ -578,6 +602,14 @@
   });
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && popoverEl.classList.contains('visible')) closePopover();
+    // CP4 a11y: Enter/Space on a focused .agent-clickable opens its popover.
+    if ((e.key === 'Enter' || e.key === ' ') && e.target && e.target.classList && e.target.classList.contains('agent-clickable')) {
+      const agentId = e.target.dataset.agentId;
+      if (agentId) {
+        e.preventDefault();
+        openPopoverFor(agentId, e.target);
+      }
+    }
   });
 
   // Delegated click handler: one popover instance, all triggers.

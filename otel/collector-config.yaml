@@ -41,6 +41,32 @@ processors:
   # `delete` actions on the relevant keys -- but that's a per-deployment
   # config choice, not a Stage 1 default.
 
+  # CP4 hardening 2026-05-25: drop session_id resource attribute on the
+  # metrics pipeline. Why:
+  #   - session_id is unique per CC process invocation = high cardinality
+  #   - cumulative cost per session is rarely useful; per-session in logs is
+  #   - CC's OTEL_METRICS_INCLUDE_SESSION_ID=false in agent-env-template was
+  #     set but session_id still appeared in Prom labels after CP3 canary
+  #     (env var not honored, or only on specific metric types)
+  #
+  # Attempts during CP4:
+  #   1. `attributes` processor — doesn't see resource attrs.
+  #   2. `resource/drop_session_id` (namespaced) — config parsed, didn't apply.
+  #   3. `resource` (no namespace) — same: zpages /debug/pipelinez showed
+  #      only `batch` in the metrics pipeline, not `resource`. Silent drop.
+  #   4. `transform` w/ OTTL (THIS) — explicit context: resource, statement
+  #      to delete the key. OTTL is the most explicit (and most-tested)
+  #      contrib path for attribute mutation.
+  transform/drop_session_id:
+    # Actual OTel attribute key from CC is "session.id" (dotted); the
+    # prometheus exporter converts dots → underscores at export, which is
+    # why it appears as `session_id` in Prom labels. So delete by the
+    # DOTTED name. Discovered via detailed debug exporter dump 2026-05-25.
+    metric_statements:
+      - context: datapoint
+        statements:
+          - delete_key(attributes, "session.id")
+
   # Batch processor: standard performance optimization; group exports.
   batch:
     timeout: 5s
@@ -73,10 +99,16 @@ service:
   pipelines:
     metrics:
       receivers: [otlp]
-      processors: [batch]  # resource processor removed mid-CP4; was injecting useless literal "true" label
+      # CP4: transform/drop_session_id uses OTTL to explicitly delete the
+      # session_id resource attribute BEFORE batch+export, so it never
+      # lands as a Prom label. (Plain `resource` processor silently
+      # didn't apply on 0.112.0-contrib — see comments by processor def.)
+      processors: [transform/drop_session_id, batch]
       exporters: [prometheus, debug]
     logs:
       receivers: [otlp]
+      # session_id IS useful on logs (correlate a session's log events).
+      # Drop only on the metrics pipeline.
       processors: [batch]
       exporters: [debug]  # Stage 1: stdout-only for audit visibility;
                           # Stage 1 CP4 may add a file sink for retention

@@ -305,3 +305,83 @@ test('/plexus auth-required path still rejects unauth even though /public exists
     // NO .set(authed) — should still 401 on the protected path
   assert.equal(r.statusCode, 401);
 });
+
+// ── CP4 hardening: PromQL injection edge cases ────────────────────────
+
+test('CP4: agent_id with PromQL escape attempt (newline) → 400', async () => {
+  const r = await request(app)
+    .get('/api/v1/plexus/public/query?template=agent.identity.byAgentId&agent_id=' + encodeURIComponent('foo\nbar'))
+    ;
+  assert.equal(r.statusCode, 400);
+});
+
+test('CP4: agent_id with PromQL escape attempt (backslash) → 400', async () => {
+  const r = await request(app)
+    .get('/api/v1/plexus/public/query?template=agent.identity.byAgentId&agent_id=' + encodeURIComponent('foo\\bar'))
+    ;
+  assert.equal(r.statusCode, 400);
+});
+
+test('CP4: agent_id at the 128-char boundary passes', async () => {
+  nextFetchResponse = { status: 200, body: { status: 'success', data: { result: [] } } };
+  const longButValidId = 'a'.repeat(128);
+  const r = await request(app)
+    .get('/api/v1/plexus/public/query?template=agent.identity.byAgentId&agent_id=' + encodeURIComponent(longButValidId));
+  assert.equal(r.statusCode, 200);
+});
+
+test('CP4: agent_id one over the 128-char boundary → 400', async () => {
+  const tooLong = 'a'.repeat(129);
+  const r = await request(app)
+    .get('/api/v1/plexus/public/query?template=agent.identity.byAgentId&agent_id=' + encodeURIComponent(tooLong));
+  assert.equal(r.statusCode, 400);
+});
+
+test('CP4: agent_id with allowed special chars (@.+:/-_) passes', async () => {
+  nextFetchResponse = { status: 200, body: { status: 'success', data: { result: [] } } };
+  const r = await request(app)
+    .get('/api/v1/plexus/public/query?template=agent.identity.byAgentId&agent_id=' + encodeURIComponent('email@host.com/path-to:res_v1'));
+  assert.equal(r.statusCode, 200);
+});
+
+test('CP4: agent_id space-injection → 400 (label values with spaces would break PromQL)', async () => {
+  const r = await request(app)
+    .get('/api/v1/plexus/public/query?template=agent.identity.byAgentId&agent_id=' + encodeURIComponent('foo bar'));
+  assert.equal(r.statusCode, 400);
+});
+
+test('CP4: time params with negative numbers reach Prom (Prom rejects upstream)', async () => {
+  // Our validator only checks SHAPE; semantic negatives are fine to forward; Prom returns error.
+  // But the request shouldn't 500 — should make it to Prom or reject cleanly.
+  nextFetchResponse = { status: 400, body: { status: 'error', error: 'invalid time' } };
+  const r = await request(app)
+    .get('/api/v1/plexus/public/query_range?template=tokens.rate.byAgent&from=-1&to=0&step=15s');
+  // Our regex /^\d+(\.\d+)?$/ rejects the negative sign so this 400s at our layer:
+  assert.equal(r.statusCode, 400);
+});
+
+test('CP4: step whitespace rejected (`15 s` !== `15s`)', async () => {
+  const r = await request(app)
+    .get('/api/v1/plexus/public/query_range?template=tokens.rate.byAgent&from=1779000000&to=1779001000&step=' + encodeURIComponent('15 s'));
+  assert.equal(r.statusCode, 400);
+});
+
+test('CP4: empty template name → 400 (not 422)', async () => {
+  const r = await request(app)
+    .get('/api/v1/plexus/public/query?template=');
+  assert.equal(r.statusCode, 400);
+  assert.match(r.body.error, /missing param: template/);
+});
+
+test('CP4: dim with PromQL-special chars (curly brace) → 400 via enum mismatch', async () => {
+  const r = await request(app)
+    .get('/api/v1/plexus/public/query?template=cost.cumulative.byDim&dim=' + encodeURIComponent('user_email{'));
+  assert.equal(r.statusCode, 400);
+});
+
+test('CP4: window with shell-injection attempt → 400', async () => {
+  // Even if our enum miss-handles a weird value, the enum check should catch it
+  const r = await request(app)
+    .get('/api/v1/plexus/public/query?template=tokens.rate.byAgent&window=' + encodeURIComponent('5m;DROP'));
+  assert.equal(r.statusCode, 400);
+});
