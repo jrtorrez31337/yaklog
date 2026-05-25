@@ -9,6 +9,7 @@ const path = require('path');
 const config = require('./config');
 const routes = require('./routes');
 const registerRoutes = require('./registerRoutes');
+const plexusRoutes = require('./plexusRoutes');
 const auth = require('./middleware/auth');
 const { initializeDb, listPresence, getGlobalHwm } = require('./db');
 
@@ -110,6 +111,11 @@ app.get('/dashboard.js', noCacheDashboard, (req, res) => {
 // heterogeneous custom auth (enforceRegistrantToken / enforceOpsKey /
 // enforceSenderBinding) wired per-route inside registerRoutes.
 app.use('/api/v1/register', registerRoutes);
+// Plexus query proxy: read-only, sits BEHIND the global Bearer auth (any
+// agent with a yaklog token may query the allowlisted templates). Mounted
+// before the main routes module just to keep the new surface visually
+// grouped with /register; functional position behind auth is what matters.
+app.use('/api/v1/plexus', auth, plexusRoutes);
 app.use('/api/v1', auth, routes);
 
 app.get('/', (req, res) => {
