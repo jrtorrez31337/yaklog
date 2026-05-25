@@ -1,0 +1,19 @@
+# Plexus Grafana dashboard provisioning — Stage 1.
+# Loads any JSON dashboard files in /etc/grafana/provisioning/dashboards/json/
+# into Grafana on startup. Stage 1 ships exactly one: plexus-hello-world.
+
+apiVersion: 1
+
+providers:
+  - name: plexus-stage-1
+    orgId: 1
+    folder: Plexus
+    folderUid: plexus
+    type: file
+    disableDeletion: false
+    editable: true  # allow operator to tweak panels in-Grafana for Stage 2 prep
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards/json
+      foldersFromFilesStructure: false

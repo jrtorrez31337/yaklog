@@ -1,0 +1,16 @@
+# Plexus Grafana datasource provisioning — Stage 1.
+# Single Prometheus datasource pointed at the Plexus Prom container.
+# Container DNS name resolves on the yaklog_default docker network.
+
+apiVersion: 1
+
+datasources:
+  - name: Plexus-Prometheus
+    type: prometheus
+    access: proxy
+    url: http://plexus-prometheus:9090
+    isDefault: true
+    editable: false  # provisioned: don't allow UI edits that would drift
+    jsonData:
+      timeInterval: 15s
+      httpMethod: POST

@@ -1,0 +1,72 @@
+# Plexus OTel collector config — Stage 1 (Plan C Q1=C4 hybrid; Q2=Prometheus).
+# Receives OTLP from each per-agent CC session; emits Prom scrape on :8889
+# for the Plexus Prometheus container to pull; logs OTLP traffic to stdout
+# (visible via `docker logs plexus-otel-collector`) for Stage 1 smoke + audit.
+#
+# Stage 1 scope: metrics + logs pipelines only; traces deferred (CC beta
+# tracing requires org allowlist; not Stage 1).
+#
+# Stage 1 auth model: collector accepts any Bearer header. Network isolation
+# (devel LAN; container on yaklog_default docker network) is the security
+# boundary. Stage 2 adds yaklog-token validation. PRODUCTION must add
+# proper auth — flagged in PLAN-C-STAGE-1-BUILD-PLAN.md §7 risks.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317  # exposed on host as 4327
+      http:
+        endpoint: 0.0.0.0:4318  # exposed on host as 4328
+
+processors:
+  # Resource processor: ensures plexus.agent_id resource attribute is preserved
+  # end-to-end (set by per-agent OTEL_RESOURCE_ATTRIBUTES env var on the
+  # client side; this just ensures we don't accidentally strip it).
+  resource:
+    attributes:
+      - key: plexus.collector_received_at
+        action: insert
+        value: "true"  # presence flag; could become a timestamp transform later
+  # Batch processor: standard performance optimization; group exports.
+  batch:
+    timeout: 5s
+    send_batch_size: 512
+
+exporters:
+  # Prometheus exporter: exposes metrics on :8889/metrics for Prom to scrape.
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    # Preserve resource attributes (plexus.agent_id etc.) as Prom labels.
+    resource_to_telemetry_conversion:
+      enabled: true
+    # Default conversion: counters -> _total suffix; dots -> underscores.
+    # claude_code.token.usage (Counter) -> claude_code_token_usage_total
+  # Debug exporter: stage-1 visibility — every received metric/log emits
+  # one stderr line. Turn down verbosity for production.
+  debug:
+    verbosity: basic
+    sampling_initial: 5
+    sampling_thereafter: 200
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133  # exposed on host as 13134
+  zpages:
+    endpoint: 0.0.0.0:55679  # internal; useful for collector troubleshooting
+
+service:
+  extensions: [health_check, zpages]
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      processors: [resource, batch]
+      exporters: [prometheus, debug]
+    logs:
+      receivers: [otlp]
+      processors: [resource, batch]
+      exporters: [debug]  # Stage 1: stdout-only for audit visibility;
+                          # Stage 1 CP4 may add a file sink for retention
+  telemetry:
+    logs:
+      level: info

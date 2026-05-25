@@ -14,5 +14,95 @@ services:
       - ${YAKLOG_BARE_GIT_HOST:-/srv/git}:/srv/git:ro
       - ${YAKLOG_FERRY_AUDIT_HOST:-/var/log/yaklog}:/var/log/yaklog:rw
 
+  # ──────────────────────────────────────────────────────────────────────
+  # Plexus OTel stack (Plan C Stage 1; Jon-ratified 2026-05-24).
+  # Side-by-side with ssw-jaeger/ssw-grafana (different tech stack per Jon).
+  # All three services join yaklog_default network so they can address
+  # each other by service name (plexus-otel-collector / plexus-prometheus).
+  # External port shifts avoid ssw-* collisions: 4327/4328/3001 vs ssw's
+  # 4317/4318/3000.
+  # ──────────────────────────────────────────────────────────────────────
+
+  plexus-otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.112.0
+    container_name: plexus-otel-collector
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./otel/collector-config.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      # External OTLP receivers (shifted +10 to avoid ssw-jaeger 4317/4318)
+      - "${PLEXUS_BIND_IP:-0.0.0.0}:4327:4317"  # OTLP gRPC
+      - "${PLEXUS_BIND_IP:-0.0.0.0}:4328:4318"  # OTLP HTTP
+      # Healthcheck (shifted from 13133 to avoid ssw-jaeger)
+      - "${PLEXUS_BIND_IP:-127.0.0.1}:13134:13133"
+    # NOTE: the otel-collector-contrib image is distroless (no shell, no
+    # wget, no curl). Docker's HEALTHCHECK runs in-container, so we can't
+    # use the normal "wget the /health endpoint" pattern. Two options
+    # considered: (a) drop healthcheck + use service_started for depends_on,
+    # (b) embed a static `grpc_health_probe` binary via a custom Dockerfile.
+    # Stage 1: option (a). External smoke verifies port 13134 returns 200.
+    # If Stage 2 needs in-container healthcheck (e.g., for orchestrator-
+    # driven restarts), revisit with a custom image.
+
+  plexus-prometheus:
+    image: prom/prometheus:v2.55.0
+    container_name: plexus-prometheus
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --web.console.libraries=/usr/share/prometheus/console_libraries
+      - --web.console.templates=/usr/share/prometheus/consoles
+      - --web.enable-lifecycle
+    volumes:
+      - ./otel/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - plexus_prom_data:/prometheus
+    ports:
+      - "${PLEXUS_BIND_IP:-0.0.0.0}:9090:9090"
+    depends_on:
+      plexus-otel-collector:
+        condition: service_started  # collector is distroless; no in-container healthcheck (see above)
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+
+  plexus-grafana:
+    image: grafana/grafana:11.6.0
+    container_name: plexus-grafana
+    restart: unless-stopped
+    environment:
+      # Stage 1 default creds; CP4 hardening rotates + injects via env_file
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: plexus-stage-1
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_INSTALL_PLUGINS: ""
+      # Provisioning paths
+      GF_PATHS_PROVISIONING: /etc/grafana/provisioning
+    volumes:
+      - ./otel/grafana-datasources.yaml:/etc/grafana/provisioning/datasources/plexus.yaml:ro
+      - ./otel/grafana-dashboard-provisioning.yaml:/etc/grafana/provisioning/dashboards/plexus.yaml:ro
+      - ./otel/grafana-dashboards:/etc/grafana/provisioning/dashboards/json:ro
+      - plexus_grafana_data:/var/lib/grafana
+    ports:
+      # Shifted to 3001 (ssw-grafana has 3000)
+      - "${PLEXUS_BIND_IP:-0.0.0.0}:3001:3000"
+    depends_on:
+      plexus-prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3000/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+
 volumes:
   yaklog_data:
+  plexus_prom_data:
+  plexus_grafana_data:

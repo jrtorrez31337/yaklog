@@ -1,0 +1,26 @@
+# Plexus Prometheus config — Stage 1.
+# Scrapes Plexus OTel collector's prometheus exporter (:8889).
+# Retention 15 days for Stage 1 (set via --storage.tsdb.retention.time
+# in docker-compose command args).
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: plexus-stage-1
+    deployment: devel
+
+scrape_configs:
+  # Self-scrape: Prom monitoring itself; standard practice.
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Plexus OTel collector — scrapes the collector's prometheus exporter
+  # which receives OTLP from CC sessions and re-exposes as Prom metrics.
+  # Container DNS name on yaklog_default network.
+  - job_name: plexus-otel-collector
+    static_configs:
+      - targets: ['plexus-otel-collector:8889']
+        labels:
+          source: otel-collector

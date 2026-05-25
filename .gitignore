@@ -18,6 +18,13 @@ scripts/__pycache__/
 # belongs in the agent's home dir, not in the public repo.
 .claude/
 
+# Plexus OTel stack runtime data (Prom WAL + Grafana sqlite). Stage 1
+# uses docker named volumes (plexus_prom_data, plexus_grafana_data), so
+# this is belt-and-suspenders in case the stack is ever reconfigured to
+# bind-mount.
+otel/data/
+otel/grafana/data/
+
 # Internal/agent-lane docs do NOT live in this repo.
 # yaklog-dev's ADR input artifacts, internal design docs, and lane-specific
 # specs belong in ~/agents/yaklog-dev/specs/ (pushed to bare-git on devel,
@@ -26,3 +33,6 @@ scripts/__pycache__/
 docs/adr/
 docs/plans/2026-04-27-direct-messages-design.md
 docs/plans/*-design.md
+
+# Docker compose safety captures (taken before infra changes).
+docker-compose.yml.bak*
