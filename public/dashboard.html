@@ -103,7 +103,59 @@
   td.subagents.active { color: var(--blue); font-weight: 500; }
   td.tool .pill { padding: 1px 6px; border-radius: 3px; background: rgba(96,165,250,0.15); color: var(--blue); font-size: 11px; }
 
-  /* Cost tab stub. */
+  /* CP3: agent-name overlay popup. */
+  .agent-clickable { cursor: pointer; text-decoration: underline dotted rgba(255,255,255,0.18); text-underline-offset: 3px; }
+  .agent-clickable:hover { text-decoration-color: var(--blue); color: var(--blue); }
+  #agent-popover {
+    position: absolute; display: none; z-index: 100;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+    box-shadow: 0 6px 24px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.04);
+    width: 380px; max-width: 92vw; max-height: 80vh; overflow-y: auto;
+    font-size: 12px;
+  }
+  #agent-popover.visible { display: block; }
+  #agent-popover .pop-head { padding: 10px 14px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+  #agent-popover .pop-head h3 { margin: 0; font-size: 13px; color: var(--text); font-weight: 600; }
+  #agent-popover .pop-head .close { background: transparent; border: 0; color: var(--muted); font-size: 18px; cursor: pointer; line-height: 1; padding: 0 4px; }
+  #agent-popover .pop-head .close:hover { color: var(--text); }
+  #agent-popover section { padding: 8px 14px; border-bottom: 1px solid var(--border); }
+  #agent-popover section:last-child { border-bottom: 0; }
+  #agent-popover h4 { margin: 0 0 6px; font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; font-weight: 500; }
+  #agent-popover dl { margin: 0; display: grid; grid-template-columns: 110px 1fr; gap: 3px 10px; }
+  #agent-popover dt { color: var(--muted); font-size: 11px; }
+  #agent-popover dd { margin: 0; color: var(--text); font-size: 12px; word-break: break-all; }
+  #agent-popover dd.muted { color: var(--muted); }
+  #agent-popover dd .pill-mini { padding: 1px 6px; border-radius: 3px; background: rgba(96,165,250,0.15); color: var(--blue); font-size: 10px; }
+  #agent-popover .pop-empty { padding: 20px 14px; text-align: center; color: var(--muted); font-size: 12px; }
+  #agent-popover .pop-loading { padding: 20px 14px; text-align: center; color: var(--muted); font-size: 12px; opacity: 0.7; }
+  #agent-popover .pop-error { padding: 12px 14px; text-align: center; color: var(--red); font-size: 12px; }
+
+  /* CP3: Cost tab. */
+  .cost-controls { padding: 14px 18px; background: var(--panel); border-bottom: 1px solid var(--border); display: flex; flex-wrap: wrap; gap: 22px; align-items: center; }
+  .cost-controls fieldset { border: 0; padding: 0; margin: 0; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .cost-controls legend { display: contents; }
+  .cost-controls .lbl { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; padding-right: 6px; }
+  .cost-controls .opts { display: flex; gap: 0; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+  .cost-controls .opts button { background: transparent; border: 0; color: var(--muted); padding: 6px 10px; cursor: pointer; font: inherit; font-size: 12px; border-right: 1px solid var(--border); }
+  .cost-controls .opts button:last-child { border-right: 0; }
+  .cost-controls .opts button:hover { color: var(--text); background: rgba(255,255,255,0.03); }
+  .cost-controls .opts button.active { background: var(--blue-bg); color: var(--blue); }
+
+  .cost-grid { display: grid; grid-template-columns: 1fr; gap: 12px; padding: 12px 18px; }
+  @media (min-width: 980px) { .cost-grid { grid-template-columns: 1fr 1fr; } }
+  .cost-grid .chart-card { min-height: 280px; }
+
+  .cost-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .cost-table th { background: transparent; color: var(--muted); text-transform: uppercase; font-size: 10px; letter-spacing: 0.06em; padding: 6px 12px; text-align: left; cursor: default; position: static; border-bottom: 1px solid var(--border); }
+  .cost-table th.num { text-align: right; }
+  .cost-table td { padding: 6px 12px; border-bottom: 1px solid var(--border); }
+  .cost-table td.dim-val { color: var(--text); font-weight: 500; word-break: break-all; }
+  .cost-table td.cost { text-align: right; color: var(--text); font-variant-numeric: tabular-nums; }
+  .cost-table td.bar { padding: 0 12px; width: 40%; }
+  .cost-table td.bar .bar-wrap { height: 6px; background: rgba(255,255,255,0.04); border-radius: 3px; overflow: hidden; }
+  .cost-table td.bar .bar-fill { height: 100%; background: var(--blue); border-radius: 3px; }
+
+  /* Cost tab stub (legacy; replaced by full panel in CP3 but kept for fallback). */
   .stub-panel { padding: 80px 18px; text-align: center; color: var(--muted); }
   .stub-panel h2 { font-size: 16px; color: var(--text); margin: 0 0 12px; }
   .stub-panel code { background: var(--panel); border: 1px solid var(--border); padding: 2px 6px; border-radius: 3px; font-size: 12px; }
@@ -177,14 +229,54 @@
   </table>
 </section>
 
-<!-- Cost tab: CP3 stub. -->
+<!-- Cost tab: full per-account attribution view (CP3). -->
 <section class="tab-panel" data-tab="cost" id="tab-cost">
-  <div class="stub-panel">
-    <h2>Cost tab — coming in CP3</h2>
-    <p>Per-account cost attribution. Slice by <code>plexus_agent_id</code> / <code>user_email</code> / <code>organization_id</code> / <code>model</code>.</p>
-    <p style="opacity:0.7;font-size:12px;">Backend templates already live: <code>cost.cumulative.byDim</code>, <code>cost.rate.byDim</code>. Frontend dim-picker + drill-down + date-range picker land in CP3.</p>
+  <div class="cost-controls">
+    <fieldset>
+      <span class="lbl">slice by</span>
+      <div class="opts" id="cost-dim-opts">
+        <button data-dim="plexus_agent_id" class="active">agent</button>
+        <button data-dim="user_email">user email</button>
+        <button data-dim="user_account_id">account</button>
+        <button data-dim="organization_id">org</button>
+        <button data-dim="model">model</button>
+      </div>
+    </fieldset>
+    <fieldset>
+      <span class="lbl">window</span>
+      <div class="opts" id="cost-window-opts">
+        <button data-window-s="3600">1h</button>
+        <button data-window-s="21600">6h</button>
+        <button data-window-s="86400" class="active">24h</button>
+        <button data-window-s="604800">7d</button>
+      </div>
+    </fieldset>
+  </div>
+
+  <div class="cost-grid">
+    <div class="chart-card" data-chart="cost-cumulative">
+      <div class="chart-card-head">
+        <h2>Cumulative cost <span class="sub">total USD · sorted desc</span></h2>
+        <span class="sub" data-chart-status>—</span>
+      </div>
+      <div class="chart-card-body">
+        <div class="chart-loading">loading…</div>
+      </div>
+    </div>
+    <div class="chart-card" data-chart="cost-rate">
+      <div class="chart-card-head">
+        <h2>Cost rate over time <span class="sub">rate(5m) · USD/sec</span></h2>
+        <span class="sub" data-chart-status>—</span>
+      </div>
+      <div class="chart-card-body">
+        <div class="chart-loading">loading…</div>
+      </div>
+    </div>
   </div>
 </section>
+
+<!-- CP3: shared agent overlay popover (single instance reused). -->
+<div id="agent-popover" role="dialog" aria-hidden="true"></div>
 
 <footer>
   Live tab: presence polled <code>/api/v1/presence/public</code> @ 2s · charts query <code>/api/v1/plexus/public/query_range</code> @ 15s ·

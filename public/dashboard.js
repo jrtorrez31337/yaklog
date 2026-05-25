@@ -64,7 +64,13 @@
   function makeRow(r) {
     const labelStr = r.label || '';
     const tr = el('tr', { class: 'label-' + labelStr });
-    tr.appendChild(el('td', { class: 'agent' }, r.agent_id || ''));
+    // CP3: agent cell is a popover trigger.
+    const agentCell = el('td', { class: 'agent' });
+    if (r.agent_id) {
+      const trigger = el('span', { class: 'agent-clickable', 'data-agent-id': r.agent_id, title: 'click for identity + runtime details' }, r.agent_id);
+      agentCell.appendChild(trigger);
+    }
+    tr.appendChild(agentCell);
     tr.appendChild(el('td', null, r.daemon_state || ''));
     tr.appendChild(el('td', null, r.session_state || ''));
     const labelTd = el('td', { class: 'label-cell' });
@@ -372,6 +378,28 @@
     }
   }
 
+  // CP3: wire popover triggers on chart legend rows. Extracts agent_id
+  // from "agent · model · type" labels (first segment).
+  function wireChartLegendPopovers(uplot) {
+    if (!uplot || !uplot.root) return;
+    const legendRows = uplot.root.querySelectorAll('.u-legend .u-series th');
+    legendRows.forEach((th, idx) => {
+      if (idx === 0) return;
+      const labelStr = th.textContent.split('·')[0].trim();
+      if (!labelStr || labelStr === '(no agent)') return;
+      th.classList.add('agent-clickable');
+      th.dataset.agentId = labelStr;
+      th.style.cursor = 'pointer';
+    });
+  }
+  // Patch PlexusChart.refresh post-hook so legend rows become popover triggers
+  // after each render. Keeps the CP3 popover concern out of PlexusChart core.
+  const _origPlexusRefresh = PlexusChart.prototype.refresh;
+  PlexusChart.prototype.refresh = async function () {
+    await _origPlexusRefresh.call(this);
+    wireChartLegendPopovers(this.uplot);
+  };
+
   // Instantiate the 3 Live-tab charts.
   const charts = [
     new PlexusChart(document.querySelector('[data-chart="tokens"]'), {
@@ -391,6 +419,388 @@
     }),
   ];
   for (const c of charts) c.start();
+
+  // ────────────────────────────────────────────────────────────────────
+  // CP3: AgentPopover — click-to-open identity + runtime fingerprint card.
+  // Fetches via agent.identity.byAgentId template; falls back to "no OTel
+  // data" if Prom returns no series. Also pulls the latest presence row
+  // from cached /presence/public for v0.5.7 fields.
+  // ────────────────────────────────────────────────────────────────────
+  const POPOVER_IDENTITY_FIELDS = [
+    { key: 'plexus_agent_id',    label: 'agent_id',    section: 'plexus' },
+    { key: 'plexus_cluster_id',  label: 'cluster',     section: 'plexus' },
+    { key: 'plexus_deployment',  label: 'deployment',  section: 'plexus' },
+    { key: 'plexus_run_kind',    label: 'run kind',    section: 'plexus' },
+    { key: 'user_email',         label: 'email',       section: 'anthropic' },
+    { key: 'user_account_id',    label: 'account_id',  section: 'anthropic' },
+    { key: 'user_account_uuid',  label: 'account_uuid',section: 'anthropic', truncate: 18 },
+    { key: 'user_id',            label: 'user_id sha', section: 'anthropic', truncate: 18 },
+    { key: 'organization_id',    label: 'org_id',      section: 'anthropic', truncate: 18 },
+    { key: 'service_version',    label: 'CC version',  section: 'runtime' },
+    { key: 'service_name',       label: 'service',     section: 'runtime' },
+    { key: 'host_arch',          label: 'arch',        section: 'runtime' },
+    { key: 'os_type',            label: 'os',          section: 'runtime' },
+    { key: 'os_version',         label: 'os version',  section: 'runtime' },
+    { key: 'terminal_type',      label: 'terminal',    section: 'runtime' },
+    { key: 'query_source',       label: 'query_source',section: 'runtime' },
+  ];
+  const POPOVER_SECTIONS = [
+    { id: 'plexus',    title: 'Plexus' },
+    { id: 'anthropic', title: 'Anthropic account' },
+    { id: 'runtime',   title: 'Runtime fingerprint' },
+  ];
+
+  const popoverEl = $('agent-popover');
+  let popoverFetchSeq = 0;
+
+  function truncMid(s, keep) {
+    if (!s) return '';
+    if (s.length <= keep * 2 + 1) return s;
+    return s.slice(0, keep) + '…' + s.slice(-keep);
+  }
+
+  function positionPopover(triggerEl) {
+    const rect = triggerEl.getBoundingClientRect();
+    const popW = 380;
+    const margin = 8;
+    let left = rect.left + window.scrollX;
+    const top = rect.bottom + window.scrollY + 6;
+    if (left + popW + margin > window.innerWidth + window.scrollX) {
+      left = window.innerWidth + window.scrollX - popW - margin;
+    }
+    if (left < margin) left = margin;
+    popoverEl.style.left = left + 'px';
+    popoverEl.style.top = top + 'px';
+  }
+
+  function closePopover() {
+    popoverEl.classList.remove('visible');
+    popoverEl.setAttribute('aria-hidden', 'true');
+    clearChildren(popoverEl);
+  }
+
+  function findPresenceRowFor(agentId) {
+    if (!lastData || !lastData.presence) return null;
+    return lastData.presence.find(r => r.agent_id === agentId) || null;
+  }
+
+  function buildPopoverShell(agentId) {
+    // Returns { root, body } — root already attached to popoverEl.
+    clearChildren(popoverEl);
+    const head = el('div', { class: 'pop-head' });
+    head.appendChild(el('h3', null, agentId));
+    const closeBtn = el('button', { class: 'close', type: 'button', 'aria-label': 'close', title: 'close (ESC)' }, '×');
+    closeBtn.addEventListener('click', closePopover);
+    head.appendChild(closeBtn);
+    popoverEl.appendChild(head);
+    const body = el('div', { class: 'pop-body' });
+    popoverEl.appendChild(body);
+    return { body };
+  }
+
+  function renderPopoverIdentity(body, metric, presenceRow) {
+    clearChildren(body);
+    for (const sec of POPOVER_SECTIONS) {
+      const fields = POPOVER_IDENTITY_FIELDS.filter(f => f.section === sec.id && metric && metric[f.key] != null);
+      if (fields.length === 0) continue;
+      const section = el('section');
+      section.appendChild(el('h4', null, sec.title));
+      const dl = el('dl');
+      for (const f of fields) {
+        const v = metric[f.key];
+        const display = f.truncate ? truncMid(v, f.truncate) : v;
+        dl.appendChild(el('dt', null, f.label));
+        dl.appendChild(el('dd', { title: v }, display));
+      }
+      section.appendChild(dl);
+      body.appendChild(section);
+    }
+    if (presenceRow) {
+      const section = el('section');
+      section.appendChild(el('h4', null, 'Presence (live)'));
+      const dl = el('dl');
+      const fields = [
+        ['daemon', presenceRow.daemon_state],
+        ['session', presenceRow.session_state],
+        ['label', presenceRow.label],
+        ['model', shortenModel(presenceRow.current_model) || '—'],
+        ['current tool', presenceRow.current_tool || (presenceRow.last_tool_name ? `last: ${presenceRow.last_tool_name}` : '—')],
+        ['last hook', fmtAge(presenceRow.last_hook_at)],
+        ['last heartbeat', fmtAge(presenceRow.last_heartbeat_at)],
+        ['cursor', presenceRow.cursor_position == null ? '—' : presenceRow.cursor_position],
+      ];
+      for (const [k, v] of fields) {
+        dl.appendChild(el('dt', null, k));
+        dl.appendChild(el('dd', null, String(v == null ? '—' : v)));
+      }
+      section.appendChild(dl);
+      body.appendChild(section);
+    }
+    if (!metric && !presenceRow) {
+      body.appendChild(el('div', { class: 'pop-empty' }, 'no data — agent unknown to both Plexus OTel and the presence registry'));
+    } else if (!metric) {
+      body.appendChild(el('div', { class: 'pop-empty' }, 'no Plexus OTel data — agent has not opted in to telemetry'));
+    }
+  }
+
+  async function openPopoverFor(agentId, triggerEl) {
+    const seq = ++popoverFetchSeq;
+    const { body } = buildPopoverShell(agentId);
+    popoverEl.classList.add('visible');
+    popoverEl.setAttribute('aria-hidden', 'false');
+    positionPopover(triggerEl);
+    body.appendChild(el('div', { class: 'pop-loading' }, 'fetching identity…'));
+
+    const presenceRow = findPresenceRowFor(agentId);
+    let metric = null;
+    try {
+      const qs = new URLSearchParams({ template: 'agent.identity.byAgentId', agent_id: agentId });
+      const res = await fetch('/api/v1/plexus/public/query?' + qs.toString(), { cache: 'no-store' });
+      if (res.ok) {
+        const respBody = await res.json();
+        const results = respBody.data && respBody.data.result;
+        if (results && results.length > 0) metric = results[0].metric;
+      }
+    } catch (e) { /* swallow; render fallback */ }
+
+    // Stale guard: another popover opened in the meantime
+    if (seq !== popoverFetchSeq) return;
+    if (!popoverEl.classList.contains('visible')) return;
+    renderPopoverIdentity(body, metric, presenceRow);
+  }
+
+  // Click-away dismisses; ESC dismisses; click on trigger re-opens.
+  document.addEventListener('click', (e) => {
+    if (!popoverEl.classList.contains('visible')) return;
+    if (popoverEl.contains(e.target)) return;
+    if (e.target.closest && e.target.closest('.agent-clickable')) return;
+    closePopover();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && popoverEl.classList.contains('visible')) closePopover();
+  });
+
+  // Delegated click handler: one popover instance, all triggers.
+  document.addEventListener('click', (e) => {
+    const trigger = e.target.closest && e.target.closest('.agent-clickable');
+    if (!trigger) return;
+    const agentId = trigger.dataset.agentId;
+    if (!agentId) return;
+    e.stopPropagation();
+    openPopoverFor(agentId, trigger);
+  });
+
+  // ────────────────────────────────────────────────────────────────────
+  // CP3: Cost tab — dim-picker + window-preset + cumulative table + rate chart.
+  // ────────────────────────────────────────────────────────────────────
+  const COST_REFRESH_MS = 30000;
+
+  function pickActiveOpt(containerSel, attr) {
+    const c = document.querySelector(containerSel);
+    if (!c) return null;
+    const btn = c.querySelector('button.active');
+    return btn ? btn.dataset[attr] : null;
+  }
+
+  function bindOpts(containerSel, onChange) {
+    document.querySelectorAll(containerSel + ' button').forEach(b => {
+      b.addEventListener('click', () => {
+        const c = b.parentElement;
+        c.querySelectorAll('button').forEach(x => x.classList.remove('active'));
+        b.classList.add('active');
+        onChange();
+      });
+    });
+  }
+
+  class CostView {
+    constructor() {
+      this.cumulativeCard = document.querySelector('[data-chart="cost-cumulative"]');
+      this.cumulativeBody = this.cumulativeCard.querySelector('.chart-card-body');
+      this.cumulativeStatus = this.cumulativeCard.querySelector('[data-chart-status]');
+      this.rateCard = document.querySelector('[data-chart="cost-rate"]');
+      this.rateBody = this.rateCard.querySelector('.chart-card-body');
+      this.rateStatus = this.rateCard.querySelector('[data-chart-status]');
+      this.rateChart = null;
+      this.refreshTimer = null;
+      this.fetchSeq = 0;
+    }
+    currentDim()     { return pickActiveOpt('#cost-dim-opts', 'dim'); }
+    currentWindowS() { return parseInt(pickActiveOpt('#cost-window-opts', 'windowS'), 10); }
+
+    setCumulativeStatus(t, err) { this.cumulativeStatus.textContent = t; this.cumulativeStatus.style.color = err ? 'var(--red)' : ''; }
+    setRateStatus(t, err)       { this.rateStatus.textContent = t;       this.rateStatus.style.color = err ? 'var(--red)' : ''; }
+
+    async refresh() {
+      const seq = ++this.fetchSeq;
+      const dim = this.currentDim();
+      const windowS = this.currentWindowS();
+      await Promise.all([
+        this.refreshCumulative(seq, dim, windowS),
+        this.refreshRate(seq, dim, windowS),
+      ]);
+    }
+
+    async refreshCumulative(seq, dim, _windowS) {
+      try {
+        const qs = new URLSearchParams({ template: 'cost.cumulative.byDim', dim });
+        const res = await fetch('/api/v1/plexus/public/query?' + qs.toString(), { cache: 'no-store' });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const cacheHdr = res.headers.get('X-Plexus-Cache');
+        const respBody = await res.json();
+        if (seq !== this.fetchSeq) return;
+        const results = (respBody.data && respBody.data.result) || [];
+        if (results.length === 0) {
+          clearChildren(this.cumulativeBody);
+          this.cumulativeBody.appendChild(el('div', { class: 'chart-empty' }, 'no cost data in this slice'));
+          this.setCumulativeStatus(`empty · ${new Date().toLocaleTimeString()}`);
+          return;
+        }
+        const rows = results.map(s => ({
+          dimValue: s.metric[dim] || '(empty)',
+          cost: parseFloat(s.value[1]) || 0,
+        })).sort((a, b) => b.cost - a.cost);
+        const max = rows[0].cost || 1;
+        clearChildren(this.cumulativeBody);
+        const table = el('table', { class: 'cost-table' });
+        const thead = el('thead');
+        thead.appendChild(el('tr', null,
+          el('th', null, dim),
+          el('th', null, ''),
+          el('th', { class: 'num' }, 'USD'),
+        ));
+        table.appendChild(thead);
+        const tbody = el('tbody');
+        for (const r of rows) {
+          const tr = el('tr');
+          const dimCell = el('td', { class: 'dim-val' });
+          if (dim === 'plexus_agent_id') {
+            dimCell.appendChild(el('span', { class: 'agent-clickable', 'data-agent-id': r.dimValue }, r.dimValue));
+          } else {
+            dimCell.appendChild(document.createTextNode(r.dimValue));
+          }
+          tr.appendChild(dimCell);
+          const bar = el('td', { class: 'bar' });
+          const wrap = el('div', { class: 'bar-wrap' });
+          const fill = el('div', { class: 'bar-fill' });
+          fill.style.width = ((r.cost / max) * 100).toFixed(1) + '%';
+          wrap.appendChild(fill); bar.appendChild(wrap); tr.appendChild(bar);
+          tr.appendChild(el('td', { class: 'cost' }, '$' + r.cost.toFixed(4)));
+          tbody.appendChild(tr);
+        }
+        table.appendChild(tbody);
+        this.cumulativeBody.appendChild(table);
+        this.setCumulativeStatus(`${rows.length} ${dim}(s) · ${cacheHdr || '—'} · ${new Date().toLocaleTimeString()}`);
+      } catch (e) {
+        clearChildren(this.cumulativeBody);
+        this.cumulativeBody.appendChild(el('div', { class: 'chart-error' }, 'error: ' + e.message));
+        this.setCumulativeStatus('error', true);
+      }
+    }
+
+    async refreshRate(seq, dim, windowS) {
+      try {
+        const to = Math.floor(Date.now() / 1000);
+        const from = to - windowS;
+        const step = windowS <=  3600 ? '15s'
+                   : windowS <= 21600 ? '1m'
+                   : windowS <= 86400 ? '5m'
+                   : '15m';
+        const qs = new URLSearchParams({ template: 'cost.rate.byDim', dim, window: '5m', from, to, step });
+        const res = await fetch('/api/v1/plexus/public/query_range?' + qs.toString(), { cache: 'no-store' });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const cacheHdr = res.headers.get('X-Plexus-Cache');
+        const respBody = await res.json();
+        if (seq !== this.fetchSeq) return;
+        const results = (respBody.data && respBody.data.result) || [];
+        if (results.length === 0) {
+          if (this.rateChart) { this.rateChart.destroy(); this.rateChart = null; }
+          clearChildren(this.rateBody);
+          this.rateBody.appendChild(el('div', { class: 'chart-empty' }, 'no cost rate in this window'));
+          this.setRateStatus(`empty · ${new Date().toLocaleTimeString()}`);
+          return;
+        }
+        const tsSet = new Set();
+        for (const s of results) for (const [t] of s.values) tsSet.add(t);
+        const tsList = [...tsSet].sort((a, b) => a - b);
+        const tsIndex = new Map(tsList.map((t, i) => [t, i]));
+        const seriesDefs = [{ label: 'time' }];
+        const seriesData = [tsList];
+        results.forEach((s, idx) => {
+          const valsAligned = new Array(tsList.length).fill(null);
+          for (const [t, v] of s.values) {
+            const p = parseFloat(v);
+            valsAligned[tsIndex.get(t)] = Number.isFinite(p) ? p : null;
+          }
+          const labelStr = s.metric[dim] || '(empty)';
+          seriesDefs.push({
+            label: labelStr,
+            stroke: CHART_COLORS[idx % CHART_COLORS.length],
+            width: 1.5,
+            spanGaps: false,
+            value: (u, v) => v == null ? '—' : '$' + v.toFixed(8) + '/s',
+          });
+          seriesData.push(valsAligned);
+        });
+        if (this.rateChart) { this.rateChart.destroy(); this.rateChart = null; }
+        clearChildren(this.rateBody);
+        this.rateChart = new uPlot({
+          width: this.rateBody.clientWidth - 8,
+          height: 240,
+          series: seriesDefs,
+          scales: { x: { time: true } },
+          axes: [
+            { stroke: 'var(--muted)', grid: { stroke: 'rgba(255,255,255,0.04)' } },
+            { stroke: 'var(--muted)', grid: { stroke: 'rgba(255,255,255,0.04)' }, size: 64 },
+          ],
+          legend: { live: true },
+          cursor: { drag: { x: true, y: false } },
+        }, seriesData, this.rateBody);
+        // CP3: popover triggers on legend (only when dim=plexus_agent_id; otherwise the
+        // legend label is a non-agent string like an email or model name).
+        if (dim === 'plexus_agent_id') {
+          this.rateChart.root.querySelectorAll('.u-legend .u-series th').forEach((th, idx) => {
+            if (idx === 0) return;
+            const labelStr = th.textContent.split('·')[0].trim();
+            if (!labelStr) return;
+            th.classList.add('agent-clickable');
+            th.dataset.agentId = labelStr;
+            th.style.cursor = 'pointer';
+          });
+        }
+        this.setRateStatus(`${results.length} ${dim}(s) · ${cacheHdr || '—'} · ${new Date().toLocaleTimeString()}`);
+      } catch (e) {
+        clearChildren(this.rateBody);
+        this.rateBody.appendChild(el('div', { class: 'chart-error' }, 'error: ' + e.message));
+        this.setRateStatus('error', true);
+      }
+    }
+
+    start() {
+      this.refresh().catch(() => {});
+      this.refreshTimer = setInterval(() => this.refresh().catch(() => {}), COST_REFRESH_MS);
+    }
+    stop() {
+      if (this.refreshTimer) clearInterval(this.refreshTimer);
+      this.refreshTimer = null;
+    }
+  }
+
+  // Lazy-init Cost view on first activation (don't burn Prom queries unless
+  // the user is actually looking at the Cost tab).
+  let costView = null;
+  function ensureCostView() {
+    if (costView) return;
+    costView = new CostView();
+    bindOpts('#cost-dim-opts',    () => costView.refresh().catch(() => {}));
+    bindOpts('#cost-window-opts', () => costView.refresh().catch(() => {}));
+    costView.start();
+  }
+  document.querySelectorAll('.tab-btn').forEach(b => {
+    b.addEventListener('click', () => { if (b.dataset.tab === 'cost') ensureCostView(); });
+  });
+  window.addEventListener('hashchange', () => { if (location.hash === '#cost') ensureCostView(); });
+  if (location.hash === '#cost') ensureCostView();
 
   // Resize charts on window resize.
   let resizeTimer = null;
