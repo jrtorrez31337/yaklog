@@ -62,6 +62,30 @@
   .chart-error { color: var(--red); font-size: 12px; text-align: center; padding: 80px 14px; }
   .chart-loading { color: var(--muted); font-size: 12px; text-align: center; padding: 80px 0; opacity: 0.6; }
 
+  /* CP6.2 (in-card refactor) — accounting view inside the existing Cost card. */
+  .acct-numbers { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 8px 12px 0; }
+  .acct-num { background: var(--bg); border: 1px solid var(--border); border-radius: 3px; padding: 6px 10px; }
+  .acct-num .lbl { color: var(--muted); font-size: 9px; text-transform: uppercase; letter-spacing: 0.08em; }
+  .acct-num .val { font-size: 16px; font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; line-height: 1.2; }
+  .acct-num .sub2 { color: var(--muted); font-size: 9px; margin-top: 1px; }
+  .acct-num.proj .val { color: var(--blue); }
+  .acct-drivers { padding: 8px 12px 4px; }
+  .acct-drivers-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+  .acct-drivers-head h3 { margin: 0; color: var(--muted); font-size: 9px; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600; }
+  .acct-drivers-head .by-toggle { display: flex; gap: 0; border: 1px solid var(--border); border-radius: 3px; overflow: hidden; }
+  .acct-drivers-head .by-toggle button { background: transparent; color: var(--muted); border: 0; padding: 2px 8px; cursor: pointer; font: inherit; font-size: 10px; border-right: 1px solid var(--border); }
+  .acct-drivers-head .by-toggle button:last-child { border-right: 0; }
+  .acct-drivers-head .by-toggle button.active { background: var(--blue-bg); color: var(--blue); }
+  .acct-drivers-head .by-toggle button:hover:not(.active) { color: var(--text); }
+  .acct-drivers table { width: 100%; border-collapse: collapse; font-size: 11px; }
+  .acct-drivers td { padding: 3px 0; border-bottom: 1px solid var(--border); }
+  .acct-drivers tr:last-child td { border-bottom: 0; }
+  .acct-drivers .driver-name { color: var(--text); padding-right: 6px; word-break: break-all; max-width: 160px; }
+  .acct-drivers .driver-bar-wrap { width: 30%; padding-right: 6px; }
+  .acct-drivers .driver-bar { height: 4px; background: rgba(255,255,255,0.04); border-radius: 2px; overflow: hidden; }
+  .acct-drivers .driver-bar-fill { height: 100%; background: var(--blue); border-radius: 2px; }
+  .acct-drivers .driver-cost { text-align: right; color: var(--text); font-variant-numeric: tabular-nums; padding-left: 4px; white-space: nowrap; }
+
   /* uPlot in dark theme — override defaults to match dashboard palette. */
   .uplot { width: 100%; font-family: ui-monospace, "SF Mono", Menlo, monospace; color: var(--text); }
   .uplot text, .u-legend { color: var(--muted) !important; fill: var(--muted) !important; }
@@ -204,12 +228,29 @@
       </div>
       <div class="chart-card-body"><div class="chart-loading">loading…</div></div>
     </div>
-    <div class="chart-card" data-chart="cost">
+    <div class="chart-card" data-card="accounting">
       <div class="chart-card-head">
-        <h2>Cost rate <span class="sub">rate(5m) · USD/sec · per agent · per model</span></h2>
-        <span class="sub" data-chart-status>—</span>
+        <h2>Cost accounting <span class="sub">today · 7d · MTD · projEOM + top spenders</span></h2>
+        <span class="sub" id="acct-status">—</span>
       </div>
-      <div class="chart-card-body"><div class="chart-loading">loading…</div></div>
+      <div class="chart-card-body" style="padding: 0; min-height: auto;">
+        <div class="acct-numbers">
+          <div class="acct-num"><div class="lbl">today (UTC)</div><div class="val" id="acct-today">—</div><div class="sub2">since 00:00 UTC</div></div>
+          <div class="acct-num"><div class="lbl">rolling 7d</div><div class="val" id="acct-7d">—</div><div class="sub2">last 168h</div></div>
+          <div class="acct-num"><div class="lbl">MTD</div><div class="val" id="acct-mtd">—</div><div class="sub2">since 1st UTC</div></div>
+          <div class="acct-num proj"><div class="lbl">proj EOM</div><div class="val" id="acct-proj">—</div><div class="sub2" id="acct-proj-sub">linear extrap</div></div>
+        </div>
+        <div class="acct-drivers">
+          <div class="acct-drivers-head">
+            <h3>Top spenders</h3>
+            <div class="by-toggle" id="acct-by">
+              <button data-by="agent" class="active">agent</button>
+              <button data-by="account">account</button>
+            </div>
+          </div>
+          <div id="acct-drivers-body"><div class="chart-loading" style="padding: 20px 0;">loading…</div></div>
+        </div>
+      </div>
     </div>
     <div class="chart-card" data-chart="sessions">
       <div class="chart-card-head">

@@ -542,22 +542,16 @@
     wireChartLegendPopovers(this);
   };
 
-  // Instantiate the 3 Live-tab charts + subscribe each to the live stream.
-  // v0.5.7.2: tokens chart is now cluster-aggregate (single line, no per-agent
-  // breakdown) per Jon-direct 2026-05-25. sessions chart now shows count of
-  // distinct agents currently emitting OTel (replaces the previously-flat
-  // per-agent cumulative counter that looked "not populating" with single
-  // emitter).
+  // Live-tab top: tokens (left) + cost-accounting card (middle) + agents-emitting (right).
+  // CP6.2 (refactor-in-place per Jon-direct): cost-rate-byAgent slot was REPLACED
+  // with an accounting view rendering CFO-grade numbers (today/7d/MTD/projEOM)
+  // + top-spenders ranked by agent or account. Per-agent cost-rate breakdown
+  // moves down into the AgentCard grid (CP6.3).
   const charts = [
     new PlexusChart(document.querySelector('[data-chart="tokens"]'), {
       template: 'tokens.rate.cluster',
       otherFields: [],
       valueFmt: (v) => v.toFixed(2) + ' tok/s',
-    }),
-    new PlexusChart(document.querySelector('[data-chart="cost"]'), {
-      template: 'cost.rate.byAgent',
-      otherFields: ['model'],
-      valueFmt: (v) => '$' + v.toFixed(6) + '/s',
     }),
     new PlexusChart(document.querySelector('[data-chart="sessions"]'), {
       template: 'agents.emitting.count',
@@ -566,13 +560,122 @@
     }),
   ];
   for (const c of charts) liveStream.subscribe(c.template, c);
+
+  // ── Cost-accounting card (middle slot) state + render ────────────────
+  const acctState = {
+    today: null, sevend: null, mtd: null,
+    topAgents: null, byAccount: null,
+    by: 'agent',
+    lastFrameMs: 0,
+  };
+  const fmtUSD = (v) => {
+    if (v == null || Number.isNaN(v)) return '—';
+    if (v >= 1000) return '$' + v.toFixed(0);
+    if (v >= 1)    return '$' + v.toFixed(2);
+    return '$' + v.toFixed(4);
+  };
+  const valFromVector = (payload) => {
+    const r = payload && payload.data && payload.data.result;
+    if (!r || r.length === 0) return null;
+    const v = parseFloat(r[0].value[1]);
+    return Number.isFinite(v) ? v : null;
+  };
+  function renderAcctNumbers() {
+    $('acct-today').textContent = fmtUSD(acctState.today);
+    $('acct-7d').textContent    = fmtUSD(acctState.sevend);
+    $('acct-mtd').textContent   = fmtUSD(acctState.mtd);
+    let proj = null, projSub = 'linear extrap';
+    if (acctState.mtd != null && acctState.mtd > 0) {
+      const now = new Date();
+      const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+      const monthEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+      const elapsedMs = now - monthStart;
+      const totalMs = monthEnd - monthStart;
+      if (elapsedMs > 0) {
+        proj = acctState.mtd / (elapsedMs / totalMs);
+        const elapsedDays = elapsedMs / 86400000;
+        const totalDays = totalMs / 86400000;
+        projSub = `${elapsedDays.toFixed(1)}d of ${totalDays.toFixed(0)}d`;
+      }
+    }
+    $('acct-proj').textContent = fmtUSD(proj);
+    $('acct-proj-sub').textContent = projSub;
+    const ageS = acctState.lastFrameMs ? Math.floor((Date.now() - acctState.lastFrameMs) / 1000) : null;
+    $('acct-status').textContent = ageS == null ? 'no data yet' : `live · ${ageS < 2 ? 'just now' : ageS + 's ago'}`;
+  }
+  function renderAcctDrivers() {
+    const body = $('acct-drivers-body');
+    clearChildren(body);
+    const payload = acctState.by === 'agent' ? acctState.topAgents : acctState.byAccount;
+    const result = payload && payload.data && payload.data.result;
+    if (!result || result.length === 0) {
+      body.appendChild(el('div', { class: 'chart-empty', style: 'padding: 20px 0;' }, `no ${acctState.by} cost data`));
+      return;
+    }
+    const labelFor = (m) => acctState.by === 'agent'
+      ? (m.plexus_agent_id || '(unknown)')
+      : (m.user_email || m.user_account_id || '(unknown)');
+    const rows = result.map(s => ({
+      name: labelFor(s.metric),
+      cost: parseFloat(s.value[1]) || 0,
+    })).sort((a, b) => b.cost - a.cost);
+    const max = rows[0].cost || 1;
+    const table = el('table');
+    const tbody = el('tbody');
+    for (const r of rows) {
+      const tr = el('tr');
+      tr.appendChild(el('td', { class: 'driver-name' }, r.name));
+      const barTd = el('td', { class: 'driver-bar-wrap' });
+      const bar = el('div', { class: 'driver-bar' });
+      const fill = el('div', { class: 'driver-bar-fill' });
+      fill.style.width = ((r.cost / max) * 100).toFixed(1) + '%';
+      bar.appendChild(fill); barTd.appendChild(bar); tr.appendChild(barTd);
+      tr.appendChild(el('td', { class: 'driver-cost' }, fmtUSD(r.cost)));
+      tbody.appendChild(tr);
+    }
+    table.appendChild(tbody);
+    body.appendChild(table);
+  }
+  function noteAcctFrame(payload) {
+    if (!payload || !payload.template) return;
+    let touched = false;
+    switch (payload.template) {
+      case 'cluster.cost.today':    acctState.today  = valFromVector(payload); touched = true; break;
+      case 'cluster.cost.7d':       acctState.sevend = valFromVector(payload); touched = true; break;
+      case 'cluster.cost.mtd':      acctState.mtd    = valFromVector(payload); touched = true; break;
+      case 'cluster.cost.topAgents':acctState.topAgents = payload; renderAcctDrivers(); break;
+      case 'cluster.cost.byAccount':acctState.byAccount = payload; renderAcctDrivers(); break;
+      default: return;
+    }
+    acctState.lastFrameMs = Date.now();
+    if (touched) renderAcctNumbers();
+  }
+  document.querySelectorAll('#acct-by button').forEach((b) => {
+    b.addEventListener('click', () => {
+      document.querySelectorAll('#acct-by button').forEach((x) => x.classList.remove('active'));
+      b.classList.add('active');
+      acctState.by = b.dataset.by;
+      renderAcctDrivers();
+    });
+  });
+  // Hook the SSE listener so accounting frames flow into the card.
+  const _origConnect = PlexusLiveStream.prototype.connect;
+  PlexusLiveStream.prototype.connect = function () {
+    _origConnect.call(this);
+    if (!this.es) return;
+    this.es.addEventListener('frame', (ev) => {
+      try { noteAcctFrame(JSON.parse(ev.data)); } catch { /* ignore */ }
+    });
+  };
+
   liveStream.connect();
 
-  // CP5: 1s ticker keeps the "live · Ns ago" indicator honest between
-  // dedup-skipped server broadcasts. Charts only re-render on data
-  // change; the status freshness ticks every second so operators can
-  // see the channel is alive at a glance.
-  setInterval(() => { for (const c of charts) c._tickStatus(); }, 1000);
+  // 1s ticker keeps chart-card "live · Ns ago" indicators honest AND
+  // keeps the accounting card's status freshness honest.
+  setInterval(() => {
+    for (const c of charts) c._tickStatus();
+    if (acctState.lastFrameMs) renderAcctNumbers();
+  }, 1000);
 
   // ────────────────────────────────────────────────────────────────────
   // CP3: AgentPopover — click-to-open identity + runtime fingerprint card.
