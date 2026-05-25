@@ -51,7 +51,7 @@
   .tab-panel { display: none; }
   .tab-panel.active { display: block; }
 
-  /* CP2 charts panel grid (kept for Cost tab; Live tab uses CP6.2 hero). */
+  /* CP2 charts panel grid (Live tab top section). */
   .charts-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 12px; padding: 12px 18px; background: var(--bg); }
   .chart-card { background: var(--panel); border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
   .chart-card-head { padding: 9px 14px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
@@ -61,40 +61,6 @@
   .chart-empty { color: var(--muted); font-size: 12px; text-align: center; padding: 80px 0; }
   .chart-error { color: var(--red); font-size: 12px; text-align: center; padding: 80px 14px; }
   .chart-loading { color: var(--muted); font-size: 12px; text-align: center; padding: 80px 0; opacity: 0.6; }
-
-  /* CP6.2 — cluster accounting hero. */
-  .hero { padding: 14px 18px 16px; background: var(--panel); border-bottom: 1px solid var(--border); }
-  .hero-head { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-bottom: 12px; }
-  .hero-head h2 { margin: 0; font-size: 13px; font-weight: 600; color: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; }
-  .hero-head .sub { color: var(--muted); font-size: 11px; }
-  .hero-numbers { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 14px; }
-  .hero-num { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 12px 14px; }
-  .hero-num .label { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; }
-  .hero-num .val { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text); margin-top: 4px; }
-  .hero-num .sub2 { color: var(--muted); font-size: 10px; margin-top: 2px; }
-  .hero-num.proj .val { color: var(--blue); }
-  .hero-spark { margin-top: 14px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 8px 4px 4px; }
-  .hero-spark-head { padding: 0 10px 6px; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; display: flex; justify-content: space-between; align-items: center; }
-  .hero-spark-body { min-height: 80px; position: relative; }
-
-  /* CP6.2 — top cost drivers table. */
-  .drivers { margin-top: 14px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 12px 14px 4px; }
-  .drivers-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
-  .drivers-head h3 { margin: 0; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600; }
-  .drivers-head .by-toggle { display: flex; gap: 0; border: 1px solid var(--border); border-radius: 3px; overflow: hidden; }
-  .drivers-head .by-toggle button { background: transparent; color: var(--muted); border: 0; padding: 4px 10px; cursor: pointer; font: inherit; font-size: 11px; border-right: 1px solid var(--border); }
-  .drivers-head .by-toggle button:last-child { border-right: 0; }
-  .drivers-head .by-toggle button.active { background: var(--blue-bg); color: var(--blue); }
-  .drivers-head .by-toggle button:hover:not(.active) { color: var(--text); }
-  .drivers-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-  .drivers-table td { padding: 5px 0; border-bottom: 1px solid var(--border); vertical-align: middle; }
-  .drivers-table tr:last-child td { border-bottom: 0; }
-  .drivers-table .driver-name { color: var(--text); font-weight: 500; padding-right: 10px; word-break: break-all; max-width: 280px; }
-  .drivers-table .driver-bar-wrap { width: 40%; padding-right: 10px; }
-  .drivers-table .driver-bar { height: 6px; background: rgba(255,255,255,0.04); border-radius: 3px; overflow: hidden; }
-  .drivers-table .driver-bar-fill { height: 100%; background: var(--blue); border-radius: 3px; }
-  .drivers-table .driver-cost { text-align: right; color: var(--text); font-variant-numeric: tabular-nums; padding-left: 6px; white-space: nowrap; }
-  .drivers-table .driver-pct { color: var(--muted); font-size: 10px; padding-left: 8px; min-width: 35px; text-align: right; }
 
   /* uPlot in dark theme — override defaults to match dashboard palette. */
   .uplot { width: 100%; font-family: ui-monospace, "SF Mono", Menlo, monospace; color: var(--text); }
@@ -228,55 +194,29 @@
   <button class="tab-btn" data-tab="cost">Cost<span class="badge-new">CP3</span></button>
 </nav>
 
-<!-- Live tab: CP6.2 accounting hero + existing presence table (CP6.3 swaps to card grid). -->
+<!-- Live tab: top-of-page Plexus charts + existing presence table preserved. -->
 <section class="tab-panel active" data-tab="live" id="tab-live">
-  <div class="hero" id="hero">
-    <div class="hero-head">
-      <h2>Cluster accounting</h2>
-      <span class="sub" id="hero-status">—</span>
+  <div class="charts-grid">
+    <div class="chart-card" data-chart="tokens">
+      <div class="chart-card-head">
+        <h2>Token rate <span class="sub">rate(5m) · cluster total · per-agent breakdown later</span></h2>
+        <span class="sub" data-chart-status>—</span>
+      </div>
+      <div class="chart-card-body"><div class="chart-loading">loading…</div></div>
     </div>
-    <div class="hero-numbers">
-      <div class="hero-num" data-num="today">
-        <div class="label">today (UTC)</div>
-        <div class="val" id="hero-today">—</div>
-        <div class="sub2">since 00:00 UTC</div>
+    <div class="chart-card" data-chart="cost">
+      <div class="chart-card-head">
+        <h2>Cost rate <span class="sub">rate(5m) · USD/sec · per agent · per model</span></h2>
+        <span class="sub" data-chart-status>—</span>
       </div>
-      <div class="hero-num" data-num="7d">
-        <div class="label">rolling 7d</div>
-        <div class="val" id="hero-7d">—</div>
-        <div class="sub2">last 168h</div>
-      </div>
-      <div class="hero-num" data-num="mtd">
-        <div class="label">month-to-date</div>
-        <div class="val" id="hero-mtd">—</div>
-        <div class="sub2" id="hero-mtd-sub">since 1st UTC</div>
-      </div>
-      <div class="hero-num proj" data-num="proj">
-        <div class="label">projected EOM</div>
-        <div class="val" id="hero-proj">—</div>
-        <div class="sub2" id="hero-proj-sub">linear extrapolation</div>
-      </div>
+      <div class="chart-card-body"><div class="chart-loading">loading…</div></div>
     </div>
-    <div class="hero-spark">
-      <div class="hero-spark-head">
-        <span>cluster spend · last 24h (15m bins)</span>
-        <span class="sub" id="hero-spark-status">—</span>
+    <div class="chart-card" data-chart="sessions">
+      <div class="chart-card-head">
+        <h2>Agents emitting OTel <span class="sub">distinct plexus_agent_id with telemetry · counts adoption</span></h2>
+        <span class="sub" data-chart-status>—</span>
       </div>
-      <div class="hero-spark-body" id="hero-spark-body">
-        <div class="chart-loading">loading…</div>
-      </div>
-    </div>
-    <div class="drivers">
-      <div class="drivers-head">
-        <h3>Top cost drivers</h3>
-        <div class="by-toggle" id="drivers-by">
-          <button data-by="agent" class="active">by agent</button>
-          <button data-by="account">by account</button>
-        </div>
-      </div>
-      <div id="drivers-body">
-        <div class="chart-loading">loading…</div>
-      </div>
+      <div class="chart-card-body"><div class="chart-loading">loading…</div></div>
     </div>
   </div>
 
