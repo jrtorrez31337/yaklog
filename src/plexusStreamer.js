@@ -83,6 +83,59 @@ const FRAMES = [
     step: '15s',
     promql: 'count(count by (plexus_agent_id) (claude_code_active_time_seconds_total))',
   },
+  // CP6.1: cluster cost-accounting hero data sources. All instant queries
+  // with dynamic @ timestamps for time-anchored "today" and "MTD" semantics
+  // (computed at poll time so they roll over correctly at midnight + month).
+  {
+    // Cluster spend since 00:00 UTC today. Uses @ modifier with start-of-day
+    // unix ts so the "today" window slides each new day. `or vector(0)` keeps
+    // the diff well-defined if Prom doesn't have a series at midnight yet
+    // (Stage 1 startup edge case).
+    name: 'cluster.cost.today',
+    kind: 'instant',
+    buildPromql: () => {
+      const startOfDay = Math.floor(new Date(new Date().setUTCHours(0, 0, 0, 0)).getTime() / 1000);
+      return `(sum(claude_code_cost_usage_USD_total) or vector(0)) - (sum(claude_code_cost_usage_USD_total @ ${startOfDay}) or vector(0))`;
+    },
+  },
+  {
+    // Cluster spend over rolling 7 days. Static `increase[7d]` query.
+    name: 'cluster.cost.7d',
+    kind: 'instant',
+    promql: 'sum(increase(claude_code_cost_usage_USD_total[7d]))',
+  },
+  {
+    // Month-to-date cluster spend. @ start of UTC month.
+    name: 'cluster.cost.mtd',
+    kind: 'instant',
+    buildPromql: () => {
+      const now = new Date();
+      const startOfMonth = Math.floor(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).getTime() / 1000);
+      return `(sum(claude_code_cost_usage_USD_total) or vector(0)) - (sum(claude_code_cost_usage_USD_total @ ${startOfMonth}) or vector(0))`;
+    },
+  },
+  {
+    // Top-10 cost drivers by agent (cumulative all-time).
+    name: 'cluster.cost.topAgents',
+    kind: 'instant',
+    promql: 'topk(10, sum by (plexus_agent_id) (claude_code_cost_usage_USD_total))',
+  },
+  {
+    // Top-10 cost drivers by Anthropic account (user_email is the most
+    // human-readable identity; user_account_id is preserved as a label
+    // on the series for cross-reference in the popover).
+    name: 'cluster.cost.byAccount',
+    kind: 'instant',
+    promql: 'topk(10, sum by (user_email, user_account_id) (claude_code_cost_usage_USD_total))',
+  },
+  {
+    // 24h spend sparkline for the hero. Range query; one series.
+    name: 'cluster.cost.spark24h',
+    kind: 'range',
+    lookbackS: 86400,
+    step: '15m',
+    promql: 'sum(increase(claude_code_cost_usage_USD_total[15m]))',
+  },
   {
     name: 'active_time.rate.byAgent',
     kind: 'range',
@@ -138,13 +191,21 @@ class PlexusStreamer extends EventEmitter {
   }
 
   async _pollFrame(frame) {
+    // CP6.1: support kind: 'instant' (POST /api/v1/query) alongside the
+    // existing 'range' (query_range). Some templates also use buildPromql()
+    // — a function that returns the promql string at poll time, so it can
+    // embed dynamic timestamps (e.g. @ midnight UTC for "today" semantics).
+    const promql = typeof frame.buildPromql === 'function' ? frame.buildPromql() : frame.promql;
+    const isInstant = frame.kind === 'instant';
     const to = Math.floor(Date.now() / 1000);
-    const from = to - frame.lookbackS;
-    const url = new URL(`${config.plexusPromUrl}/api/v1/query_range`);
-    url.searchParams.set('query', frame.promql);
-    url.searchParams.set('start', String(from));
-    url.searchParams.set('end', String(to));
-    url.searchParams.set('step', frame.step);
+    const from = isInstant ? null : to - frame.lookbackS;
+    const url = new URL(`${config.plexusPromUrl}/api/v1/${isInstant ? 'query' : 'query_range'}`);
+    url.searchParams.set('query', promql);
+    if (!isInstant) {
+      url.searchParams.set('start', String(from));
+      url.searchParams.set('end', String(to));
+      url.searchParams.set('step', frame.step);
+    }
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), config.plexusQueryTimeoutMs);
@@ -161,10 +222,7 @@ class PlexusStreamer extends EventEmitter {
       clearTimeout(timeout);
     }
 
-    // Content-hash for change detection. Range queries always change (window
-    // slides each cycle), so this rarely short-circuits for range frames, but
-    // it WILL short-circuit when there's no live data at all (empty result
-    // matches empty result).
+    // Content-hash for change detection.
     const etag = hashFrame(body);
     const prev = this.lastSnapshots.get(frame.name);
     if (prev && prev.etag === etag) return;
@@ -172,9 +230,8 @@ class PlexusStreamer extends EventEmitter {
     const payload = {
       template: frame.name,
       kind: frame.kind,
-      params: { window: '5m' },
-      query: frame.promql,
-      range: { from: String(from), to: String(to), step: frame.step },
+      query: promql,
+      ...(isInstant ? { instant_at: String(to) } : { range: { from: String(from), to: String(to), step: frame.step } }),
       ...body,
     };
     const snap = { etag, payload, ts: Date.now() };

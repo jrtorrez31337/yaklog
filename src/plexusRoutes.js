@@ -156,6 +156,44 @@ const templates = {
       return `claude_code_session_count_total{plexus_agent_id="${escapeLabelValue(agent_id)}"}`;
     },
   },
+
+  // ── CP6.1: cluster cost-accounting (mirrors streamer FRAMES; lets
+  // ad-hoc curl tooling hit the same data the dashboard hero gets via SSE).
+  // The streamer's dynamic @ timestamps aren't replayable here — these
+  // versions use static queries with no time-anchoring, so they reflect
+  // cumulative-since-start-of-Prom-retention rather than today/MTD. For
+  // accurate today/MTD numbers, consume via the SSE stream.
+  'cluster.cost.7d': {
+    kind: 'instant',
+    params: {},
+    build() {
+      return 'sum(increase(claude_code_cost_usage_USD_total[7d]))';
+    },
+  },
+
+  'cluster.cost.topAgents': {
+    kind: 'instant',
+    params: {},
+    build() {
+      return 'topk(10, sum by (plexus_agent_id) (claude_code_cost_usage_USD_total))';
+    },
+  },
+
+  'cluster.cost.byAccount': {
+    kind: 'instant',
+    params: {},
+    build() {
+      return 'topk(10, sum by (user_email, user_account_id) (claude_code_cost_usage_USD_total))';
+    },
+  },
+
+  'cluster.cost.spark24h': {
+    kind: 'range',
+    params: {},
+    build() {
+      return 'sum(increase(claude_code_cost_usage_USD_total[15m]))';
+    },
+  },
 };
 
 // ──────────────────────────────────────────────────────────────────────

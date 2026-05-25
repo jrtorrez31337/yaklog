@@ -149,3 +149,89 @@ test('SSE handler writes initial snapshots + frame events', async () => {
   assert.match(buf, /event: frame/);
   assert.match(buf, /pre-seeded/);
 });
+
+// ── CP6.1: instant-query support + buildPromql ────────────────────────
+
+test('streamer instant frame: hits /api/v1/query not /api/v1/query_range', async () => {
+  const s = new PlexusStreamer();
+  fetchCalls = [];
+  nextFetchResponse = { status: 200, body: { status: 'success', data: { resultType: 'vector', result: [{ metric: {}, value: [1, '42'] }] } } };
+  await s._pollFrame({ name: 'inst.frame', kind: 'instant', promql: 'sum(up)' });
+  assert.equal(fetchCalls.length, 1);
+  assert.match(fetchCalls[0].url, /\/api\/v1\/query\?/);
+  assert.doesNotMatch(fetchCalls[0].url, /query_range/);
+  assert.match(fetchCalls[0].url, /query=sum%28up%29/);
+  // No start/end/step on instant queries
+  assert.doesNotMatch(fetchCalls[0].url, /start=/);
+});
+
+test('streamer instant frame: payload carries instant_at not range', async () => {
+  const s = new PlexusStreamer();
+  const received = [];
+  s.on('frame', (e) => received.push(e));
+  nextFetchResponse = { status: 200, body: { status: 'success', data: { resultType: 'vector', result: [{ metric: {}, value: [1779000000, '3.14'] }] } } };
+  await s._pollFrame({ name: 'inst.payload', kind: 'instant', promql: 'sum(x)' });
+  assert.equal(received.length, 1);
+  const p = received[0].snap.payload;
+  assert.equal(p.kind, 'instant');
+  assert.ok(p.instant_at);
+  assert.ok(!p.range, 'instant payload should NOT carry range');
+  assert.equal(p.data.result[0].value[1], '3.14');
+});
+
+test('streamer buildPromql: function evaluated at poll time', async () => {
+  const s = new PlexusStreamer();
+  let buildCallCount = 0;
+  const frame = {
+    name: 'dynamic.q',
+    kind: 'instant',
+    buildPromql: () => {
+      buildCallCount++;
+      return `up @ ${1000000 + buildCallCount}`;
+    },
+  };
+  fetchCalls = [];
+  nextFetchResponse = { status: 200, body: { status: 'success', data: { resultType: 'vector', result: [{ metric: {}, value: [1, '1'] }] } } };
+  await s._pollFrame(frame);
+  nextFetchResponse = { status: 200, body: { status: 'success', data: { resultType: 'vector', result: [{ metric: {}, value: [2, '2'] }] } } };
+  await s._pollFrame(frame);
+  assert.equal(buildCallCount, 2, 'buildPromql should be called once per poll');
+  // Each poll should have used the freshly-built query (URLSearchParams
+  // uses `+` for space, not %20; just check the dynamic timestamp shows up)
+  assert.match(fetchCalls[0].url, /1000001/);
+  assert.match(fetchCalls[1].url, /1000002/);
+});
+
+test('streamer range frame: unchanged behavior (regression check)', async () => {
+  const s = new PlexusStreamer();
+  fetchCalls = [];
+  nextFetchResponse = { status: 200, body: { status: 'success', data: { resultType: 'matrix', result: [] } } };
+  await s._pollFrame({ name: 'range.frame', kind: 'range', lookbackS: 300, step: '15s', promql: 'up' });
+  assert.equal(fetchCalls.length, 1);
+  assert.match(fetchCalls[0].url, /query_range/);
+  assert.match(fetchCalls[0].url, /step=15s/);
+});
+
+test('registered FRAMES includes the new cluster.cost.* templates', () => {
+  const { FRAMES } = require('../src/plexusStreamer');
+  const names = FRAMES.map(f => f.name);
+  for (const n of ['cluster.cost.today', 'cluster.cost.7d', 'cluster.cost.mtd',
+                    'cluster.cost.topAgents', 'cluster.cost.byAccount',
+                    'cluster.cost.spark24h']) {
+    assert.ok(names.includes(n), `expected ${n} in FRAMES, got: ${names.join(', ')}`);
+  }
+});
+
+test('cluster.cost.today + cluster.cost.mtd buildPromql produce valid PromQL with @ anchors', () => {
+  const { FRAMES } = require('../src/plexusStreamer');
+  const today = FRAMES.find(f => f.name === 'cluster.cost.today');
+  const mtd = FRAMES.find(f => f.name === 'cluster.cost.mtd');
+  const q1 = today.buildPromql();
+  const q2 = mtd.buildPromql();
+  assert.match(q1, /@\s+\d+/);
+  assert.match(q2, /@\s+\d+/);
+  // MTD anchor should be earlier than today's anchor (or equal on 1st of month)
+  const todayTs = parseInt(q1.match(/@\s+(\d+)/)[1], 10);
+  const mtdTs = parseInt(q2.match(/@\s+(\d+)/)[1], 10);
+  assert.ok(mtdTs <= todayTs, 'MTD anchor must be ≤ today anchor');
+});
