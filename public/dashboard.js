@@ -1094,7 +1094,12 @@
     async _renderIdentity() {
       clearChildren(this.bodyEl);
       this.bodyEl.className = 'agent-card-body view-identity';
-      if (this.identityCache === null && !this.identityFetching) {
+      // CP7.3 (bugfix): retry when identityCache is `false` (= prior fetch
+      // got nothing). Without this, a transient miss permanently bricks
+      // the Identity view for the whole page session. Real metric stays
+      // cached (truthy). Server-side cache (60s TTL) prevents Prom hammering.
+      const needFetch = this.identityCache === null || this.identityCache === false;
+      if (needFetch && !this.identityFetching) {
         this.identityFetching = true;
         this.bodyEl.appendChild(el('div', { class: 'view-empty' }, 'fetching…'));
         try {
@@ -1189,8 +1194,10 @@
 
       // ── Section 2: Runtime fingerprint (OTel; lazy-fetch shared with Identity)
       this.bodyEl.appendChild(el('h4', null, 'Runtime fingerprint (OTel)'));
-      // Fetch identityCache if not already present (Identity view + Runtime share it)
-      if (this.identityCache === null && !this.identityFetching) {
+      // Fetch identityCache if not already present (Identity view + Runtime share it).
+      // CP7.3: retry on `false` (= prior miss); only skip when cache is truthy.
+      const needFetch = this.identityCache === null || this.identityCache === false;
+      if (needFetch && !this.identityFetching) {
         this.identityFetching = true;
         this.bodyEl.appendChild(el('div', { class: 'view-loading-inline' }, 'fetching…'));
         try {
