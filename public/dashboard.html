@@ -93,6 +93,13 @@
   .uplot .u-legend th { color: var(--text); }
   .uplot .u-legend .u-value { color: var(--text); }
   .uplot .u-cursor-x, .uplot .u-cursor-y { border-color: var(--blue) !important; opacity: 0.5; }
+  /* v0.5.8.1: make color swatches readable on dark theme. uPlot inlines
+     border-color = series.stroke, but the default 1-2px border on a small
+     box is hard to see. Bump dimensions + border width so the color reads. */
+  .uplot .u-marker { width: 14px !important; height: 14px !important; border-width: 4px !important; margin-right: 6px !important; vertical-align: middle; }
+  .uplot .u-legend { padding: 4px 8px; font-size: 12px; }
+  .uplot .u-legend tr { padding: 2px 6px; }
+  .uplot .u-legend .u-label { padding-left: 2px; }
 
   /* Section divider. */
   .section-divider { padding: 14px 18px 8px; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; border-top: 1px solid var(--border); margin-top: 4px; display: flex; align-items: baseline; gap: 10px; }
