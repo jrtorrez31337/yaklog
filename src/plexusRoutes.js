@@ -50,7 +50,7 @@ const COST_DIM_ALLOWLIST = new Set([
 const SAFE_LABEL_VALUE = /^[\w@.+:/-]{1,128}$/;
 
 // Rate window for *_rate templates. Whitelisted to prevent unbounded windows.
-const RATE_WINDOW_ALLOWLIST = new Set(['1m', '5m', '15m', '1h']);
+const RATE_WINDOW_ALLOWLIST = new Set(['1m', '5m', '15m', '1h', '1d']);
 
 function escapeLabelValue(v) {
   // PromQL label values: escape backslash, double-quote, newline.

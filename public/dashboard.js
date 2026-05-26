@@ -712,7 +712,8 @@
   function pickRateWindow(ws) {
     if (ws <= 3600)   return '5m';
     if (ws <= 21600)  return '15m';
-    return '1h';
+    if (ws <= 86400)  return '1h';
+    return '1d';   // 7d lookback uses 1d rate window (CP6.13)
   }
 
   function noteAgentFrame(payload) {
@@ -982,7 +983,7 @@
       const data = aggregateSeriesToUplot(series);
       this.bodyEl.appendChild(el('div', { class: 'view-live' },
         el('div', { class: 'stat-row' },
-          el('span', { class: 'k' }, `tokens/s (5m rate, ${_windowLabel(ws)})`),
+          el('span', { class: 'k' }, `tokens/s (${pickRateWindow(ws)} rate, ${_windowLabel(ws)})`),
           el('span', { class: 'v' },
             data && data[1] && data[1].length ? (data[1][data[1].length - 1] || 0).toFixed(2) : '—'))));
       const host = el('div', { class: 'chart-host' });

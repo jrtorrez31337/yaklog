@@ -320,12 +320,12 @@
   <div class="section-divider">
     cluster agents <span id="cards-meta" style="text-transform: none; letter-spacing: 0; font-size: 11px;">—</span>
     <span style="margin-left: auto; display: inline-flex; align-items: center; gap: 6px;">
-      <span style="font-size: 10px;">history:</span>
+      <span style="font-size: 10px;" title="rate-window / chart-lookback. Rate is computed over the first, chart spans the second.">rate/lookback:</span>
       <span class="by-toggle" id="cards-window-toggle" style="display: inline-flex; gap: 0; border: 1px solid var(--border); border-radius: 3px; overflow: hidden;">
-        <button data-window-s="3600"  class="active" style="background: transparent; color: var(--blue); border: 0; padding: 3px 8px; font: inherit; font-size: 10px; cursor: pointer; border-right: 1px solid var(--border);">1h</button>
-        <button data-window-s="21600"            style="background: transparent; color: var(--muted); border: 0; padding: 3px 8px; font: inherit; font-size: 10px; cursor: pointer; border-right: 1px solid var(--border);">6h</button>
-        <button data-window-s="86400"            style="background: transparent; color: var(--muted); border: 0; padding: 3px 8px; font: inherit; font-size: 10px; cursor: pointer; border-right: 1px solid var(--border);">24h</button>
-        <button data-window-s="604800"           style="background: transparent; color: var(--muted); border: 0; padding: 3px 8px; font: inherit; font-size: 10px; cursor: pointer;">7d</button>
+        <button data-window-s="3600"  class="active" style="background: transparent; color: var(--blue); border: 0; padding: 3px 8px; font: inherit; font-size: 10px; cursor: pointer; border-right: 1px solid var(--border);">5m / 1h</button>
+        <button data-window-s="21600"            style="background: transparent; color: var(--muted); border: 0; padding: 3px 8px; font: inherit; font-size: 10px; cursor: pointer; border-right: 1px solid var(--border);">15m / 6h</button>
+        <button data-window-s="86400"            style="background: transparent; color: var(--muted); border: 0; padding: 3px 8px; font: inherit; font-size: 10px; cursor: pointer; border-right: 1px solid var(--border);">1h / 24h</button>
+        <button data-window-s="604800"           style="background: transparent; color: var(--muted); border: 0; padding: 3px 8px; font: inherit; font-size: 10px; cursor: pointer;">1d / 7d</button>
       </span>
     </span>
   </div>
