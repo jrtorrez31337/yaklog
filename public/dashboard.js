@@ -571,6 +571,14 @@
   // currently emitting (= they restarted CC since the Path A install).
   // Map<agent_id, lastSeenMs>
   const otelLastSeen = new Map();
+  // v0.5.8.2: track service_name observed per agent_id so the AgentCard
+  // runtime badge can derive runtime from OTel (claude-code | gemini-cli)
+  // first, falling back to the server registry only when OTel is silent.
+  const otelServiceByAgent = new Map();
+  const SERVICE_TO_RUNTIME = {
+    'claude-code': 'claude_code',
+    'gemini-cli': 'gemini',
+  };
   const OTEL_LIVE_WINDOW_MS = 10 * 60 * 1000;   // 10 min = "recently emitted"
   function noteFrameOtelAgents(payload) {
     const now = Date.now();
@@ -579,7 +587,50 @@
     for (const s of result) {
       const id = s.metric && s.metric.plexus_agent_id;
       if (id) otelLastSeen.set(id, now);
+      const svc = s.metric && s.metric.service_name;
+      if (id && svc) otelServiceByAgent.set(id, svc);
     }
+  }
+  function resolveRuntime(agentId, presenceRow) {
+    const svc = otelServiceByAgent.get(agentId);
+    if (svc && SERVICE_TO_RUNTIME[svc]) return SERVICE_TO_RUNTIME[svc];
+    return (presenceRow && presenceRow.runtime) || null;
+  }
+  // v0.5.8.2 runtime badges. Abstract geometric glyphs in brand-adjacent
+  // colors — distinctive but NOT reproductions of any vendor's actual mark.
+  // Tooltip carries the explicit runtime label so users always know what
+  // they're looking at; the SVG is just at-a-glance recognition.
+  const RUNTIME_META = {
+    claude_code: {
+      label: 'Claude Code',
+      color: '#cc785c',
+      // 8-pointed asterisk (common geometric primitive)
+      svg: '<path d="M12 1 L13.2 8.5 L20 4 L15.5 10.8 L22.5 12 L15.5 13.2 L20 20 L13.2 15.5 L12 23 L10.8 15.5 L4 20 L8.5 13.2 L1.5 12 L8.5 10.8 L4 4 L10.8 8.5 Z" />',
+    },
+    gemini: {
+      label: 'Gemini CLI',
+      color: '#4285f4',
+      // 4-pointed sparkle (common geometric primitive)
+      svg: '<path d="M12 1 C12 7 14 10 23 12 C14 14 12 17 12 23 C12 17 10 14 1 12 C10 10 12 7 12 1 Z" />',
+    },
+    codex: {
+      label: 'OpenAI Codex',
+      color: '#10a37f',
+      // hexagonal weave (common geometric primitive)
+      svg: '<g stroke-width="2" stroke-linejoin="round" fill="none"><polygon points="12,2 21,7 21,17 12,22 3,17 3,7" stroke="currentColor"/><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/></g>',
+    },
+  };
+  function runtimeBadge(runtime) {
+    const meta = RUNTIME_META[runtime];
+    if (!meta) return null;
+    // Wrap SVG markup; uses currentColor so the fill cascades from CSS color.
+    const span = el('span', {
+      class: 'runtime-badge runtime-' + runtime,
+      title: meta.label,
+      style: `color:${meta.color}`,
+    });
+    span.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-label="${meta.label}">${meta.svg}</svg>`;
+    return span;
   }
   function agentOtelStatus(agentId) {
     const t = otelLastSeen.get(agentId);
@@ -1087,6 +1138,10 @@
     _renderHead() {
       clearChildren(this.headEl);
       const r = this.presence || {};
+      // v0.5.8.2: runtime badge — OTel-derived first, server registry fallback.
+      const runtime = resolveRuntime(this.agentId, r);
+      const badge = runtime && runtimeBadge(runtime);
+      if (badge) this.headEl.appendChild(badge);
       this.headEl.appendChild(el('span', { class: 'name' }, r.agent_id || this.agentId));
       const lbl = r.label || '';
       this.headEl.appendChild(el('span', {

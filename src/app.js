@@ -69,7 +69,7 @@ function publicPresenceEtag(rows, hwm) {
     // v0.5.7: include runtime-meta fields in the ETag so dashboard refreshes
     // when current_tool/current_model/subagent_active_count/etc. change even
     // if session_state stays the same.
-    hash.update(`${row.agent_id}:${row.daemon_state}:${row.session_state}:${row.cursor_position ?? ''}:${row.lock_held ? 1 : 0}:${row.last_state_change_at}:${row.current_model ?? ''}:${row.current_tool ?? ''}:${row.last_tool_name ?? ''}:${row.last_tool_status ?? ''}:${row.subagent_active_count ?? ''}:${row.last_stop_reason ?? ''}:${row.runtime_uid ?? ''}:${row.runtime_gid ?? ''}:${row.runtime_hostname ?? ''}:${row.current_cwd ?? ''}:${row.daemon_pid ?? ''}:${row.daemon_version ?? ''}:${row.daemon_started_at ?? ''}:${row.update_available ?? ''}:${row.canonical_daemon_version ?? ''}\n`);
+    hash.update(`${row.agent_id}:${row.daemon_state}:${row.session_state}:${row.cursor_position ?? ''}:${row.lock_held ? 1 : 0}:${row.last_state_change_at}:${row.current_model ?? ''}:${row.current_tool ?? ''}:${row.last_tool_name ?? ''}:${row.last_tool_status ?? ''}:${row.subagent_active_count ?? ''}:${row.last_stop_reason ?? ''}:${row.runtime_uid ?? ''}:${row.runtime_gid ?? ''}:${row.runtime_hostname ?? ''}:${row.current_cwd ?? ''}:${row.daemon_pid ?? ''}:${row.daemon_version ?? ''}:${row.daemon_started_at ?? ''}:${row.update_available ?? ''}:${row.canonical_daemon_version ?? ''}:${row.runtime ?? ''}\n`);
   }
   return `"${hash.digest('hex').slice(0, 16)}"`;
 }
@@ -81,6 +81,7 @@ app.get('/api/v1/presence/public', (req, res) => {
   // Frontend renders an "update available" pill when update_available=true.
   // Lazy-require to avoid circular concerns; manifest is pure data + cheap.
   const { canonicalVersionOf } = require('./updateManifest');
+  const { runtimeOf } = require('./agentRuntimes');
   const canonicalDaemonVersion = canonicalVersionOf('yaklog-sub daemon');
   for (const row of presence) {
     row.canonical_daemon_version = canonicalDaemonVersion;
@@ -90,6 +91,10 @@ app.get('/api/v1/presence/public', (req, res) => {
     row.update_available = (row.daemon_version == null)
       ? null
       : (row.daemon_version !== canonicalDaemonVersion);
+    // v0.5.8.2: hand-curated registry-fallback runtime. Frontend prefers the
+    // OTel-derived runtime when available (service_name → claude_code/gemini),
+    // falls back to this field for agents that don't emit Plexus telemetry.
+    row.runtime = runtimeOf(row.agent_id);
   }
   const etag = publicPresenceEtag(presence, globalHwm);
   res.set('ETag', etag);
