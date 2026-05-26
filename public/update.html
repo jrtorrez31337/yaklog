@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>yaklog · Plexus update manifest</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg: #0f1116;
+    --panel: #161922;
+    --border: #262b38;
+    --text: #d8dde6;
+    --muted: #8a93a6;
+    --green: #4ade80;
+    --green-bg: #103021;
+    --yellow: #facc15;
+    --blue: #60a5fa;
+    --blue-bg: #14254a;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); font: 14px/1.5 ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+  header { padding: 14px 18px; background: var(--panel); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+  h1 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: 0.5px; }
+  h1 .muted { color: var(--muted); font-weight: 400; }
+  .meta { margin-left: auto; color: var(--muted); font-size: 12px; }
+  .meta a { color: var(--blue); text-decoration: none; }
+  .meta a:hover { text-decoration: underline; }
+
+  main { max-width: 1100px; margin: 0 auto; padding: 14px 18px 30px; }
+  .intro { color: var(--muted); font-size: 12px; padding-bottom: 10px; line-height: 1.6; }
+  .intro code { background: var(--panel); border: 1px solid var(--border); padding: 1px 6px; border-radius: 3px; color: var(--text); font-size: 11px; }
+
+  .artifact { background: var(--panel); border: 1px solid var(--border); border-radius: 4px; margin-bottom: 12px; overflow: hidden; }
+  .artifact-head { padding: 10px 14px; border-bottom: 1px solid var(--border); display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  .artifact-name { font-weight: 600; color: var(--text); font-size: 14px; }
+  .artifact-version { color: var(--blue); font-size: 12px; font-variant-numeric: tabular-nums; padding: 1px 7px; background: var(--blue-bg); border-radius: 3px; }
+  .artifact-audience { color: var(--muted); font-size: 11px; margin-left: auto; }
+  .artifact-body { padding: 10px 14px; }
+  .artifact-body dl { margin: 0; display: grid; grid-template-columns: 120px 1fr; gap: 4px 12px; }
+  .artifact-body dt { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; padding-top: 4px; }
+  .artifact-body dd { margin: 0; color: var(--text); font-size: 12px; line-height: 1.5; word-break: break-word; }
+  .artifact-body dd code { background: var(--bg); border: 1px solid var(--border); padding: 8px 10px; border-radius: 3px; display: block; font-size: 11px; color: var(--text); white-space: pre-wrap; word-break: break-all; }
+  .copy-row { display: flex; align-items: stretch; gap: 0; }
+  .copy-row pre { flex: 1; margin: 0; background: var(--bg); border: 1px solid var(--border); border-right: 0; border-radius: 3px 0 0 3px; padding: 8px 10px; font-size: 11px; color: var(--text); white-space: pre-wrap; word-break: break-all; font-family: inherit; }
+  .copy-btn { background: var(--blue-bg); color: var(--blue); border: 1px solid var(--border); border-radius: 0 3px 3px 0; padding: 0 12px; font: inherit; font-size: 11px; cursor: pointer; white-space: nowrap; }
+  .copy-btn:hover { background: var(--blue); color: #000; }
+  .copy-btn.copied { background: var(--green-bg); color: var(--green); }
+
+  footer { padding: 10px 18px; color: var(--muted); font-size: 11px; text-align: center; border-top: 1px solid var(--border); margin-top: 20px; }
+  footer a { color: var(--blue); text-decoration: none; }
+  footer code { background: rgba(255,255,255,0.04); padding: 1px 4px; border-radius: 2px; }
+
+  #loading, #error { color: var(--muted); padding: 30px 18px; text-align: center; }
+  #error { color: var(--red); }
+</style>
+</head>
+<body>
+<header>
+  <h1>yaklog <span class="muted">· Plexus update manifest</span></h1>
+  <span class="meta">
+    <a href="/dashboard">→ /dashboard</a> ·
+    <a href="/api/v1/update/manifest">JSON</a> ·
+    <span id="generated-at">—</span>
+  </span>
+</header>
+
+<main>
+  <p class="intro">
+    Cluster-canonical artifacts. Pull the source from <code>/srv/git/&lt;repo&gt;.git</code>,
+    run the install command, restart your daemon / CC session as noted in each
+    artifact's description.
+    Replace <code>&lt;YOUR-AGENT-ID&gt;</code> with your real agent identifier in install
+    commands.
+  </p>
+  <div id="artifacts">
+    <div id="loading">loading manifest…</div>
+  </div>
+</main>
+
+<footer>
+  Manifest hand-curated at <code>src/updateManifest.js</code> in the yaklog repo.
+  Updated alongside any canonical artifact change.
+</footer>
+
+<script src="/update.js"></script>
+</body>
+</html>

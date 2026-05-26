@@ -80,3 +80,46 @@ test('/vendor/uPlot served (CP2 static mount)', async () => {
   assert.equal(r.statusCode, 200);
   assert.match(r.text, /uPlot/);
 });
+
+// ── CP7.1: /update + /api/v1/update/manifest ──────────────────────────
+
+test('/api/v1/update/manifest returns JSON with artifacts array', async () => {
+  const r = await request(app).get('/api/v1/update/manifest');
+  assert.equal(r.statusCode, 200);
+  assert.match(r.headers['content-type'], /application\/json/);
+  assert.ok(r.body.format_version);
+  assert.ok(Array.isArray(r.body.artifacts));
+  assert.ok(r.body.artifacts.length > 0);
+  for (const a of r.body.artifacts) {
+    assert.ok(a.name, 'artifact needs name: ' + JSON.stringify(a));
+    assert.ok(a.version, 'artifact needs version: ' + a.name);
+  }
+});
+
+test('/api/v1/update/manifest includes canonical daemon entry', async () => {
+  const r = await request(app).get('/api/v1/update/manifest');
+  const daemon = r.body.artifacts.find((a) => a.name === 'yaklog-sub daemon');
+  assert.ok(daemon, 'manifest must include yaklog-sub daemon entry');
+  assert.match(daemon.version, /^0\.5\./, 'daemon version should be semver-ish');
+});
+
+test('/update returns HTML with link to manifest JSON', async () => {
+  const r = await request(app).get('/update');
+  assert.equal(r.statusCode, 200);
+  assert.match(r.headers['content-type'], /text\/html/);
+  assert.match(r.text, /\/api\/v1\/update\/manifest/);
+  assert.match(r.text, /update\.js/);
+});
+
+test('/update.js returns JS with manifest renderer', async () => {
+  const r = await request(app).get('/update.js');
+  assert.equal(r.statusCode, 200);
+  assert.match(r.text, /renderArtifact|loadManifest|\/api\/v1\/update\/manifest/);
+});
+
+test('/update + /update.js have no-cache headers (like /dashboard)', async () => {
+  const r1 = await request(app).get('/update');
+  assert.match(r1.headers['cache-control'], /no-cache/);
+  const r2 = await request(app).get('/update.js');
+  assert.match(r2.headers['cache-control'], /no-cache/);
+});

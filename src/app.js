@@ -104,6 +104,23 @@ app.get('/dashboard.js', noCacheDashboard, (req, res) => {
   res.type('application/javascript');
   res.sendFile(path.join(__dirname, '..', 'public', 'dashboard.js'));
 });
+
+// Plan C Stage 4 CP7.1 — /update + /api/v1/update/manifest.
+// Public (no auth) — mirrors /dashboard + /presence/public posture.
+// Manifest is hand-curated in src/updateManifest.js; HTML page renders
+// each artifact as a card with version + install command (copy-pasteable).
+const { getManifest } = require('./updateManifest');
+app.get('/api/v1/update/manifest', (req, res) => {
+  res.json(getManifest());
+});
+app.get('/update', noCacheDashboard, (req, res) => {
+  res.sendFile(path.join(__dirname, '..', 'public', 'update.html'));
+});
+app.get('/update.js', noCacheDashboard, (req, res) => {
+  res.type('application/javascript');
+  res.sendFile(path.join(__dirname, '..', 'public', 'update.js'));
+});
+
 // CP2: vendored frontend libs (uPlot etc.). Versioned content, served with
 // long-lived browser cache. express.static handles content-type, range,
 // etag, and 404-on-missing without us hand-rolling each file.
