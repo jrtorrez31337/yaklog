@@ -668,7 +668,7 @@
   // lazy-fetched via the agent.identity.byAgentId instant template.
   // ────────────────────────────────────────────────────────────────────
 
-  const VIEW_LABELS = ['Live', 'Activity', 'Cost', 'Identity', 'Env'];
+  const VIEW_LABELS = ['Live', 'Activity', 'Cost', 'Identity', 'Runtime'];
   const cardInstances = new Map();    // agent_id → AgentCard
   // Per-agent latest SSE frame slices (for chart views).
   // SSE templates have FIXED lookback (1h); these are the default-window cache.
@@ -916,7 +916,7 @@
         case 1: this._renderActivity(); break;
         case 2: this._renderCost(); break;
         case 3: this._renderIdentity(); break;
-        case 4: this._renderEnvironment(); break;
+        case 4: this._renderRuntime(); break;
       }
     }
     _renderLive() {
@@ -1036,7 +1036,11 @@
           'no OTel data — agent has not opted in to Plexus telemetry'));
         return;
       }
-      for (const sec of POPOVER_SECTIONS) {
+      // CP6.10: Identity = pure Anthropic-account identity. Runtime
+      // fingerprint (CC version / os / arch / terminal / service_name /
+      // query_source) moved to the Runtime view.
+      const identitySectionIds = ['plexus', 'anthropic'];
+      for (const sec of POPOVER_SECTIONS.filter(s => identitySectionIds.includes(s.id))) {
         const fields = POPOVER_IDENTITY_FIELDS.filter(f => f.section === sec.id && metric[f.key] != null);
         if (!fields.length) continue;
         this.bodyEl.appendChild(el('h4', null, sec.title));
@@ -1050,46 +1054,141 @@
         this.bodyEl.appendChild(dl);
       }
     }
-    // CP6.9: Environment view — daemon-host context (cwd, uid/gid,
-    // hostname). Sourced from presence row's runtime_* fields per
-    // CP6.8 (yaklog-sub v0.5.7.3+). Graceful degradation: any field
-    // not yet reported by an older daemon shows "(not reported)".
-    _renderEnvironment() {
+    // CP6.10: Runtime view — technical detail for SREs / debuggers.
+    // Four sections:
+    //   1. Daemon process    pid / version / started_at / hostname / uid / gid
+    //   2. Runtime fingerprint   OTel: CC version / os / arch / terminal /
+    //                            service_name / query_source (moved here from
+    //                            Identity per Jon-direct 2026-05-26)
+    //   3. CC session            cwd / model / source / current_tool /
+    //                            last_tool_name / last_tool_status
+    //   4. Yaklog wire state     events_consumer_count / sse_connected /
+    //                            cursor_position / last_hook_at /
+    //                            last_state_change_at
+    //
+    // Sources: (1) + (3) + (4) from presence row (no fetch); (2) reuses
+    // identityCache lazy-fetch (shared with Identity view).
+    async _renderRuntime() {
       clearChildren(this.bodyEl);
       this.bodyEl.className = 'agent-card-body view-identity';
       const r = this.presence || {};
       const has = (k) => r[k] != null && r[k] !== '';
-      const anyEnv = has('runtime_uid') || has('runtime_gid') || has('runtime_hostname') || has('current_cwd');
-      if (!anyEnv) {
-        this.bodyEl.appendChild(el('div', { class: 'view-empty' },
-          'no runtime env data — daemon < v0.5.7.3 or not yet reported'));
-        return;
-      }
-      this.bodyEl.appendChild(el('h4', null, 'Daemon host'));
-      const hostDl = el('dl');
-      const hostFields = [
-        ['hostname', has('runtime_hostname') ? r.runtime_hostname : '(not reported)'],
-        ['uid', has('runtime_uid') ? String(r.runtime_uid) : '(not reported)'],
-        ['gid', has('runtime_gid') ? String(r.runtime_gid) : '(not reported)'],
+      const fmtIso = (s) => {
+        if (!s) return '—';
+        try { return new Date(s).toLocaleString(); } catch { return s; }
+      };
+      const ageOf = (s) => {
+        if (!s) return null;
+        const ms = Date.now() - new Date(s).getTime();
+        if (Number.isNaN(ms)) return null;
+        return fmtAge(s);
+      };
+
+      // ── Section 1: Daemon process ─────────────────────────────
+      this.bodyEl.appendChild(el('h4', null, 'Daemon process'));
+      const daemonDl = el('dl');
+      const daemonAge = ageOf(r.daemon_started_at);
+      const daemonFields = [
+        ['version',    has('daemon_version') ? r.daemon_version : '(pre-v0.5.7.4)'],
+        ['pid',        has('daemon_pid') ? String(r.daemon_pid) : '(not reported)'],
+        ['started',    has('daemon_started_at')
+                         ? `${fmtIso(r.daemon_started_at)} (${daemonAge})`
+                         : '(not reported)'],
+        ['hostname',   has('runtime_hostname') ? r.runtime_hostname : '(not reported)'],
+        ['uid / gid',  (has('runtime_uid') || has('runtime_gid'))
+                        ? `${has('runtime_uid') ? r.runtime_uid : '?'} / ${has('runtime_gid') ? r.runtime_gid : '?'}`
+                        : '(not reported)'],
       ];
-      for (const [k, v] of hostFields) {
-        hostDl.appendChild(el('dt', null, k));
-        hostDl.appendChild(el('dd', null, v));
+      for (const [k, v] of daemonFields) {
+        daemonDl.appendChild(el('dt', null, k));
+        daemonDl.appendChild(el('dd', { title: String(v) }, String(v)));
       }
-      this.bodyEl.appendChild(hostDl);
+      this.bodyEl.appendChild(daemonDl);
+
+      // ── Section 2: Runtime fingerprint (OTel; lazy-fetch shared with Identity)
+      this.bodyEl.appendChild(el('h4', null, 'Runtime fingerprint (OTel)'));
+      // Fetch identityCache if not already present (Identity view + Runtime share it)
+      if (this.identityCache === null && !this.identityFetching) {
+        this.identityFetching = true;
+        this.bodyEl.appendChild(el('div', { class: 'view-loading-inline' }, 'fetching…'));
+        try {
+          const qs = new URLSearchParams({ template: 'agent.identity.byAgentId', agent_id: this.agentId });
+          const res = await fetch('/api/v1/plexus/public/query?' + qs.toString(), { cache: 'no-store' });
+          if (res.ok) {
+            const respBody = await res.json();
+            const results = respBody.data && respBody.data.result;
+            this.identityCache = (results && results.length > 0) ? results[0].metric : false;
+          } else {
+            this.identityCache = false;
+          }
+        } catch (e) { this.identityCache = false; }
+        this.identityFetching = false;
+        if (this.currentView !== 4) return;   // user moved on
+        // Re-render fresh (the inline loading el got built into the bodyEl);
+        // simplest: rerender the whole view (state is now populated)
+        return this._renderRuntime();
+      }
+      const metric = this.identityCache;
+      if (!metric) {
+        this.bodyEl.appendChild(el('div', { class: 'view-empty', style: 'padding: 8px 0;' },
+          'no OTel data — agent not opted in OR session idle >5min'));
+      } else {
+        const runtimeFields = POPOVER_IDENTITY_FIELDS.filter(f => f.section === 'runtime' && metric[f.key] != null);
+        if (runtimeFields.length) {
+          const fpDl = el('dl');
+          for (const f of runtimeFields) {
+            const v = metric[f.key];
+            const display = f.truncate ? truncMid(v, f.truncate) : v;
+            fpDl.appendChild(el('dt', null, f.label));
+            fpDl.appendChild(el('dd', { title: v }, display));
+          }
+          this.bodyEl.appendChild(fpDl);
+        } else {
+          this.bodyEl.appendChild(el('div', { class: 'view-empty', style: 'padding: 8px 0;' },
+            'no runtime fingerprint labels in current OTel series'));
+        }
+      }
+
+      // ── Section 3: CC session ─────────────────────────────────
       this.bodyEl.appendChild(el('h4', null, 'CC session'));
       const sessDl = el('dl');
+      const toolLine = r.current_tool
+        ? `${r.current_tool} (running)`
+        : (r.last_tool_name ? `last: ${r.last_tool_name}${r.last_tool_status ? ' ('+r.last_tool_status+')' : ''}` : '—');
       const sessFields = [
-        ['cwd', has('current_cwd') ? r.current_cwd
-              : 'not reported (CC SessionStart hook stdin empty?)'],
-        ['model', shortenModel(r.current_model) || '—'],
-        ['source', r.last_session_source || '—'],
+        ['cwd',       has('current_cwd') ? r.current_cwd : '(not reported)'],
+        ['model',     shortenModel(r.current_model) || '—'],
+        ['source',    r.last_session_source || '—'],
+        ['tool',      toolLine],
+        ['stop',      r.last_stop_reason || '—'],
+        ['subagents', r.subagent_active_count == null ? '—' : String(r.subagent_active_count)],
       ];
       for (const [k, v] of sessFields) {
         sessDl.appendChild(el('dt', null, k));
         sessDl.appendChild(el('dd', { title: String(v) }, String(v)));
       }
       this.bodyEl.appendChild(sessDl);
+
+      // ── Section 4: Yaklog wire state ─────────────────────────
+      this.bodyEl.appendChild(el('h4', null, 'Yaklog wire state'));
+      const wireDl = el('dl');
+      const hookAge = ageOf(r.last_hook_at);
+      const stateAge = ageOf(r.last_state_change_at);
+      const wireFields = [
+        ['daemon state',  r.daemon_state || '—'],
+        ['session state', r.session_state || '—'],
+        ['label',         r.label || '—'],
+        ['consumers',     r.events_consumer_count == null ? '—' : String(r.events_consumer_count)],
+        ['sse',           r.sse_connected ? 'connected' : 'disconnected'],
+        ['cursor',        r.cursor_position == null ? '—' : String(r.cursor_position)],
+        ['last hook',     hookAge || '—'],
+        ['last state Δ',  stateAge || '—'],
+      ];
+      for (const [k, v] of wireFields) {
+        wireDl.appendChild(el('dt', null, k));
+        wireDl.appendChild(el('dd', { title: String(v) }, String(v)));
+      }
+      this.bodyEl.appendChild(wireDl);
     }
   }
 

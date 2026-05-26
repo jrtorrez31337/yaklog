@@ -170,6 +170,11 @@ function initializeDb() {
     ['runtime_gid', 'INTEGER'],           // os.getgid() of daemon process
     ['runtime_hostname', 'TEXT'],         // socket.gethostname()
     ['current_cwd', 'TEXT'],              // CC SessionStart.payload.cwd
+    // v0.5.7.4 (CP6.10): daemon-process technical-detail fields for
+    // the dedicated Runtime card view (split out of Identity).
+    ['daemon_pid', 'INTEGER'],            // os.getpid() of daemon process
+    ['daemon_version', 'TEXT'],           // yaklog-sub VERSION constant
+    ['daemon_started_at', 'TEXT'],        // ISO-8601 of daemon __init__
   ];
   for (const [colName, colType] of RUNTIME_META_COLUMNS) {
     if (!presenceColNames.has(colName)) {
@@ -574,7 +579,9 @@ function upsertPresence({
   last_compaction_reason, last_compaction_at, last_stop_reason,
   last_session_source, subagent_active_count,
   // v0.5.7.3 runtime-environment (all optional; null when daemon < v0.5.7.3)
-  runtime_uid, runtime_gid, runtime_hostname, current_cwd
+  runtime_uid, runtime_gid, runtime_hostname, current_cwd,
+  // v0.5.7.4 daemon-process detail (all optional; null when daemon < v0.5.7.4)
+  daemon_pid, daemon_version, daemon_started_at
 }) {
   const database = getDb();
   const now = new Date().toISOString();
@@ -599,7 +606,8 @@ function upsertPresence({
       current_model, current_tool, last_tool_name, last_tool_status,
       last_compaction_reason, last_compaction_at, last_stop_reason,
       last_session_source, subagent_active_count,
-      runtime_uid, runtime_gid, runtime_hostname, current_cwd
+      runtime_uid, runtime_gid, runtime_hostname, current_cwd,
+      daemon_pid, daemon_version, daemon_started_at
     )
     VALUES (
       @agent_id, @daemon_state, @session_state, @cursor_position, @lock_held,
@@ -608,7 +616,8 @@ function upsertPresence({
       @current_model, @current_tool, @last_tool_name, @last_tool_status,
       @last_compaction_reason, @last_compaction_at, @last_stop_reason,
       @last_session_source, @subagent_active_count,
-      @runtime_uid, @runtime_gid, @runtime_hostname, @current_cwd
+      @runtime_uid, @runtime_gid, @runtime_hostname, @current_cwd,
+      @daemon_pid, @daemon_version, @daemon_started_at
     )
     ON CONFLICT(agent_id) DO UPDATE SET
       daemon_state = excluded.daemon_state,
@@ -644,7 +653,13 @@ function upsertPresence({
       runtime_uid = COALESCE(excluded.runtime_uid, presence.runtime_uid),
       runtime_gid = COALESCE(excluded.runtime_gid, presence.runtime_gid),
       runtime_hostname = COALESCE(excluded.runtime_hostname, presence.runtime_hostname),
-      current_cwd = COALESCE(excluded.current_cwd, presence.current_cwd)
+      current_cwd = COALESCE(excluded.current_cwd, presence.current_cwd),
+      -- v0.5.7.4: pid + started_at change on every daemon restart;
+      -- raw-assign so they reflect the CURRENT daemon, not a stale prior
+      -- one. version is a constant per daemon binary; same semantics.
+      daemon_pid = excluded.daemon_pid,
+      daemon_version = excluded.daemon_version,
+      daemon_started_at = excluded.daemon_started_at
   `);
   stmt.run({
     agent_id,
@@ -669,7 +684,10 @@ function upsertPresence({
     runtime_uid: (runtime_uid == null) ? null : Number(runtime_uid),
     runtime_gid: (runtime_gid == null) ? null : Number(runtime_gid),
     runtime_hostname: runtime_hostname ?? null,
-    current_cwd: current_cwd ?? null
+    current_cwd: current_cwd ?? null,
+    daemon_pid: (daemon_pid == null) ? null : Number(daemon_pid),
+    daemon_version: daemon_version ?? null,
+    daemon_started_at: daemon_started_at ?? null
   });
 
   if (stateChanged) {
@@ -709,7 +727,11 @@ function getPresenceByAgent(agent_id) {
     runtime_uid: row.runtime_uid,
     runtime_gid: row.runtime_gid,
     runtime_hostname: row.runtime_hostname,
-    current_cwd: row.current_cwd
+    current_cwd: row.current_cwd,
+    // v0.5.7.4 daemon-process
+    daemon_pid: row.daemon_pid,
+    daemon_version: row.daemon_version,
+    daemon_started_at: row.daemon_started_at
   };
 }
 
@@ -742,7 +764,11 @@ function listPresence() {
     runtime_uid: row.runtime_uid,
     runtime_gid: row.runtime_gid,
     runtime_hostname: row.runtime_hostname,
-    current_cwd: row.current_cwd
+    current_cwd: row.current_cwd,
+    // v0.5.7.4 daemon-process
+    daemon_pid: row.daemon_pid,
+    daemon_version: row.daemon_version,
+    daemon_started_at: row.daemon_started_at
   }));
 }
 

@@ -297,7 +297,9 @@ router.post('/presence/event', (req, res) => {
     last_compaction_reason, last_compaction_at, last_stop_reason,
     last_session_source, subagent_active_count,
     // v0.5.7.3 runtime-env (all optional)
-    runtime_uid, runtime_gid, runtime_hostname, current_cwd
+    runtime_uid, runtime_gid, runtime_hostname, current_cwd,
+    // v0.5.7.4 daemon-process (all optional)
+    daemon_pid, daemon_version, daemon_started_at
   } = req.body || {};
 
   if (typeof agent_id !== 'string' || !AGENT_ID_RE.test(agent_id)) {
@@ -361,6 +363,18 @@ router.post('/presence/event', (req, res) => {
     const e = validateOptionalString(val, name);
     if (e) return res.status(400).json(e);
   }
+  // v0.5.7.4 daemon-process: pid non-neg int, version + started_at strings
+  {
+    const e = validateOptionalNonNegInt(daemon_pid, 'daemon_pid');
+    if (e) return res.status(400).json(e);
+  }
+  for (const [val, name] of [
+    [daemon_version, 'daemon_version'],
+    [daemon_started_at, 'daemon_started_at'],
+  ]) {
+    const e = validateOptionalString(val, name);
+    if (e) return res.status(400).json(e);
+  }
 
   const violation = enforceDaemonBinding(req, agent_id);
   if (violation) {
@@ -391,7 +405,10 @@ router.post('/presence/event', (req, res) => {
     runtime_uid: runtime_uid ?? null,
     runtime_gid: runtime_gid ?? null,
     runtime_hostname: runtime_hostname ?? null,
-    current_cwd: current_cwd ?? null
+    current_cwd: current_cwd ?? null,
+    daemon_pid: daemon_pid ?? null,
+    daemon_version: daemon_version ?? null,
+    daemon_started_at: daemon_started_at ?? null
   });
 
   return res.status(200).json({ presence });
