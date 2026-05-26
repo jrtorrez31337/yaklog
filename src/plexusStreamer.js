@@ -48,15 +48,16 @@ const config = require('./config');
 
 const FRAMES = [
   {
-    // v0.5.7.2: aggregate-only token rate per Jon-direct 2026-05-25
-    // ("only show aggregate not each agent, we will do each agent at
-    // another time"). Per-agent + per-type breakdown will come back as
-    // a separate template/panel when cluster adoption is broader.
+    // v0.5.8.1 (Jon-direct 2026-05-26): break the cluster token rate out by
+    // type. Client buckets cacheRead + cacheCreation → "cache" so the rendered
+    // chart shows 3 series (input / output / cache). Backend keeps the 4-way
+    // granularity (input/output/cacheRead/cacheCreation) so the underlying
+    // metric stays unambiguous for /query analytics.
     name: 'tokens.rate.cluster',
     kind: 'range',
     lookbackS: 3600,
     step: '15s',
-    promql: 'sum(rate(claude_code_token_usage_tokens_total[5m]))',
+    promql: 'sum by (type) (rate(claude_code_token_usage_tokens_total[5m]))',
   },
   {
     name: 'cost.rate.byAgent',

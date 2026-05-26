@@ -290,6 +290,64 @@
   // Prom matrix per-series: { metric: {…labels}, values: [[ts_seconds, "value_string"], …] }
   // uPlot wants: [ [t0, t1, …], [s0_v0, s0_v1, …], [s1_v0, s1_v1, …], … ]
   // Series timestamps may differ; we unify on the sorted union, fill missing as null.
+  // v0.5.8.1: token-type bucketing. Backend returns 4 type values
+  // (input / output / cacheRead / cacheCreation); UI shows 3 (cache = read +
+  // creation, summed). Operates on a Prom matrix `result` array and returns
+  // a new array with merged-by-bucket series.
+  const TOKEN_TYPE_BUCKET = {
+    input: 'input',
+    output: 'output',
+    cacheRead: 'cache',
+    cacheCreation: 'cache',
+  };
+  // Stable color per bucket so legend + series colors don't shuffle on rerender.
+  const TOKEN_BUCKET_COLOR = {
+    input: '#60a5fa',   // blue
+    output: '#34d399',  // green
+    cache: '#c084fc',   // purple
+  };
+  const TOKEN_BUCKET_ORDER = ['input', 'output', 'cache'];
+
+  // Group a Prom matrix result by the `type` label, mapping the 4 raw types
+  // into 3 display buckets, summing values within each bucket at each ts.
+  // `extraGroupKeys` lets per-agent rendering also key on plexus_agent_id
+  // (so cluster-wide buckets stay distinct from per-agent buckets).
+  function bucketResultByType(result, extraGroupKeys = []) {
+    if (!result || result.length === 0) return [];
+    const buckets = new Map();  // groupKey → { metric, valuesMap: ts→val }
+    for (const s of result) {
+      const rawType = s.metric && s.metric.type;
+      const bucket = TOKEN_TYPE_BUCKET[rawType];
+      if (!bucket) continue;  // unknown type — drop
+      const groupParts = [bucket, ...extraGroupKeys.map(k => s.metric && s.metric[k] || '')];
+      const groupKey = groupParts.join('||');
+      let entry = buckets.get(groupKey);
+      if (!entry) {
+        const metric = { type: bucket };
+        for (const k of extraGroupKeys) metric[k] = s.metric && s.metric[k];
+        entry = { metric, valuesMap: new Map() };
+        buckets.set(groupKey, entry);
+      }
+      for (const [t, v] of s.values) {
+        const n = parseFloat(v);
+        if (!Number.isFinite(n)) continue;
+        entry.valuesMap.set(t, (entry.valuesMap.get(t) || 0) + n);
+      }
+    }
+    // Re-emit as Prom matrix-shaped series with the stable bucket order.
+    const orderedKeys = [...buckets.keys()].sort((a, b) => {
+      const ai = TOKEN_BUCKET_ORDER.indexOf(a.split('||')[0]);
+      const bi = TOKEN_BUCKET_ORDER.indexOf(b.split('||')[0]);
+      if (ai !== bi) return ai - bi;
+      return a.localeCompare(b);
+    });
+    return orderedKeys.map(k => {
+      const e = buckets.get(k);
+      const values = [...e.valuesMap.entries()].sort((a, b) => a[0] - b[0]).map(([t, v]) => [t, String(v)]);
+      return { metric: e.metric, values };
+    });
+  }
+
   function promMatrixToUplot(result, otherFields) {
     if (!result || result.length === 0) return { data: [[]], series: [{ label: 'time' }], agentIds: [] };
 
@@ -340,6 +398,15 @@
       this.template = opts.template;
       this.otherFields = opts.otherFields || [];
       this.valueFmt = opts.valueFmt || ((v) => v.toFixed(3));
+      // v0.5.8.1 hook: optional pre-render transform on Prom matrix `result`.
+      // Lets per-template logic re-bucket / re-label series (e.g. token type
+      // collapse cacheRead+cacheCreation → cache) without forking PlexusChart.
+      // Identity by default.
+      this.transformResult = opts.transformResult || ((r) => r);
+      // Per-series color override map keyed on a label-extracted bucket
+      // (e.g. token-type bucket). null = use the default rotating palette.
+      this.colorByBucket = opts.colorByBucket || null;
+      this.bucketKey = opts.bucketKey || null;  // metric field used to look up colorByBucket
       this.uplot = null;
       this.lastSeriesSig = null;  // signature for "did series structure change?"
     }
@@ -363,13 +430,25 @@
     // Called by PlexusLiveStream when a frame for this template arrives.
     onFrame(payload) {
       this.lastFrameMs = Date.now();
-      const result = payload.data && payload.data.result;
-      if (!result || result.length === 0) {
+      const rawResult = payload.data && payload.data.result;
+      if (!rawResult || rawResult.length === 0) {
         this.renderEmpty('no data in window (no opted-in agents pushing?)');
         this._tickStatus();
         return;
       }
+      const result = this.transformResult(rawResult);
       const { data, series, agentIds } = promMatrixToUplot(result, this.otherFields);
+      // v0.5.8.1: override series colors by bucket when configured.
+      if (this.colorByBucket && this.bucketKey) {
+        for (let i = 0; i < result.length; i++) {
+          const bucket = result[i].metric && result[i].metric[this.bucketKey];
+          const c = this.colorByBucket[bucket];
+          if (c && series[i + 1]) {
+            series[i + 1].stroke = c;
+            series[i + 1].fill = c.length === 7 ? c + '22' : c;
+          }
+        }
+      }
       this.lastAgentIds = agentIds;
       this.lastSeriesCount = result.length;
       // Signature = label list. Same labels → setData (fast); different → rebuild.
@@ -547,7 +626,13 @@
   const charts = [
     new PlexusChart(document.querySelector('[data-chart="tokens"]'), {
       template: 'tokens.rate.cluster',
-      otherFields: [],
+      // v0.5.8.1: type-broken-out cluster token rate. Backend returns 4 raw
+      // types (input/output/cacheRead/cacheCreation); transformResult buckets
+      // cacheRead+cacheCreation → cache, yielding 3 series (in/out/cache).
+      otherFields: ['type'],
+      transformResult: (r) => bucketResultByType(r),
+      colorByBucket: TOKEN_BUCKET_COLOR,
+      bucketKey: 'type',
       valueFmt: (v) => v.toFixed(2) + ' tok/s',
     }),
   ];
@@ -839,6 +924,72 @@
     return [tsList, vals];
   }
 
+  // v0.5.8.1: convert a bucketed-by-type series array (already filtered to one
+  // agent) into uPlot data + series defs. Returns { data, series, lastVals }
+  // where lastVals is {input, output, cache} for the header stat row.
+  function bucketedSeriesToUplot(buckets) {
+    if (!buckets || buckets.length === 0) {
+      return { data: null, series: null, lastVals: { input: 0, output: 0, cache: 0 } };
+    }
+    const tsSet = new Set();
+    for (const s of buckets) for (const [t] of s.values) tsSet.add(t);
+    const tsList = [...tsSet].sort((a, b) => a - b);
+    const tsIndex = new Map(tsList.map((t, i) => [t, i]));
+    // Stable bucket order: input, output, cache (matches TOKEN_BUCKET_ORDER).
+    const byBucket = new Map();
+    for (const s of buckets) byBucket.set(s.metric.type, s);
+    const data = [tsList];
+    const series = [{ label: 't' }];
+    const lastVals = { input: 0, output: 0, cache: 0 };
+    for (const bucket of TOKEN_BUCKET_ORDER) {
+      const s = byBucket.get(bucket);
+      const valuesAligned = new Array(tsList.length).fill(null);
+      if (s) {
+        for (const [t, v] of s.values) {
+          const n = parseFloat(v);
+          valuesAligned[tsIndex.get(t)] = Number.isFinite(n) ? n : null;
+        }
+        // Last non-null value for the stat row
+        for (let i = valuesAligned.length - 1; i >= 0; i--) {
+          if (valuesAligned[i] != null) { lastVals[bucket] = valuesAligned[i]; break; }
+        }
+      }
+      const color = TOKEN_BUCKET_COLOR[bucket];
+      data.push(valuesAligned);
+      series.push({
+        label: bucket,
+        stroke: color,
+        width: 1.5,
+        fill: color + '22',
+        spanGaps: false,
+        value: (u, v) => v == null ? '—' : v.toFixed(2) + ' tok/s',
+      });
+    }
+    return { data, series, lastVals };
+  }
+
+  // Tiny inline chart helper supporting N series; default 130px tall.
+  function tinyMultiChart(hostEl, data, series, opts = {}) {
+    if (hostEl._uplot) { hostEl._uplot.destroy(); hostEl._uplot = null; }
+    clearChildren(hostEl);
+    if (!data || !data[0] || data[0].length === 0) {
+      hostEl.appendChild(el('div', { class: 'view-empty' }, opts.emptyText || 'no data'));
+      return;
+    }
+    hostEl._uplot = new uPlot({
+      width: hostEl.clientWidth - 4,
+      height: opts.height || 130,
+      series,
+      scales: { x: { time: true } },
+      axes: [
+        { stroke: '#8a93a6', grid: { stroke: 'rgba(255,255,255,0.04)' }, size: 24 },
+        { stroke: '#8a93a6', grid: { stroke: 'rgba(255,255,255,0.04)' }, size: 40 },
+      ],
+      legend: { show: false },
+      cursor: { drag: { x: true, y: false }, points: { show: true } },
+    }, data, hostEl);
+  }
+
   // Tiny inline chart helper (smaller than PlexusChart; no legend; fixed height).
   function tinyChart(hostEl, data, opts = {}) {
     if (hostEl._uplot) { hostEl._uplot.destroy(); hostEl._uplot = null; }
@@ -1023,35 +1174,37 @@
       // history. The next SSE frame will replace this with the live cache.
       // Eliminates the "waiting for first SSE frame…" empty state.
       if (ws === 3600 && perAgentFrames.tokensByAgent !== null) {
-        // Default 1h: SSE cache is warm (no extra fetch)
         series = seriesForAgent(perAgentFrames.tokensByAgent, this.agentId);
         fromSse = true;
       } else if (ws === 3600) {
-        // Default 1h, but SSE cache is cold — fetch history while waiting
         this.bodyEl.appendChild(el('div', { class: 'view-loading-inline' }, 'loading history…'));
         const seq = ++cardsWindow.fetchSeq;
         series = await fetchAgentSeries('tokens.rate.byAgent', this.agentId, ws);
         if (seq !== cardsWindow.fetchSeq || this.currentView !== 1) return;
         clearChildren(this.bodyEl);
       } else {
-        // Longer window: lazy-fetch via /query_range
         this.bodyEl.appendChild(el('div', { class: 'view-loading-inline' }, `fetching ${ws/3600}h…`));
         const seq = ++cardsWindow.fetchSeq;
         series = await fetchAgentSeries('tokens.rate.byAgent', this.agentId, ws);
-        if (seq !== cardsWindow.fetchSeq || this.currentView !== 1) return;  // stale
+        if (seq !== cardsWindow.fetchSeq || this.currentView !== 1) return;
         clearChildren(this.bodyEl);
       }
-      const data = aggregateSeriesToUplot(series);
+      // v0.5.8.1: bucket the agent's series by type → 3 lines (in/out/cache).
+      const bucketed = bucketResultByType(series);
+      const { data, series: uplotSeries, lastVals } = bucketedSeriesToUplot(bucketed);
       this.bodyEl.appendChild(el('div', { class: 'view-live' },
-        el('div', { class: 'stat-row' },
-          el('span', { class: 'k' }, `tokens/s (${pickRateWindow(ws)} rate, ${_windowLabel(ws)})`),
-          el('span', { class: 'v' },
-            data && data[1] && data[1].length ? (data[1][data[1].length - 1] || 0).toFixed(2) : '—'))));
+        el('div', { class: 'stat-row tok-stat-row' },
+          el('span', { class: 'k' }, `tok/s (${pickRateWindow(ws)} rate, ${_windowLabel(ws)})`),
+          el('span', { class: 'v tok-vals' },
+            el('span', { class: 'tok-in',    style: `color:${TOKEN_BUCKET_COLOR.input}`  }, `in ${lastVals.input.toFixed(2)}`),
+            el('span', { class: 'tok-sep' }, ' · '),
+            el('span', { class: 'tok-out',   style: `color:${TOKEN_BUCKET_COLOR.output}` }, `out ${lastVals.output.toFixed(2)}`),
+            el('span', { class: 'tok-sep' }, ' · '),
+            el('span', { class: 'tok-cache', style: `color:${TOKEN_BUCKET_COLOR.cache}`  }, `cache ${lastVals.cache.toFixed(2)}`),
+          ))));
       const host = el('div', { class: 'chart-host' });
       this.bodyEl.appendChild(host);
-      tinyChart(host, data, {
-        label: 'tok/s',
-        fmt: (v) => v.toFixed(2) + ' tok/s',
+      tinyMultiChart(host, data, uplotSeries, {
         emptyText: 'no telemetry — install Path A, or session idle >5min, or just-restarted (wait 60s)',
       });
       this.bodyEl.appendChild(_freshnessEl(fromSse ? perAgentFrames._tokensTs : Date.now()));
