@@ -959,6 +959,13 @@
       clearChildren(this.bodyEl);
       this.bodyEl.className = 'agent-card-body view-activity';
       const ws = cardsWindow.windowS;
+      // CP6.12: distinguish "no frame yet" (transient; SSE hasn't pushed
+      // since page-load) from "this agent genuinely has no series".
+      if (ws === 3600 && perAgentFrames.tokensByAgent === null) {
+        this.bodyEl.appendChild(el('div', { class: 'view-empty' },
+          'waiting for first SSE frame…'));
+        return;
+      }
       let series, fromSse = false;
       if (ws === 3600) {
         // Default 1h: use the SSE cache (no extra fetch)
@@ -983,13 +990,22 @@
       tinyChart(host, data, {
         label: 'tok/s',
         fmt: (v) => v.toFixed(2) + ' tok/s',
-        emptyText: 'no OTel — install Path A',
+        emptyText: 'no telemetry — install Path A, or session idle >5min, or just-restarted (wait 60s)',
       });
       this.bodyEl.appendChild(_freshnessEl(fromSse ? perAgentFrames._tokensTs : Date.now()));
     }
     async _renderCost() {
       clearChildren(this.bodyEl);
       this.bodyEl.className = 'agent-card-body view-cost';
+      // CP6.12: "waiting for SSE" transient state — covers the brief
+      // window between page-load and first cluster.cost.topAgents +
+      // cost.rate.byAgent frames arriving.
+      const ws = cardsWindow.windowS;
+      if (ws === 3600 && perAgentFrames.costCumByAgent === null && perAgentFrames.costByAgent === null) {
+        this.bodyEl.appendChild(el('div', { class: 'view-empty' },
+          'waiting for first SSE frame…'));
+        return;
+      }
       let cum = null;
       const cumPayload = perAgentFrames.costCumByAgent;
       if (cumPayload && cumPayload.data && cumPayload.data.result) {
@@ -1019,7 +1035,7 @@
       tinyChart(host, data, {
         label: '$/s',
         fmt: (v) => '$' + v.toFixed(6) + '/s',
-        emptyText: 'no OTel — install Path A',
+        emptyText: 'no telemetry — install Path A, or session idle >5min, or just-restarted (wait 60s)',
       });
       this.bodyEl.appendChild(_freshnessEl(fromSse ? perAgentFrames._costTs : Date.now()));
     }
