@@ -152,6 +152,11 @@ const templates = {
   // same identity labels (user_email, user_account_id, organization_id,
   // host_arch, os_*, terminal_type, service_version, plexus.*) but
   // stays fresh as long as the agent is actively working.
+  // v0.5.8.3 (2026-05-26): wrap in last_over_time([24h]) so labels persist
+  // for idle agents (the live instant query goes stale after ~5min). Also
+  // OR with gemini_runtime_cycle_total so Gemini agents get identity too
+  // (CC-only metric returned nothing for them, showing "no OTel data"
+  // even on actively-emitting Gemini seats).
   'agent.identity.byAgentId': {
     kind: 'instant',
     params: {
@@ -159,7 +164,8 @@ const templates = {
     },
     build({ agent_id }) {
       requireSafeLabelValue('agent_id', agent_id);
-      return `claude_code_active_time_seconds_total{plexus_agent_id="${escapeLabelValue(agent_id)}"}`;
+      const id = escapeLabelValue(agent_id);
+      return `last_over_time(claude_code_active_time_seconds_total{plexus_agent_id="${id}"}[24h]) or last_over_time(gemini_runtime_cycle_total{plexus_agent_id="${id}"}[24h])`;
     },
   },
 

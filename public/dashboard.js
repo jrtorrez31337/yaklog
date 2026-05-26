@@ -1308,17 +1308,14 @@
       });
       this.bodyEl.appendChild(_freshnessEl(fromSse ? perAgentFrames._costTs : Date.now()));
     }
-    async _renderIdentity() {
-      clearChildren(this.bodyEl);
-      this.bodyEl.className = 'agent-card-body view-identity';
-      // CP7.3 (bugfix): retry when identityCache is `false` (= prior fetch
-      // got nothing). Without this, a transient miss permanently bricks
-      // the Identity view for the whole page session. Real metric stays
-      // cached (truthy). Server-side cache (60s TTL) prevents Prom hammering.
+    // v0.5.8.3: extracted shared fetch so Identity + Runtime both await
+    // the same Promise. Eliminates the recursive _render path that caused
+    // mid-render glitches when the body was partially built then cleared.
+    async _ensureIdentityCache() {
       const needFetch = this.identityCache === null || this.identityCache === false;
-      if (needFetch && !this.identityFetching) {
-        this.identityFetching = true;
-        this.bodyEl.appendChild(el('div', { class: 'view-empty' }, 'fetching…'));
+      if (!needFetch) return this.identityCache;
+      if (this.identityFetchPromise) return this.identityFetchPromise;
+      this.identityFetchPromise = (async () => {
         try {
           const qs = new URLSearchParams({ template: 'agent.identity.byAgentId', agent_id: this.agentId });
           const res = await fetch('/api/v1/plexus/public/query?' + qs.toString(), { cache: 'no-store' });
@@ -1330,14 +1327,34 @@
             this.identityCache = false;
           }
         } catch (e) { this.identityCache = false; }
-        this.identityFetching = false;
-        if (this.currentView !== 3) return;   // user moved on
+        this.identityFetchPromise = null;
+        return this.identityCache;
+      })();
+      return this.identityFetchPromise;
+    }
+    async _renderIdentity() {
+      clearChildren(this.bodyEl);
+      this.bodyEl.className = 'agent-card-body view-identity';
+      const cached = this.identityCache;
+      if (cached === null || cached === false) {
+        this.bodyEl.appendChild(el('div', { class: 'view-empty' }, 'fetching…'));
+        await this._ensureIdentityCache();
+        if (this.currentView !== 3) return;
         clearChildren(this.bodyEl);
       }
       const metric = this.identityCache;
       if (!metric) {
-        this.bodyEl.appendChild(el('div', { class: 'view-empty' },
-          'no OTel data — agent has not opted in to Plexus telemetry'));
+        // v0.5.8.3: runtime-aware empty state messaging.
+        const runtime = resolveRuntime(this.agentId, this.presence);
+        let msg;
+        if (runtime === 'codex') {
+          msg = 'OpenAI Codex doesn’t emit Plexus telemetry (Anthropic OTel-only)';
+        } else if (runtime === 'gemini') {
+          msg = 'no Gemini identity data in last 24h — session not yet run, or daemon offline';
+        } else {
+          msg = 'no OTel data in last 24h — agent not opted in to Plexus, or no CC sessions yet';
+        }
+        this.bodyEl.appendChild(el('div', { class: 'view-empty' }, msg));
         return;
       }
       // CP6.10: Identity = pure Anthropic-account identity. Runtime
@@ -1373,6 +1390,19 @@
     // Sources: (1) + (3) + (4) from presence row (no fetch); (2) reuses
     // identityCache lazy-fetch (shared with Identity view).
     async _renderRuntime() {
+      // v0.5.8.3: kick the OTel fetch BEFORE building DOM, so we render the
+      // full view exactly once. Prior code rendered Daemon section, then
+      // appended a "fetching..." el, awaited, then recursed into _renderRuntime
+      // — that re-cleared the body and built it twice, causing flicker +
+      // intermittent half-rendered states.
+      const cached = this.identityCache;
+      if (cached === null || cached === false) {
+        const fetchP = this._ensureIdentityCache();
+        // Render skeleton with a placeholder while we wait; replace once resolved.
+        // (Most fetches complete in <200ms thanks to server 60s cache.)
+        await fetchP;
+        if (this.currentView !== 4) return;
+      }
       clearChildren(this.bodyEl);
       this.bodyEl.className = 'agent-card-body view-identity';
       const r = this.presence || {};
@@ -1409,35 +1439,21 @@
       }
       this.bodyEl.appendChild(daemonDl);
 
-      // ── Section 2: Runtime fingerprint (OTel; lazy-fetch shared with Identity)
+      // ── Section 2: Runtime fingerprint (OTel; cache populated before render)
       this.bodyEl.appendChild(el('h4', null, 'Runtime fingerprint (OTel)'));
-      // Fetch identityCache if not already present (Identity view + Runtime share it).
-      // CP7.3: retry on `false` (= prior miss); only skip when cache is truthy.
-      const needFetch = this.identityCache === null || this.identityCache === false;
-      if (needFetch && !this.identityFetching) {
-        this.identityFetching = true;
-        this.bodyEl.appendChild(el('div', { class: 'view-loading-inline' }, 'fetching…'));
-        try {
-          const qs = new URLSearchParams({ template: 'agent.identity.byAgentId', agent_id: this.agentId });
-          const res = await fetch('/api/v1/plexus/public/query?' + qs.toString(), { cache: 'no-store' });
-          if (res.ok) {
-            const respBody = await res.json();
-            const results = respBody.data && respBody.data.result;
-            this.identityCache = (results && results.length > 0) ? results[0].metric : false;
-          } else {
-            this.identityCache = false;
-          }
-        } catch (e) { this.identityCache = false; }
-        this.identityFetching = false;
-        if (this.currentView !== 4) return;   // user moved on
-        // Re-render fresh (the inline loading el got built into the bodyEl);
-        // simplest: rerender the whole view (state is now populated)
-        return this._renderRuntime();
-      }
       const metric = this.identityCache;
       if (!metric) {
-        this.bodyEl.appendChild(el('div', { class: 'view-empty', style: 'padding: 8px 0;' },
-          'no OTel data — agent not opted in OR session idle >5min'));
+        // v0.5.8.3: runtime-aware empty messaging (matches _renderIdentity).
+        const runtime = resolveRuntime(this.agentId, this.presence);
+        let msg;
+        if (runtime === 'codex') {
+          msg = 'OpenAI Codex doesn’t emit Plexus telemetry';
+        } else if (runtime === 'gemini') {
+          msg = 'no Gemini OTel observations in last 24h';
+        } else {
+          msg = 'no CC OTel observations in last 24h — agent not opted in, or no sessions yet';
+        }
+        this.bodyEl.appendChild(el('div', { class: 'view-empty', style: 'padding: 8px 0;' }, msg));
       } else {
         const runtimeFields = POPOVER_IDENTITY_FIELDS.filter(f => f.section === 'runtime' && metric[f.key] != null);
         if (runtimeFields.length) {
