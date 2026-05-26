@@ -69,13 +69,28 @@ function publicPresenceEtag(rows, hwm) {
     // v0.5.7: include runtime-meta fields in the ETag so dashboard refreshes
     // when current_tool/current_model/subagent_active_count/etc. change even
     // if session_state stays the same.
-    hash.update(`${row.agent_id}:${row.daemon_state}:${row.session_state}:${row.cursor_position ?? ''}:${row.lock_held ? 1 : 0}:${row.last_state_change_at}:${row.current_model ?? ''}:${row.current_tool ?? ''}:${row.last_tool_name ?? ''}:${row.last_tool_status ?? ''}:${row.subagent_active_count ?? ''}:${row.last_stop_reason ?? ''}:${row.runtime_uid ?? ''}:${row.runtime_gid ?? ''}:${row.runtime_hostname ?? ''}:${row.current_cwd ?? ''}:${row.daemon_pid ?? ''}:${row.daemon_version ?? ''}:${row.daemon_started_at ?? ''}\n`);
+    hash.update(`${row.agent_id}:${row.daemon_state}:${row.session_state}:${row.cursor_position ?? ''}:${row.lock_held ? 1 : 0}:${row.last_state_change_at}:${row.current_model ?? ''}:${row.current_tool ?? ''}:${row.last_tool_name ?? ''}:${row.last_tool_status ?? ''}:${row.subagent_active_count ?? ''}:${row.last_stop_reason ?? ''}:${row.runtime_uid ?? ''}:${row.runtime_gid ?? ''}:${row.runtime_hostname ?? ''}:${row.current_cwd ?? ''}:${row.daemon_pid ?? ''}:${row.daemon_version ?? ''}:${row.daemon_started_at ?? ''}:${row.update_available ?? ''}:${row.canonical_daemon_version ?? ''}\n`);
   }
   return `"${hash.digest('hex').slice(0, 16)}"`;
 }
 app.get('/api/v1/presence/public', (req, res) => {
   const presence = listPresence();
   const globalHwm = getGlobalHwm();
+  // CP7.2: enrich each row with update_available + canonical_daemon_version
+  // by comparing reported daemon_version against the /update manifest.
+  // Frontend renders an "update available" pill when update_available=true.
+  // Lazy-require to avoid circular concerns; manifest is pure data + cheap.
+  const { canonicalVersionOf } = require('./updateManifest');
+  const canonicalDaemonVersion = canonicalVersionOf('yaklog-sub daemon');
+  for (const row of presence) {
+    row.canonical_daemon_version = canonicalDaemonVersion;
+    // update_available is null when the daemon doesn't yet report
+    // daemon_version (pre-v0.5.7.4 → we can't know if it's behind),
+    // true when reported version != canonical, false when matched.
+    row.update_available = (row.daemon_version == null)
+      ? null
+      : (row.daemon_version !== canonicalDaemonVersion);
+  }
   const etag = publicPresenceEtag(presence, globalHwm);
   res.set('ETag', etag);
   res.set('Cache-Control', 'no-cache');

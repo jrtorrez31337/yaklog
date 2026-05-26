@@ -957,6 +957,15 @@
           title: 'events.ndjson Monitor subprocess is dead',
         }, 'Monitor dead'));
       }
+      // CP7.2: update-available pill (server enriches /presence/public with
+      // update_available + canonical_daemon_version per /update manifest).
+      if (r.update_available === true) {
+        const tip = `daemon v${r.daemon_version} is behind canonical v${r.canonical_daemon_version || '?'} — see /update for install command`;
+        pills.appendChild(el('span', {
+          class: 'upd-pill',
+          title: tip,
+        }, 'update available'));
+      }
       this.headEl.appendChild(pills);
       // CP6.5: status-color left border + dimmed offline cards
       // Strip prior status- classes, add the current one
