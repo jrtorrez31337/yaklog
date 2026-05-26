@@ -1015,7 +1015,6 @@
       this.bodyEl.appendChild(el('div', { class: 'cum' },
         cum == null ? '—' : (cum >= 1 ? '$' + cum.toFixed(2) : '$' + cum.toFixed(4))));
       this.bodyEl.appendChild(el('div', { class: 'cum-sub' }, 'cumulative all-time spend'));
-      const ws = cardsWindow.windowS;
       let series, fromSse = false;
       if (ws === 3600) {
         series = seriesForAgent(perAgentFrames.costByAgent, this.agentId);
