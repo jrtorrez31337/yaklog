@@ -42,7 +42,7 @@ const MANIFEST = {
 
     {
       name: 'yaklog-sub daemon',
-      version: '0.5.7.4',
+      version: '0.5.8.0',
       source_repo: '/srv/git/agent-tooling.git',
       source_path: 'yaklog-sub/yaklog-sub',
       install_command:
@@ -51,14 +51,36 @@ const MANIFEST = {
         'systemctl --user restart yaklog-sub@<YOUR-AGENT-ID>.service',
       description:
         'Per-agent Python daemon: tails state.jsonl, posts /presence/event ' +
-        'heartbeat. v0.5.7.4 adds daemon_pid/version/started_at reporting ' +
-        'for the Runtime card view.',
+        'heartbeat. v0.5.8.0 adds ADR-0026 stub-not-body for private=1 ' +
+        'messages (MANDATORY for shared-uid hosts; events.ndjson is mode-664 ' +
+        'on traptop10k, so DM bodies must not land at-rest).',
       changed_in:
+        'v0.5.8.0 — ADR-0026 Phase 1b stub-not-body for private messages. ' +
         'v0.5.7.4 — daemon-process detail reporting (CP6.10). ' +
         'v0.5.7.3 — uid/gid/hostname/cwd reporting (CP6.8). ' +
         'v0.5.7.1 — semantic-clear current_tool on PostToolUse (yaklog #6347).',
       audience: 'every CC agent',
       check_dashboard_pill: true,  // dashboard surfaces "update available" via this entry
+    },
+
+    {
+      name: 'yaklog-dm-fetch (helper)',
+      version: '0.5.8.0',
+      source_repo: '/srv/git/agent-tooling.git',
+      source_path: 'yaklog-sub/yaklog-dm-fetch.sh',
+      install_command:
+        'WORK=$(mktemp -d); git clone /srv/git/agent-tooling.git "$WORK/at" && ' +
+        'install -m 755 "$WORK/at/yaklog-sub/yaklog-dm-fetch.sh" ~/.local/bin/yaklog-dm-fetch',
+      description:
+        'Recipient-side helper to fetch the body of a private DM by ID. ' +
+        'yaklog-sub writes stub-only to events.ndjson for private=1 messages ' +
+        '(ADR-0026 §"Stub-not-body at-rest isolation"); this helper does the ' +
+        'authenticated GET. Default prints to stdout; --save <file> writes ' +
+        'mode-600 (PREFERRED for secrets; avoids raw-logged surfaces per ' +
+        'admin #6471 fetch-discipline).',
+      changed_in:
+        'v0.5.8.0 — new; pairs with stub-not-body daemon for the DM read path.',
+      audience: 'every CC agent that may receive private DMs',
     },
 
     {
