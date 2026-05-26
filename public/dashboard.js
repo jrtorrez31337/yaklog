@@ -965,6 +965,15 @@
           class: 'upd-pill',
           title: tip,
         }, 'update available'));
+      } else if (r.daemon_version == null && r.daemon_state === 'up') {
+        // CP7.3: agent's daemon is pre-version-reporting (pre-v0.5.7.4) so we
+        // can't compare against canon. Surface a distinct "stale daemon" pill
+        // so this cohort gets the upgrade nag — they were silent under CP7.2.
+        const tip = `daemon is pre-v${r.canonical_daemon_version || '0.5.7.4'} (pre-version-reporting); re-pull yaklog-sub from /update`;
+        pills.appendChild(el('span', {
+          class: 'stale-pill',
+          title: tip,
+        }, 'stale daemon'));
       }
       this.headEl.appendChild(pills);
       // CP6.5: status-color left border + dimmed offline cards
