@@ -64,6 +64,21 @@ module.exports = function auth(req, res, next) {
     return next();
   }
 
+  // Path (c): ops-key per ADR-0025 §4b — also accepted as a valid Bearer.
+  // ADR-0026 §"Ops-key audit path": ops-keys read DMs bypassing the recipient
+  // filter; audit entry written per private row. opsKeyId is a non-secret
+  // sha256 prefix for audit-log correlation without echoing the token.
+  // Sender-binding fall-through is correct (ops-keys not in tokenBindings →
+  // resolveAllowedSenders returns null → binding-exempt).
+  if (config.opsApiKeys.has(token)) {
+    req.auth = {
+      token,
+      source: 'ops',
+      opsKeyId: sha256Hex(token).slice(0, 16)
+    };
+    return next();
+  }
+
   return res.status(401).json({
     error: 'Unauthorized',
     message: 'Provide a valid Bearer token or X-API-Key header.'

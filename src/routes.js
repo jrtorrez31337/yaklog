@@ -7,8 +7,10 @@ const { insertMessage, listMessages, listChannels, updateMessage, deleteMessage,
         upsertPresence, getPresenceByAgent, listPresence, listPresenceTransitions } = require('./db');
 const { streamHandler } = require('./stream');
 const config = require('./config');
-const { enforceSenderBinding, enforceMutationBinding } = require('./middleware/senderBinding');
+const { enforceSenderBinding, enforceMutationBinding, resolveAllowedSenders } = require('./middleware/senderBinding');
 const { enforceDaemonBinding } = require('./middleware/daemonBinding');
+const { applyDmVisibilityFilter, writeAuditEntries } = require('./middleware/dmFilter');
+const { parseMentions } = require('./mentions');
 
 const AGENT_ID_RE = /^[a-zA-Z0-9._:@/-]{1,64}$/;
 const DAEMON_STATES = new Set(['up', 'down']);
@@ -71,11 +73,15 @@ router.get('/messages', (req, res) => {
   }
 
   const messages = listMessages({ channel, limit, afterId, beforeId });
-  return res.json({ messages, count: messages.length });
+  // ADR-0026 read-filter: bound → public + sender/mentions-match private;
+  // ops-key → all + audit-log per private row; unbound → public only.
+  const { filtered, auditEntries } = applyDmVisibilityFilter(messages, req);
+  if (auditEntries.length > 0) writeAuditEntries(auditEntries);
+  return res.json({ messages: filtered, count: filtered.length });
 });
 
 router.post('/messages', (req, res) => {
-  const { channel, sender, body, metadata } = req.body || {};
+  const { channel, sender, body, metadata, private: isPrivate } = req.body || {};
 
   if (typeof channel !== 'string' || !CHANNEL_RE.test(channel)) {
     return res.status(400).json({
@@ -105,16 +111,46 @@ router.post('/messages', (req, res) => {
     });
   }
 
+  if (isPrivate !== undefined && typeof isPrivate !== 'boolean') {
+    return res.status(400).json({
+      error: 'ValidationError',
+      message: 'private must be a boolean when provided.'
+    });
+  }
+
   const violation = enforceSenderBinding(req, sender);
   if (violation) {
     return res.status(violation.status).json(violation.body);
+  }
+
+  // ADR-0026 send-path: private=true requires (a) bound sender AND (b)
+  // non-empty mentions. (a) defends against unbound bearers spoofing sender
+  // on a private send (read-filter depends on row.sender being authoritative;
+  // unbound senders carry no enforceable identity). (b) defends against
+  // private messages with no recipients (unreadable; almost-certainly bug).
+  if (isPrivate === true) {
+    const { allowedSenders } = resolveAllowedSenders(req);
+    if (!allowedSenders) {
+      return res.status(403).json({
+        error: 'PrivateSendRequiresBoundSender',
+        message: 'private:true requires a Bearer bound to the sender via YAKLOG_TOKEN_BINDINGS or /register. Unbound legacy keys cannot send private messages.'
+      });
+    }
+    const mentions = parseMentions(body);
+    if (mentions.length === 0) {
+      return res.status(400).json({
+        error: 'PrivateSendRequiresMentions',
+        message: 'private:true requires at least one @mention in the body (the recipient(s)).'
+      });
+    }
   }
 
   const message = insertMessage({
     channel,
     sender,
     body,
-    metadata: metadata || null
+    metadata: metadata || null,
+    isPrivate: isPrivate === true
   });
 
   return res.status(201).json({ message });
@@ -145,7 +181,11 @@ router.get('/context', (req, res) => {
   }
 
   const format = req.query.format ? String(req.query.format) : 'text';
-  const messages = listMessages({ channel, limit });
+  const rawMessages = listMessages({ channel, limit });
+  // ADR-0026 read-filter (same three-branch as GET /messages).
+  const { filtered, auditEntries } = applyDmVisibilityFilter(rawMessages, req);
+  if (auditEntries.length > 0) writeAuditEntries(auditEntries);
+  const messages = filtered;
 
   if (format === 'json') {
     return res.json({ channel, count: messages.length, messages });
@@ -179,7 +219,15 @@ router.get('/messages/:id', (req, res) => {
   if (!message) {
     return res.status(404).json({ error: 'NotFound', message: `Message id ${id} not found.` });
   }
-  return res.json({ message });
+  // ADR-0026: run the same three-branch filter on a single-row list. A private
+  // message hidden from the requester returns 404 (not 403) — never leak
+  // existence to non-recipients.
+  const { filtered, auditEntries } = applyDmVisibilityFilter([message], req);
+  if (auditEntries.length > 0) writeAuditEntries(auditEntries);
+  if (filtered.length === 0) {
+    return res.status(404).json({ error: 'NotFound', message: `Message id ${id} not found.` });
+  }
+  return res.json({ message: filtered[0] });
 });
 
 router.patch('/messages/:id', (req, res) => {

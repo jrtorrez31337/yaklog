@@ -42,6 +42,7 @@ function toMessage(row) {
     body: row.body,
     metadata: parseMetadata(row.metadata_json),
     mentions: parseMentionsField(row.mentions),
+    private: row.private === 1,
     created_at: row.created_at,
     updated_at: row.updated_at || null
   };
@@ -181,6 +182,18 @@ function initializeDb() {
       db.exec(`ALTER TABLE presence ADD COLUMN ${colName} ${colType}`);
     }
   }
+
+  // ADR-0026 (2026-05-26): private flag for hard-DMs. Read-filter middleware
+  // (src/middleware/dmFilter.js) gates visibility per ADR §"Fail-closed for
+  // unbound bearers": bound agent → public + sender/mentions-match private;
+  // ops-key → all + audit-log entry per private row; unbound → public-only
+  // (fail-closed). Idempotent ADD COLUMN; existing rows default 0 (public).
+  const messagesCols = db.pragma('table_info(messages)');
+  if (!messagesCols.some((c) => c.name === 'private')) {
+    db.exec(`ALTER TABLE messages ADD COLUMN private INTEGER NOT NULL DEFAULT 0`);
+  }
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_messages_private ON messages(private)`);
+
   db.prepare(`
     CREATE TABLE IF NOT EXISTS presence_transitions (
       id                    INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -264,12 +277,12 @@ function getDb() {
   return db || initializeDb();
 }
 
-function insertMessage({ channel, sender, body, metadata = null }) {
+function insertMessage({ channel, sender, body, metadata = null, isPrivate = false }) {
   const database = getDb();
   const mentions = parseMentions(body);
   const stmt = database.prepare(`
-    INSERT INTO messages (channel, sender, body, metadata_json, mentions)
-    VALUES (@channel, @sender, @body, @metadata_json, @mentions)
+    INSERT INTO messages (channel, sender, body, metadata_json, mentions, private)
+    VALUES (@channel, @sender, @body, @metadata_json, @mentions, @private)
   `);
 
   const result = stmt.run({
@@ -277,11 +290,12 @@ function insertMessage({ channel, sender, body, metadata = null }) {
     sender,
     body,
     metadata_json: metadata ? JSON.stringify(metadata) : null,
-    mentions: JSON.stringify(mentions)
+    mentions: JSON.stringify(mentions),
+    private: isPrivate ? 1 : 0
   });
 
   const row = database
-    .prepare('SELECT id, channel, sender, body, metadata_json, mentions, created_at, updated_at FROM messages WHERE id = ?')
+    .prepare('SELECT id, channel, sender, body, metadata_json, mentions, private, created_at, updated_at FROM messages WHERE id = ?')
     .get(result.lastInsertRowid);
 
   const message = toMessage(row);
@@ -313,7 +327,7 @@ function listMessages({ channel, limit = 50, afterId = null, beforeId = null }) 
 
   const rows = database
     .prepare(`
-      SELECT id, channel, sender, body, metadata_json, mentions, created_at, updated_at
+      SELECT id, channel, sender, body, metadata_json, mentions, private, created_at, updated_at
       FROM messages
       ${whereSql}
       ORDER BY id DESC
@@ -331,7 +345,7 @@ function listMessagesAfter({ afterId, channel, excludeSender, mentions }) {
   if (channel) { where.push('channel = @channel'); params.channel = channel; }
   if (excludeSender) { where.push('sender != @excludeSender'); params.excludeSender = excludeSender; }
   const rows = database
-    .prepare(`SELECT id, channel, sender, body, metadata_json, mentions, created_at, updated_at
+    .prepare(`SELECT id, channel, sender, body, metadata_json, mentions, private, created_at, updated_at
               FROM messages
               WHERE ${where.join(' AND ')}
               ORDER BY id ASC`)
@@ -370,7 +384,7 @@ function getGlobalHwm() {
 function getMessage(id) {
   const database = getDb();
   const row = database
-    .prepare('SELECT id, channel, sender, body, metadata_json, mentions, created_at, updated_at FROM messages WHERE id = ?')
+    .prepare('SELECT id, channel, sender, body, metadata_json, mentions, private, created_at, updated_at FROM messages WHERE id = ?')
     .get(id);
   return row ? toMessage(row) : null;
 }

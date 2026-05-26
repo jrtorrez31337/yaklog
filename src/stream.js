@@ -1,4 +1,5 @@
 const { messageBus, listMessagesAfter } = require('./db');
+const { applyDmVisibilityFilter, writeAuditEntries } = require('./middleware/dmFilter');
 
 const CHANNEL_RE = /^[a-zA-Z0-9._-]{1,64}$/;
 const SENDER_RE = /^[a-zA-Z0-9._:@/-]{1,64}$/;
@@ -38,6 +39,16 @@ function messageMatches(msg, filters) {
     if (!filters.mentions.some((m) => msgMentions.includes(m))) return false;
   }
   return true;
+}
+
+// ADR-0026 wrapper: returns true iff the requester is allowed to see this msg.
+// Audit entries from ops-key reads are written immediately (NOT batched —
+// live SSE has no natural batch point; per-row append is fine for the audit
+// log NDJSON format).
+function dmVisible(msg, req) {
+  const { filtered, auditEntries } = applyDmVisibilityFilter([msg], req);
+  if (auditEntries.length > 0) writeAuditEntries(auditEntries);
+  return filtered.length > 0;
 }
 
 function formatEvent(msg) {
@@ -106,6 +117,7 @@ function streamHandler(req, res) {
     const rows = listMessagesAfter({ afterId: cursor, channel, excludeSender, mentions });
     for (const msg of rows) {
       if (closed) break;
+      if (!dmVisible(msg, req)) continue;
       res.write(formatEvent(msg));
       highestReplayed = Math.max(highestReplayed, msg.id);
     }
@@ -116,6 +128,7 @@ function streamHandler(req, res) {
     if (closed) break;
     if (msg.id <= highestReplayed) continue;
     if (!messageMatches(msg, filters)) continue;
+    if (!dmVisible(msg, req)) continue;
     if (seen.has(msg.id)) continue;
     seen.add(msg.id);
     res.write(formatEvent(msg));
@@ -138,11 +151,13 @@ function streamHandler(req, res) {
   if (minQuietMs === 0) {
     currentListener = (msg) => {
       if (!messageMatches(msg, filters)) return;
+      if (!dmVisible(msg, req)) return;
       res.write(formatEvent(msg));
     };
   } else {
     currentListener = (msg) => {
       if (!messageMatches(msg, filters)) return;
+      if (!dmVisible(msg, req)) return;
       pending.push(msg);
       if (flushTimer) clearTimeout(flushTimer);
       flushTimer = setTimeout(flush, minQuietMs);
