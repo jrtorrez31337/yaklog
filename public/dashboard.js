@@ -654,10 +654,24 @@
   liveStream.connect();
 
   // 1s ticker keeps chart-card "live · Ns ago" indicators honest AND
-  // keeps the accounting card's status freshness honest.
+  // keeps the accounting card's status freshness honest AND ticks the
+  // per-AgentCard chart-view freshness footers (Activity + Cost views)
+  // so the user can SEE the channel is alive even when the chart line
+  // is visually static (e.g., during steady-state cacheRead bursts).
   setInterval(() => {
     for (const c of charts) c._tickStatus();
     if (acctState.lastFrameMs) renderAcctNumbers();
+    // CP6.11: tick each AgentCard's freshness footer in place (no full
+    // rerender — just patch the textContent of the .view-freshness el).
+    for (const card of cardInstances.values()) {
+      if (card.currentView !== 1 && card.currentView !== 2) continue;
+      const footer = card.bodyEl && card.bodyEl.querySelector('.view-freshness');
+      if (!footer) continue;
+      const ts = (card.currentView === 1) ? perAgentFrames._tokensTs : perAgentFrames._costTs;
+      if (!ts) { footer.textContent = 'no frame yet'; continue; }
+      const ageS = Math.floor((Date.now() - ts) / 1000);
+      footer.textContent = `live · ${ageS < 2 ? 'just now' : ageS + 's ago'}`;
+    }
   }, 1000);
 
   // ────────────────────────────────────────────────────────────────────
