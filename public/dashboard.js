@@ -427,22 +427,30 @@
       this.subscribers = new Map();   // template-name → [chart, …]
       this.reconnectAttempt = 0;
       this.reconnectTimer = null;
+      // CP6.14: connection state for UI indicator.
+      // 'connecting' (initial / reconnecting) | 'open' | 'error'
+      this.state = 'connecting';
+      this.lastFrameMs = 0;
     }
     subscribe(template, chart) {
       if (!this.subscribers.has(template)) this.subscribers.set(template, []);
       this.subscribers.get(template).push(chart);
     }
     connect() {
+      this.state = 'connecting';
       try {
         this.es = new EventSource('/api/v1/plexus/public/stream');
       } catch (e) {
+        this.state = 'error';
         this._scheduleReconnect();
         return;
       }
       this.es.addEventListener('open', () => {
+        this.state = 'open';
         this.reconnectAttempt = 0;
       });
       this.es.addEventListener('frame', (ev) => {
+        this.lastFrameMs = Date.now();
         let payload;
         try { payload = JSON.parse(ev.data); } catch { return; }
         // 2026-05-25: refresh the OTel-presence map BEFORE routing to charts.
@@ -457,6 +465,7 @@
         }
       });
       this.es.addEventListener('error', () => {
+        this.state = 'error';
         // EventSource auto-reconnects on its own for normal drops; this fires
         // on hard errors. Belt-and-suspenders explicit reconnect with backoff.
         this._scheduleReconnect();
@@ -671,6 +680,36 @@
       if (!ts) { footer.textContent = 'no frame yet'; continue; }
       const ageS = Math.floor((Date.now() - ts) / 1000);
       footer.textContent = `live · ${ageS < 2 ? 'just now' : ageS + 's ago'}`;
+    }
+    // CP6.14: SSE-state indicator. 4 states displayed via CSS class:
+    //   connecting (grey, pulsing) | open (green) | stale (yellow) | error (red, pulsing)
+    // "stale" = open but no frame seen for >60s; signals a server-side
+    // dedup-or-stall situation that's distinct from connection drop.
+    const ind = $('sse-indicator');
+    if (ind) {
+      let cls, tip;
+      const age = liveStream.lastFrameMs ? Math.floor((Date.now() - liveStream.lastFrameMs) / 1000) : null;
+      if (liveStream.state === 'error') {
+        cls = 'state-error';
+        tip = `SSE: error (reconnect in progress; last frame ${age == null ? 'never' : age + 's ago'})`;
+      } else if (liveStream.state === 'connecting') {
+        cls = 'state-connecting';
+        tip = 'SSE: connecting…';
+      } else if (age == null) {
+        cls = 'state-connecting';
+        tip = 'SSE: open, awaiting first frame…';
+      } else if (age > 60) {
+        cls = 'state-stale';
+        tip = `SSE: open but stale (last frame ${age}s ago)`;
+      } else {
+        cls = 'state-open';
+        tip = `SSE: open, last frame ${age < 2 ? 'just now' : age + 's ago'}`;
+      }
+      // Only update className when changed (avoid CSS-animation restart flicker)
+      if (!ind.classList.contains(cls)) {
+        ind.className = 'sse-dot ' + cls;
+      }
+      ind.setAttribute('title', tip);
     }
   }, 1000);
 
@@ -960,18 +999,22 @@
       clearChildren(this.bodyEl);
       this.bodyEl.className = 'agent-card-body view-activity';
       const ws = cardsWindow.windowS;
-      // CP6.12: distinguish "no frame yet" (transient; SSE hasn't pushed
-      // since page-load) from "this agent genuinely has no series".
-      if (ws === 3600 && perAgentFrames.tokensByAgent === null) {
-        this.bodyEl.appendChild(el('div', { class: 'view-empty' },
-          'waiting for first SSE frame…'));
-        return;
-      }
       let series, fromSse = false;
-      if (ws === 3600) {
-        // Default 1h: use the SSE cache (no extra fetch)
+      // CP6.14: when SSE cache is cold (page just loaded; no frame yet),
+      // do an on-demand /query_range fetch to populate immediately with
+      // history. The next SSE frame will replace this with the live cache.
+      // Eliminates the "waiting for first SSE frame…" empty state.
+      if (ws === 3600 && perAgentFrames.tokensByAgent !== null) {
+        // Default 1h: SSE cache is warm (no extra fetch)
         series = seriesForAgent(perAgentFrames.tokensByAgent, this.agentId);
         fromSse = true;
+      } else if (ws === 3600) {
+        // Default 1h, but SSE cache is cold — fetch history while waiting
+        this.bodyEl.appendChild(el('div', { class: 'view-loading-inline' }, 'loading history…'));
+        const seq = ++cardsWindow.fetchSeq;
+        series = await fetchAgentSeries('tokens.rate.byAgent', this.agentId, ws);
+        if (seq !== cardsWindow.fetchSeq || this.currentView !== 1) return;
+        clearChildren(this.bodyEl);
       } else {
         // Longer window: lazy-fetch via /query_range
         this.bodyEl.appendChild(el('div', { class: 'view-loading-inline' }, `fetching ${ws/3600}h…`));
@@ -998,15 +1041,7 @@
     async _renderCost() {
       clearChildren(this.bodyEl);
       this.bodyEl.className = 'agent-card-body view-cost';
-      // CP6.12: "waiting for SSE" transient state — covers the brief
-      // window between page-load and first cluster.cost.topAgents +
-      // cost.rate.byAgent frames arriving.
       const ws = cardsWindow.windowS;
-      if (ws === 3600 && perAgentFrames.costCumByAgent === null && perAgentFrames.costByAgent === null) {
-        this.bodyEl.appendChild(el('div', { class: 'view-empty' },
-          'waiting for first SSE frame…'));
-        return;
-      }
       let cum = null;
       const cumPayload = perAgentFrames.costCumByAgent;
       if (cumPayload && cumPayload.data && cumPayload.data.result) {
@@ -1017,9 +1052,17 @@
         cum == null ? '—' : (cum >= 1 ? '$' + cum.toFixed(2) : '$' + cum.toFixed(4))));
       this.bodyEl.appendChild(el('div', { class: 'cum-sub' }, 'cumulative all-time spend'));
       let series, fromSse = false;
-      if (ws === 3600) {
+      // CP6.14: same cold-cache → fetch-history pattern as _renderActivity
+      if (ws === 3600 && perAgentFrames.costByAgent !== null) {
         series = seriesForAgent(perAgentFrames.costByAgent, this.agentId);
         fromSse = true;
+      } else if (ws === 3600) {
+        this.bodyEl.appendChild(el('div', { class: 'view-loading-inline' }, 'loading history…'));
+        const seq = ++cardsWindow.fetchSeq;
+        series = await fetchAgentSeries('cost.rate.byAgent', this.agentId, ws);
+        if (seq !== cardsWindow.fetchSeq || this.currentView !== 2) return;
+        const loadingEl = this.bodyEl.querySelector('.view-loading-inline');
+        if (loadingEl) loadingEl.remove();
       } else {
         this.bodyEl.appendChild(el('div', { class: 'view-loading-inline' }, `fetching ${ws/3600}h…`));
         const seq = ++cardsWindow.fetchSeq;

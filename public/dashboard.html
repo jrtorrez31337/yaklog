@@ -152,6 +152,12 @@
   /* CP6.5: history window toggle in cards section divider */
   #cards-window-toggle button.active { background: var(--blue-bg) !important; color: var(--blue) !important; }
   #cards-window-toggle button:hover:not(.active) { color: var(--text) !important; }
+  /* CP6.14: SSE connection-state indicator */
+  .sse-dot.state-connecting { color: var(--muted); animation: pulse-dim 1.5s infinite; }
+  .sse-dot.state-open       { color: var(--green); }
+  .sse-dot.state-stale      { color: var(--yellow); }
+  .sse-dot.state-error      { color: var(--red); animation: pulse-dim 1s infinite; }
+  @keyframes pulse-dim { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
   /* CP6.5: per-card loading state for on-demand range fetches */
   .agent-card .view-loading-inline { color: var(--muted); font-size: 10px; opacity: 0.6; text-align: center; padding: 4px 0; }
   .agent-card-pills { display: flex; gap: 4px; margin-left: auto; }
@@ -319,6 +325,7 @@
 
   <div class="section-divider">
     cluster agents <span id="cards-meta" style="text-transform: none; letter-spacing: 0; font-size: 11px;">—</span>
+    <span id="sse-indicator" class="sse-dot state-connecting" title="SSE: connecting…" style="text-transform: none; letter-spacing: 0; font-size: 14px; line-height: 1; cursor: help; margin-left: 8px;">●</span>
     <span style="margin-left: auto; display: inline-flex; align-items: center; gap: 6px;">
       <span style="font-size: 10px;" title="rate-window / chart-lookback. Rate is computed over the first, chart spans the second.">rate/lookback:</span>
       <span class="by-toggle" id="cards-window-toggle" style="display: inline-flex; gap: 0; border: 1px solid var(--border); border-radius: 3px; overflow: hidden;">
