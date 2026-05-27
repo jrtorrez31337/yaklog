@@ -205,6 +205,12 @@
   /* CP7.3 stale-daemon pill (yellow; fires when daemon_version null = pre-version-reporting cohort) */
   td.agent .stale-pill,
   .agent-card .stale-pill { display: inline-block; margin-left: 5px; padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 500; vertical-align: middle; cursor: help; background: rgba(250,204,21,0.12); color: var(--yellow); }
+  /* v0.5.9 rt-pill (runtime-execution-liveness; ADR-0027 scope). Fires when
+     runtime_state set + not 'active'. Red — agent literally can't execute
+     work, regardless of daemon liveness. Distinct from orange Monitor-dead
+     (observability gap) and yellow stalled (CC session idle). */
+  td.agent .rt-pill,
+  .agent-card .rt-pill { display: inline-block; margin-left: 5px; padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 500; vertical-align: middle; cursor: help; background: rgba(248,113,113,0.14); color: #f87171; }
   /* v0.5.8.2 runtime badge (CC / Gemini / Codex). Placed first in card head
      for at-a-glance runtime ID. SVG uses currentColor cascade so the brand
      color renders from inline style; tooltip = explicit runtime name. */

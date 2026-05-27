@@ -1164,6 +1164,29 @@
         pills.appendChild(el('span', { class: 'otel-pill ' + otel.kind, title: tip },
           otel.kind === 'live' ? 'OTel' : 'OTel quiet'));
       }
+      // v0.5.9: runtime-execution-liveness pill (per parch ratification #6684;
+      // ADR-0027 scope). Fires when runtime_state is set and not 'active' —
+      // the runtime can't execute work even though the daemon may be up.
+      // Distinct from daemon-down / Monitor-dead / stalled.
+      if (r.runtime_state && r.runtime_state !== 'active') {
+        const stateLabel = r.runtime_state === 'quota_exhausted' ? 'quota-blocked'
+                         : r.runtime_state === 'error' ? 'runtime-error'
+                         : r.runtime_state;
+        let etaTxt = '';
+        if (r.runtime_blocked_until) {
+          const ms = new Date(r.runtime_blocked_until).getTime() - Date.now();
+          if (Number.isFinite(ms)) {
+            if (ms <= 0) etaTxt = ' · reset due';
+            else if (ms < 60_000) etaTxt = ` · resets in <1m`;
+            else if (ms < 3600_000) etaTxt = ` · resets in ${Math.round(ms/60_000)}m`;
+            else etaTxt = ` · resets in ${(ms/3600_000).toFixed(1)}h`;
+          }
+        }
+        const tip = `runtime_state=${r.runtime_state}` +
+          (r.runtime_blocked_until ? ` · runtime_blocked_until=${r.runtime_blocked_until}` : '') +
+          ` · daemon may still be heartbeating but runtime can't execute work`;
+        pills.appendChild(el('span', { class: 'rt-pill', title: tip }, stateLabel + etaTxt));
+      }
       if (r.events_consumer_count === 0 && r.daemon_state === 'up') {
         pills.appendChild(el('span', {
           class: 'mon-pill',

@@ -311,6 +311,8 @@ const TOOL_STATUS_VALUES = new Set(['ok', 'error']);
 const COMPACTION_REASON_VALUES = new Set(['manual', 'auto']);
 const STOP_REASON_VALUES = new Set(['natural', 'failure']);
 const SESSION_SOURCE_VALUES = new Set(['startup', 'resume', 'clear', 'compact']);
+// v0.5.9 runtime-execution-liveness — parch-ratified field contract #6684.
+const RUNTIME_STATE_VALUES = new Set(['active', 'quota_exhausted', 'error']);
 // Bounds for free-text runtime-meta fields (model/tool name; substrate-local
 // distilled values, not user content — kept tight for sanity).
 const RUNTIME_META_STRING_MAX = 128;
@@ -348,7 +350,9 @@ router.post('/presence/event', (req, res) => {
     // v0.5.7.3 runtime-env (all optional)
     runtime_uid, runtime_gid, runtime_hostname, current_cwd,
     // v0.5.7.4 daemon-process (all optional)
-    daemon_pid, daemon_version, daemon_started_at
+    daemon_pid, daemon_version, daemon_started_at,
+    // v0.5.9 runtime-execution-liveness (per parch ratification #6684; ADR-0027)
+    runtime_state, runtime_blocked_until
   } = req.body || {};
 
   if (typeof agent_id !== 'string' || !AGENT_ID_RE.test(agent_id)) {
@@ -424,6 +428,18 @@ router.post('/presence/event', (req, res) => {
     const e = validateOptionalString(val, name);
     if (e) return res.status(400).json(e);
   }
+  // v0.5.9 runtime-execution-liveness validation. runtime_state ∈ allowlist
+  // (or null = unset / pre-v0.5.9 daemon). runtime_blocked_until = ISO-8601
+  // string (or null); only meaningful when runtime_state !== 'active', but
+  // we don't enforce the pairing here — daemon-side discipline.
+  {
+    const e = validateOptionalEnum(runtime_state, RUNTIME_STATE_VALUES, 'runtime_state');
+    if (e) return res.status(400).json(e);
+  }
+  {
+    const e = validateOptionalString(runtime_blocked_until, 'runtime_blocked_until');
+    if (e) return res.status(400).json(e);
+  }
 
   const violation = enforceDaemonBinding(req, agent_id);
   if (violation) {
@@ -457,7 +473,10 @@ router.post('/presence/event', (req, res) => {
     current_cwd: current_cwd ?? null,
     daemon_pid: daemon_pid ?? null,
     daemon_version: daemon_version ?? null,
-    daemon_started_at: daemon_started_at ?? null
+    daemon_started_at: daemon_started_at ?? null,
+    // v0.5.9 runtime-execution-liveness passthrough.
+    runtime_state: runtime_state ?? null,
+    runtime_blocked_until: runtime_blocked_until ?? null
   });
 
   return res.status(200).json({ presence });

@@ -176,6 +176,16 @@ function initializeDb() {
     ['daemon_pid', 'INTEGER'],            // os.getpid() of daemon process
     ['daemon_version', 'TEXT'],           // yaklog-sub VERSION constant
     ['daemon_started_at', 'TEXT'],        // ISO-8601 of daemon __init__
+    // v0.5.9 (2026-05-27) — runtime-execution-liveness dimension per parch
+    // ratification #6684 (ADR-0027 scope) + aieng #6683 surface. Orthogonal
+    // to daemon_state (which tracks yaklog-sub liveness, not runtime
+    // ability to execute work). Example: gemini with daemon_state=up but
+    // gemini-cli runtime in Google-API quota-exhaustion = runtime_state=
+    // quota_exhausted + runtime_blocked_until=<reset ETA>.
+    // Default 'active' preserves backcompat: existing rows + non-emitting
+    // daemons read as active = no behavior change.
+    ['runtime_state', 'TEXT'],            // 'active' | 'quota_exhausted' | 'error' | NULL→active
+    ['runtime_blocked_until', 'TEXT'],    // ISO-8601 reset ETA when not-active; NULL otherwise
   ];
   for (const [colName, colType] of RUNTIME_META_COLUMNS) {
     if (!presenceColNames.has(colName)) {
@@ -595,7 +605,11 @@ function upsertPresence({
   // v0.5.7.3 runtime-environment (all optional; null when daemon < v0.5.7.3)
   runtime_uid, runtime_gid, runtime_hostname, current_cwd,
   // v0.5.7.4 daemon-process detail (all optional; null when daemon < v0.5.7.4)
-  daemon_pid, daemon_version, daemon_started_at
+  daemon_pid, daemon_version, daemon_started_at,
+  // v0.5.9 runtime-execution-liveness (per parch ratification #6684; ADR-0027
+  // scope). Default 'active' preserves backcompat — legacy daemons omit →
+  // null → dashboard treats as active.
+  runtime_state, runtime_blocked_until
 }) {
   const database = getDb();
   const now = new Date().toISOString();
@@ -621,7 +635,8 @@ function upsertPresence({
       last_compaction_reason, last_compaction_at, last_stop_reason,
       last_session_source, subagent_active_count,
       runtime_uid, runtime_gid, runtime_hostname, current_cwd,
-      daemon_pid, daemon_version, daemon_started_at
+      daemon_pid, daemon_version, daemon_started_at,
+      runtime_state, runtime_blocked_until
     )
     VALUES (
       @agent_id, @daemon_state, @session_state, @cursor_position, @lock_held,
@@ -631,7 +646,8 @@ function upsertPresence({
       @last_compaction_reason, @last_compaction_at, @last_stop_reason,
       @last_session_source, @subagent_active_count,
       @runtime_uid, @runtime_gid, @runtime_hostname, @current_cwd,
-      @daemon_pid, @daemon_version, @daemon_started_at
+      @daemon_pid, @daemon_version, @daemon_started_at,
+      @runtime_state, @runtime_blocked_until
     )
     ON CONFLICT(agent_id) DO UPDATE SET
       daemon_state = excluded.daemon_state,
@@ -673,7 +689,13 @@ function upsertPresence({
       -- one. version is a constant per daemon binary; same semantics.
       daemon_pid = excluded.daemon_pid,
       daemon_version = excluded.daemon_version,
-      daemon_started_at = excluded.daemon_started_at
+      daemon_started_at = excluded.daemon_started_at,
+      -- v0.5.9 runtime-execution-liveness: raw-assign matches "current
+      -- state" semantics (same pattern as current_tool). Pre-v0.5.9 daemons
+      -- never set this field, so the null→null rollback case is a no-op.
+      -- v0.5.9+ daemons emit both fields together on every transition.
+      runtime_state = excluded.runtime_state,
+      runtime_blocked_until = excluded.runtime_blocked_until
   `);
   stmt.run({
     agent_id,
@@ -701,7 +723,9 @@ function upsertPresence({
     current_cwd: current_cwd ?? null,
     daemon_pid: (daemon_pid == null) ? null : Number(daemon_pid),
     daemon_version: daemon_version ?? null,
-    daemon_started_at: daemon_started_at ?? null
+    daemon_started_at: daemon_started_at ?? null,
+    runtime_state: runtime_state ?? null,
+    runtime_blocked_until: runtime_blocked_until ?? null
   });
 
   if (stateChanged) {
@@ -745,7 +769,10 @@ function getPresenceByAgent(agent_id) {
     // v0.5.7.4 daemon-process
     daemon_pid: row.daemon_pid,
     daemon_version: row.daemon_version,
-    daemon_started_at: row.daemon_started_at
+    daemon_started_at: row.daemon_started_at,
+    // v0.5.9 runtime-execution-liveness
+    runtime_state: row.runtime_state,
+    runtime_blocked_until: row.runtime_blocked_until
   };
 }
 
@@ -782,7 +809,10 @@ function listPresence() {
     // v0.5.7.4 daemon-process
     daemon_pid: row.daemon_pid,
     daemon_version: row.daemon_version,
-    daemon_started_at: row.daemon_started_at
+    daemon_started_at: row.daemon_started_at,
+    // v0.5.9 runtime-execution-liveness
+    runtime_state: row.runtime_state,
+    runtime_blocked_until: row.runtime_blocked_until
   }));
 }
 
