@@ -329,6 +329,46 @@
   .bus-mentions .bus-mention { background: rgba(255,255,255,0.05); padding: 1px 5px; border-radius: 8px; margin-right: 3px; }
   .bus-row .bus-id { color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
 
+  /* CP8.2 (2026-05-27): Audit tab — DM audit log reader + reveal modal. */
+  .audit-banner { padding: 10px 18px; background: rgba(250,204,21,0.08); border-bottom: 1px solid var(--border); color: var(--text); font-size: 12px; line-height: 1.5; }
+  .audit-banner strong { color: var(--yellow); }
+  .audit-banner code { background: rgba(255,255,255,0.05); padding: 1px 5px; border-radius: 3px; font-size: 11px; }
+  .audit-controls { padding: 12px 18px; background: var(--panel); border-bottom: 1px solid var(--border); }
+  .audit-control-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
+  .audit-field { display: flex; flex-direction: column; gap: 3px; }
+  .audit-field .lbl { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; }
+  .audit-field .bus-input { min-width: 160px; }
+  .audit-btn { background: rgba(96,165,250,0.12); border: 1px solid var(--blue); color: var(--text); padding: 5px 12px; border-radius: 3px; font: inherit; font-size: 12px; cursor: pointer; }
+  .audit-btn:hover { background: rgba(96,165,250,0.22); }
+  .audit-btn-ghost { background: transparent; border-color: var(--border); color: var(--muted); }
+  .audit-btn-ghost:hover { background: rgba(255,255,255,0.04); color: var(--text); }
+  .audit-list { padding: 0; min-height: 200px; max-height: calc(100vh - 280px); overflow-y: auto; }
+  .audit-row { padding: 8px 18px; border-bottom: 1px solid rgba(255,255,255,0.04); display: grid; grid-template-columns: 130px 130px 1fr 80px 100px; gap: 10px; align-items: baseline; font-size: 12px; }
+  .audit-row:hover { background: rgba(255,255,255,0.02); }
+  .audit-row .audit-ts { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 11px; }
+  .audit-row .audit-key { color: var(--muted); font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 10px; }
+  .audit-row .audit-flow { color: var(--text); word-break: break-word; }
+  .audit-row .audit-flow .arrow { color: var(--muted); padding: 0 4px; }
+  .audit-row .audit-msgid { color: var(--blue); font-variant-numeric: tabular-nums; font-size: 11px; }
+  .audit-row .audit-reveal { background: rgba(192,132,252,0.10); border: 1px solid #c084fc; color: #c084fc; padding: 3px 8px; border-radius: 3px; font: inherit; font-size: 10px; cursor: pointer; }
+  .audit-row .audit-reveal:hover { background: rgba(192,132,252,0.20); }
+  .audit-row .audit-via { display: inline-block; background: rgba(255,255,255,0.05); padding: 1px 5px; border-radius: 8px; font-size: 9px; color: var(--muted); margin-left: 6px; }
+
+  .audit-modal { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); display: none; align-items: center; justify-content: center; z-index: 1000; }
+  .audit-modal[aria-hidden="false"] { display: flex; }
+  .audit-modal-content { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; max-width: 800px; width: 90vw; max-height: 80vh; display: flex; flex-direction: column; }
+  .audit-modal-head { padding: 12px 18px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 10px; }
+  .audit-modal-head h3 { margin: 0; font-size: 14px; color: var(--text); flex: 1; }
+  .audit-modal-close { background: transparent; border: 0; color: var(--muted); font-size: 24px; line-height: 1; cursor: pointer; padding: 0 4px; }
+  .audit-modal-close:hover { color: var(--text); }
+  .audit-modal-meta { padding: 8px 18px; color: var(--muted); font-size: 11px; border-bottom: 1px solid var(--border); }
+  .audit-modal-warn { padding: 10px 18px; background: rgba(250,204,21,0.06); color: var(--text); font-size: 11px; line-height: 1.5; border-bottom: 1px solid var(--border); }
+  .audit-modal-warn em { color: var(--blue); font-style: normal; }
+  .audit-modal-body-wrap { padding: 14px 18px; flex: 1; overflow-y: auto; }
+  .audit-modal-body { background: var(--bg); border: 1px solid var(--border); border-radius: 3px; padding: 12px; color: var(--text); font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; white-space: pre-wrap; word-break: break-word; min-height: 80px; }
+  .audit-modal-body.audit-body-redacted { color: var(--muted); font-style: italic; text-align: center; }
+  .audit-modal-actions { padding: 12px 18px; border-top: 1px solid var(--border); display: flex; gap: 10px; }
+
   /* Cost tab stub (legacy; replaced by full panel in CP3 but kept for fallback). */
   .stub-panel { padding: 80px 18px; text-align: center; color: var(--muted); }
   .stub-panel h2 { font-size: 16px; color: var(--text); margin: 0 0 12px; }
@@ -356,6 +396,7 @@
   <button class="tab-btn active" data-tab="live">Live</button>
   <button class="tab-btn" data-tab="cost">Cost<span class="badge-new">CP3</span></button>
   <button class="tab-btn" data-tab="bus">Bus<span class="badge-new">CP8</span></button>
+  <button class="tab-btn" data-tab="audit">Audit<span class="badge-new">CP8.2</span></button>
 </nav>
 
 <!-- Live tab: top-of-page Plexus charts + existing presence table preserved. -->
@@ -494,6 +535,67 @@
     <div class="bus-empty">loading…</div>
   </div>
 </section>
+
+<!-- CP8.2 (2026-05-27): Audit tab — ops-key DM audit log reader + body reveal.
+     v1 trust posture: network-isolation only (no browser auth; same as the rest
+     of /api/v1/plexus/public/*). Stage 2.5+ adds proper auth. -->
+<section class="tab-panel" data-tab="audit" id="tab-audit">
+  <div class="audit-banner">
+    🔓 <strong>Network-trust auth only (v1).</strong> Anyone with devel-LAN access can read DMs here.
+    Proper browser auth (Stage 2.5+ cookie-auth) will gate this surface later.
+    Every body-reveal click writes a fresh audit entry (<code>via=dashboard</code>).
+  </div>
+  <div class="audit-controls">
+    <div class="audit-control-row">
+      <label class="audit-field">
+        <span class="lbl">sender</span>
+        <input id="audit-f-sender" class="bus-input" placeholder="e.g. alice" />
+      </label>
+      <label class="audit-field">
+        <span class="lbl">recipient</span>
+        <input id="audit-f-recipient" class="bus-input" placeholder="e.g. bob" />
+      </label>
+      <label class="audit-field">
+        <span class="lbl">message #</span>
+        <input id="audit-f-msgid" class="bus-input" placeholder="numeric id" type="number" min="1" />
+      </label>
+      <label class="audit-field">
+        <span class="lbl">ops key id</span>
+        <input id="audit-f-opskey" class="bus-input" placeholder="sha256-first16" />
+      </label>
+      <button id="audit-apply" class="audit-btn">apply</button>
+      <button id="audit-clear" class="audit-btn audit-btn-ghost">clear</button>
+      <span class="bus-status" id="audit-status">—</span>
+    </div>
+  </div>
+  <div id="audit-list" class="audit-list">
+    <div class="bus-empty">loading…</div>
+  </div>
+</section>
+
+<!-- CP8.2 reveal-body modal (shared single instance). -->
+<div id="audit-reveal-modal" class="audit-modal" aria-hidden="true" role="dialog">
+  <div class="audit-modal-content">
+    <div class="audit-modal-head">
+      <h3>🔒 Private message body</h3>
+      <button class="audit-modal-close" id="audit-modal-close">×</button>
+    </div>
+    <div class="audit-modal-meta" id="audit-modal-meta">—</div>
+    <div class="audit-modal-warn">
+      Fresh audit entry written (<code>via=dashboard</code>). Body redacted by default to avoid
+      accidental screen-share exposure — click <em>Reveal text</em> to display, or use
+      <em>Copy</em> / <em>Download</em> to handle without on-screen display.
+    </div>
+    <div class="audit-modal-body-wrap">
+      <div id="audit-modal-body" class="audit-modal-body audit-body-redacted">[BODY HIDDEN — click Reveal text]</div>
+    </div>
+    <div class="audit-modal-actions">
+      <button id="audit-modal-reveal" class="audit-btn">Reveal text</button>
+      <button id="audit-modal-copy" class="audit-btn">Copy</button>
+      <button id="audit-modal-download" class="audit-btn">Download .txt (mode 600 ergonomic)</button>
+    </div>
+  </div>
+</div>
 
 <!-- CP3: shared agent overlay popover (single instance reused). -->
 <div id="agent-popover" role="dialog" aria-hidden="true"></div>

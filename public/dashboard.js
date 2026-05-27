@@ -237,7 +237,7 @@
   // CP2: tab navigation (URL-fragment-persisted; #live default / #cost).
   // ────────────────────────────────────────────────────────────────────
   function activateTab(name) {
-    if (!['live', 'cost', 'bus'].includes(name)) name = 'live';
+    if (!['live', 'cost', 'bus', 'audit'].includes(name)) name = 'live';
     document.querySelectorAll('.tab-btn').forEach(b => {
       b.classList.toggle('active', b.dataset.tab === name);
     });
@@ -252,6 +252,8 @@
     // always-on; the BusStream singleton shares one EventSource between
     // ticker + tab).
     if (name === 'bus') mountBusTab();
+    // CP8.2: lazy-mount the Audit tab.
+    if (name === 'audit') mountAuditTab();
   }
   document.querySelectorAll('.tab-btn').forEach(b => {
     b.addEventListener('click', () => activateTab(b.dataset.tab));
@@ -2270,6 +2272,175 @@
   }
   // If page loaded directly at #bus, mount immediately
   if (location.hash === '#bus') mountBusTab();
+
+  // ────────────────────────────────────────────────────────────────────
+  // CP8.2 (2026-05-27): Audit tab — DM audit log reader + reveal modal.
+  // Public-trust (network-isolation only) for v1; auth comes Stage 2.5+.
+  // ────────────────────────────────────────────────────────────────────
+  let auditTabMounted = false;
+  let revealCurrent = { id: null, body: null, sender: null };
+
+  function fmtAuditTs(iso) {
+    if (!iso) return '—';
+    try {
+      const d = new Date(iso);
+      const hh = String(d.getUTCHours()).padStart(2,'0');
+      const mm = String(d.getUTCMinutes()).padStart(2,'0');
+      const ss = String(d.getUTCSeconds()).padStart(2,'0');
+      const mo = String(d.getUTCMonth()+1).padStart(2,'0');
+      const dd = String(d.getUTCDate()).padStart(2,'0');
+      return `${mo}-${dd} ${hh}:${mm}:${ss}Z`;
+    } catch { return iso; }
+  }
+
+  function openRevealModal(messageId, meta) {
+    const modal = document.getElementById('audit-reveal-modal');
+    const metaEl = document.getElementById('audit-modal-meta');
+    const bodyEl = document.getElementById('audit-modal-body');
+    revealCurrent = { id: messageId, body: null, sender: meta.sender || '?' };
+    metaEl.textContent = `message #${messageId} · ${meta.sender || '?'} → [${(meta.recipients || []).join(', ')}] · channel: ${meta.channel || '?'}`;
+    bodyEl.textContent = '[BODY HIDDEN — click Reveal text]';
+    bodyEl.classList.add('audit-body-redacted');
+    modal.setAttribute('aria-hidden', 'false');
+    // Fetch body now (writes audit entry server-side); reveal action just displays.
+    fetch(`/api/v1/plexus/public/messages/${messageId}`, { cache: 'no-store' })
+      .then(r => r.ok ? r.json() : Promise.reject(r))
+      .then(d => { revealCurrent.body = (d.message && d.message.body) || ''; })
+      .catch(() => { revealCurrent.body = '(failed to fetch body — message may have been deleted)'; });
+  }
+
+  function closeRevealModal() {
+    document.getElementById('audit-reveal-modal').setAttribute('aria-hidden', 'true');
+    revealCurrent = { id: null, body: null, sender: null };
+  }
+
+  function mountAuditTab() {
+    if (auditTabMounted) return;
+    auditTabMounted = true;
+
+    const listEl = document.getElementById('audit-list');
+    const statusEl = document.getElementById('audit-status');
+    const fSender = document.getElementById('audit-f-sender');
+    const fRecipient = document.getElementById('audit-f-recipient');
+    const fMsgid = document.getElementById('audit-f-msgid');
+    const fOpsKey = document.getElementById('audit-f-opskey');
+    const applyBtn = document.getElementById('audit-apply');
+    const clearBtn = document.getElementById('audit-clear');
+
+    function buildAuditRow(e) {
+      const row = el('div', { class: 'audit-row' });
+      row.appendChild(el('span', { class: 'audit-ts', title: e.ts }, fmtAuditTs(e.ts)));
+      const keyDisplay = e.ops_key_id === 'public-dashboard' ? 'dashboard' : (e.ops_key_id || '?');
+      const keySpan = el('span', { class: 'audit-key', title: e.ops_key_id }, keyDisplay);
+      if (e.via === 'dashboard') {
+        keySpan.appendChild(el('span', { class: 'audit-via' }, 'via=dashboard'));
+      }
+      row.appendChild(keySpan);
+      const flow = el('span', { class: 'audit-flow' });
+      flow.appendChild(document.createTextNode(e.sender || '?'));
+      flow.appendChild(el('span', { class: 'arrow' }, '→'));
+      flow.appendChild(document.createTextNode('[' + (e.recipients || []).join(', ') + ']'));
+      if (e.channel) {
+        flow.appendChild(el('span', { class: 'audit-via' }, '#' + e.channel));
+      }
+      row.appendChild(flow);
+      row.appendChild(el('span', { class: 'audit-msgid' }, '#' + e.message_id));
+      const revealBtn = el('button', { class: 'audit-reveal' }, '🔒 reveal body');
+      revealBtn.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        openRevealModal(e.message_id, {
+          sender: e.sender, recipients: e.recipients, channel: e.channel,
+        });
+      });
+      row.appendChild(revealBtn);
+      return row;
+    }
+
+    async function fetchAndRender() {
+      const params = new URLSearchParams({ limit: '200' });
+      if (fSender.value.trim())     params.set('sender', fSender.value.trim());
+      if (fRecipient.value.trim())  params.set('recipient', fRecipient.value.trim());
+      if (fMsgid.value.trim())      params.set('message_id', fMsgid.value.trim());
+      if (fOpsKey.value.trim())     params.set('ops_key_id', fOpsKey.value.trim());
+      statusEl.textContent = 'loading…';
+      try {
+        const r = await fetch('/api/v1/plexus/public/dm-audit-log?' + params.toString(), { cache: 'no-store' });
+        if (!r.ok) {
+          statusEl.textContent = `error HTTP ${r.status}`;
+          return;
+        }
+        const d = await r.json();
+        clearChildren(listEl);
+        if (!d.exists) {
+          listEl.appendChild(el('div', { class: 'bus-empty' },
+            'audit log file does not exist yet — no ops-key reads have happened. Try the reveal-body flow once to populate.'));
+          statusEl.textContent = 'no audit entries';
+          return;
+        }
+        if (d.entries.length === 0) {
+          listEl.appendChild(el('div', { class: 'bus-empty' }, 'no audit entries match current filters'));
+          statusEl.textContent = `0 of ${d.total_matched || 0} matched`;
+          return;
+        }
+        for (const e of d.entries) listEl.appendChild(buildAuditRow(e));
+        statusEl.textContent = `${d.entries.length} entries · ${d.total_matched || d.entries.length} matched`;
+      } catch (err) {
+        statusEl.textContent = `error: ${err.message}`;
+      }
+    }
+
+    applyBtn.addEventListener('click', fetchAndRender);
+    clearBtn.addEventListener('click', () => {
+      fSender.value = ''; fRecipient.value = ''; fMsgid.value = ''; fOpsKey.value = '';
+      fetchAndRender();
+    });
+    for (const inp of [fSender, fRecipient, fMsgid, fOpsKey]) {
+      inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') fetchAndRender(); });
+    }
+
+    // Reveal modal wiring (one-time on first audit tab mount).
+    document.getElementById('audit-modal-close').addEventListener('click', closeRevealModal);
+    document.getElementById('audit-reveal-modal').addEventListener('click', (e) => {
+      if (e.target.id === 'audit-reveal-modal') closeRevealModal();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeRevealModal();
+    });
+    document.getElementById('audit-modal-reveal').addEventListener('click', () => {
+      const bodyEl = document.getElementById('audit-modal-body');
+      if (revealCurrent.body == null) {
+        bodyEl.textContent = '(still fetching…)';
+        return;
+      }
+      bodyEl.textContent = revealCurrent.body;
+      bodyEl.classList.remove('audit-body-redacted');
+    });
+    document.getElementById('audit-modal-copy').addEventListener('click', async () => {
+      if (revealCurrent.body == null) return;
+      try {
+        await navigator.clipboard.writeText(revealCurrent.body);
+        const btn = document.getElementById('audit-modal-copy');
+        const orig = btn.textContent;
+        btn.textContent = 'Copied ✓';
+        setTimeout(() => btn.textContent = orig, 1500);
+      } catch {}
+    });
+    document.getElementById('audit-modal-download').addEventListener('click', () => {
+      if (revealCurrent.body == null) return;
+      const blob = new Blob([revealCurrent.body], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `dm-${revealCurrent.id}-from-${revealCurrent.sender}.txt`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    });
+
+    fetchAndRender();
+  }
+
+  // If page loaded directly at #audit, mount immediately
+  if (location.hash === '#audit') mountAuditTab();
 
   // Kick off presence polling (unchanged from v0.5.7).
   poll();

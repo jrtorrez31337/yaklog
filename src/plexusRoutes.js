@@ -471,6 +471,69 @@ publicRouter.get('/messages', (req, res) => {
 
 publicRouter.get('/messages-stream', messageStreamHandler);
 
+// v0.5.8.6 (2026-05-27) — dashboard item #2 (DM audit surface).
+// Public-mirror endpoints behind network-isolation trust (same posture as
+// the rest of /api/v1/plexus/public/*; proper browser-auth comes Stage 2.5+).
+//
+// (1) GET /dm-audit-log: lists envelope-only audit entries from
+//     /var/log/yaklog/dm-audit.ndjson with server-side filtering.
+// (2) GET /messages/:id: returns ANY message including private (intended
+//     for the audit-tab "reveal body" flow); writes a fresh audit entry
+//     marker (via='dashboard') so the audit log captures dashboard reveals
+//     alongside CLI ops-key reads — single audit source of truth.
+const { readDmAuditLog } = require('./audit');
+const { getMessage } = require('./db');
+const { writeAuditEntries } = require('./middleware/dmFilter');
+
+publicRouter.get('/dm-audit-log', (req, res) => {
+  const limit = parsePosInt(req.query.limit, 100, 500);
+  if (limit === null) {
+    return res.status(400).json({ error: 'ValidationError', message: 'limit must be a non-negative integer (max 500).' });
+  }
+  let result;
+  try {
+    result = readDmAuditLog({
+      limit,
+      since: req.query.since ? String(req.query.since) : null,
+      until: req.query.until ? String(req.query.until) : null,
+      sender: req.query.sender ? String(req.query.sender) : null,
+      recipient: req.query.recipient ? String(req.query.recipient) : null,
+      message_id: req.query.message_id ? parseInt(req.query.message_id, 10) : null,
+      ops_key_id: req.query.ops_key_id ? String(req.query.ops_key_id) : null,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: 'AuditReadError', message: err.message });
+  }
+  return res.json(result);
+});
+
+publicRouter.get('/messages/:id', (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isFinite(id) || id < 1) {
+    return res.status(400).json({ error: 'ValidationError', message: 'id must be a positive integer.' });
+  }
+  const message = getMessage(id);
+  if (!message) {
+    return res.status(404).json({ error: 'NotFound', message: `Message id ${id} not found.` });
+  }
+  // If private, write an audit entry with via='dashboard' marker so the
+  // audit log captures this read alongside CLI ops-key reads. opsKeyId is
+  // 'public-dashboard' (a stable non-secret marker; not a real key hash).
+  if (message.private) {
+    writeAuditEntries([{
+      ts: new Date().toISOString(),
+      ops_key_id: 'public-dashboard',
+      requester_ip: req.ip || null,
+      message_id: message.id,
+      channel: message.channel,
+      sender: message.sender,
+      recipients: message.mentions || [],
+      via: 'dashboard',
+    }]);
+  }
+  return res.json({ message });
+});
+
 module.exports = router;
 module.exports.publicRouter = publicRouter;
 module.exports._internals = { templates, cache, COST_DIM_ALLOWLIST, RATE_WINDOW_ALLOWLIST };
