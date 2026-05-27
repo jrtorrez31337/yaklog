@@ -13,6 +13,7 @@ const REGISTRY = new Map([
   ['gemini-agent', 'gemini'],
   // techmark was Codex; switched to Claude Code per Jon-direct 2026-05-26.
   // No entry needed; default covers it.
+  ['aieng3-agent', 'codex'],   // Codex; currently paused (funding) per Jon-direct 2026-05-27 — will return
 ]);
 
 const DEFAULT_RUNTIME = 'claude_code';
