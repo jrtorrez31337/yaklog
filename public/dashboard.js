@@ -1886,11 +1886,22 @@
 
     async refreshCumulative(seq, dim, _windowS) {
       try {
-        const qs = new URLSearchParams({ template: 'cost.cumulative.byDim', dim });
-        const res = await fetch('/api/v1/plexus/public/query?' + qs.toString(), { cache: 'no-store' });
-        if (!res.ok) throw new Error('HTTP ' + res.status);
-        const cacheHdr = res.headers.get('X-Plexus-Cache');
-        const respBody = await res.json();
+        // CP8.4 (2026-05-27): parallel fetch — cumulative cost + 7d rate baseline.
+        // Lets us flag rate anomalies (current >> 7d mean) on the cumulative
+        // table without an extra round-trip. 7d window = ~604800s.
+        const cumQs = new URLSearchParams({ template: 'cost.cumulative.byDim', dim });
+        const now = Math.floor(Date.now() / 1000);
+        const rateQs = new URLSearchParams({
+          template: 'cost.rate.byDim', dim, window: '5m',
+          from: now - 604800, to: now, step: '15m',
+        });
+        const [cumRes, rateRes] = await Promise.all([
+          fetch('/api/v1/plexus/public/query?' + cumQs.toString(), { cache: 'no-store' }),
+          fetch('/api/v1/plexus/public/query_range?' + rateQs.toString(), { cache: 'no-store' }),
+        ]);
+        if (!cumRes.ok) throw new Error('cum HTTP ' + cumRes.status);
+        const cacheHdr = cumRes.headers.get('X-Plexus-Cache');
+        const respBody = await cumRes.json();
         if (seq !== this.fetchSeq) return;
         const results = (respBody.data && respBody.data.result) || [];
         if (results.length === 0) {
@@ -1899,23 +1910,49 @@
           this.setCumulativeStatus(`empty · ${new Date().toLocaleTimeString()}`);
           return;
         }
+        // Build rate-baseline map: {dimValue: {current, mean7d, ratio}}.
+        // current = last sample of the 7d series for that dim.
+        // mean7d  = arithmetic mean of all samples in the series.
+        // ratio   = current / mean7d (1.0 = exactly mean; >2 flagged as anomaly).
+        const ratesByDim = new Map();
+        if (rateRes.ok) {
+          const rateBody = await rateRes.json();
+          const rateResults = (rateBody.data && rateBody.data.result) || [];
+          for (const s of rateResults) {
+            const dv = s.metric[dim];
+            if (!dv) continue;
+            const vals = (s.values || [])
+              .map(([, v]) => parseFloat(v))
+              .filter(v => Number.isFinite(v));
+            if (vals.length === 0) continue;
+            const current = vals[vals.length - 1];
+            const mean7d = vals.reduce((a, b) => a + b, 0) / vals.length;
+            const ratio = mean7d > 0 ? current / mean7d : 0;
+            ratesByDim.set(dv, { current, mean7d, ratio });
+          }
+        }
         const rows = results.map(s => ({
           dimValue: s.metric[dim] || '(empty)',
           cost: parseFloat(s.value[1]) || 0,
+          rate: ratesByDim.get(s.metric[dim] || '(empty)') || null,
         })).sort((a, b) => b.cost - a.cost);
         const max = rows[0].cost || 1;
+        const ANOMALY_RATIO = 2.0;   // current > 2× 7d mean → flag
+        const anomalyN = rows.filter(r => r.rate && r.rate.ratio >= ANOMALY_RATIO).length;
         clearChildren(this.cumulativeBody);
         const table = el('table', { class: 'cost-table' });
         const thead = el('thead');
         thead.appendChild(el('tr', null,
           el('th', null, dim),
           el('th', null, ''),
-          el('th', { class: 'num' }, 'USD'),
+          el('th', { class: 'num' }, 'USD (all-time)'),
+          el('th', { class: 'num', title: 'current cost rate (last sample of 7d series)' }, '$/hr now'),
         ));
         table.appendChild(thead);
         const tbody = el('tbody');
         for (const r of rows) {
           const tr = el('tr');
+          if (r.rate && r.rate.ratio >= ANOMALY_RATIO) tr.classList.add('cost-anomaly');
           const dimCell = el('td', { class: 'dim-val' });
           if (dim === 'plexus_agent_id') {
             dimCell.appendChild(el('span', { class: 'agent-clickable', 'data-agent-id': r.dimValue }, r.dimValue));
@@ -1929,11 +1966,31 @@
           fill.style.width = ((r.cost / max) * 100).toFixed(1) + '%';
           wrap.appendChild(fill); bar.appendChild(wrap); tr.appendChild(bar);
           tr.appendChild(el('td', { class: 'cost' }, '$' + r.cost.toFixed(4)));
+          // Current $/hr column with optional anomaly marker
+          const rateCell = el('td', { class: 'cost' });
+          if (r.rate) {
+            const usdPerHr = r.rate.current * 3600;
+            const meanPerHr = r.rate.mean7d * 3600;
+            if (r.rate.ratio >= ANOMALY_RATIO) {
+              rateCell.appendChild(el('span', {
+                class: 'cost-anomaly-dot',
+                title: `current $${usdPerHr.toFixed(4)}/hr is ${r.rate.ratio.toFixed(1)}× the 7d mean ($${meanPerHr.toFixed(4)}/hr)`,
+              }, '●'));
+              rateCell.appendChild(document.createTextNode(' '));
+            }
+            rateCell.appendChild(document.createTextNode(
+              usdPerHr >= 0.001 ? '$' + usdPerHr.toFixed(4) : '$' + usdPerHr.toExponential(1)
+            ));
+          } else {
+            rateCell.appendChild(el('span', { class: 'muted' }, '—'));
+          }
+          tr.appendChild(rateCell);
           tbody.appendChild(tr);
         }
         table.appendChild(tbody);
         this.cumulativeBody.appendChild(table);
-        this.setCumulativeStatus(`${rows.length} ${dim}(s) · ${cacheHdr || '—'} · ${new Date().toLocaleTimeString()}`);
+        const anomalyTxt = anomalyN > 0 ? `· 🔴 ${anomalyN} anomaly` : '';
+        this.setCumulativeStatus(`${rows.length} ${dim}(s) ${anomalyTxt} · ${cacheHdr || '—'} · ${new Date().toLocaleTimeString()}`);
       } catch (e) {
         clearChildren(this.cumulativeBody);
         this.cumulativeBody.appendChild(el('div', { class: 'chart-error' }, 'error: ' + e.message));

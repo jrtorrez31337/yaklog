@@ -290,6 +290,12 @@
   .cost-table td.bar { padding: 0 12px; width: 40%; }
   .cost-table td.bar .bar-wrap { height: 6px; background: rgba(255,255,255,0.04); border-radius: 3px; overflow: hidden; }
   .cost-table td.bar .bar-fill { height: 100%; background: var(--blue); border-radius: 3px; }
+  /* CP8.4 (2026-05-27): cost anomaly markers (item #5). Row tint + red dot
+     when current rate > 2× 7d mean. Tooltip on dot explains the comparison. */
+  .cost-table tr.cost-anomaly td { background: rgba(248,113,113,0.06); }
+  .cost-table tr.cost-anomaly:hover td { background: rgba(248,113,113,0.10); }
+  .cost-table .cost-anomaly-dot { color: #f87171; cursor: help; font-size: 14px; line-height: 1; vertical-align: middle; }
+  .cost-table td .muted { color: var(--muted); }
 
   /* CP8 (2026-05-27): bus feed — shared between Live-tab ticker + Bus tab. */
   .bus-controls { padding: 12px 18px; background: var(--panel); border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 10px; }
