@@ -1631,16 +1631,19 @@
       const card = cardInstances.get(r.agent_id);
       if (card && card.el) grid.appendChild(card.el);
     }
-    // Update meta — show filtered/total + OTel count
+    // Update meta — show filtered/total + OTel count consistent with the
+    // visible cohort (apples-to-apples). When filter is active, the cluster-
+    // total appears in parens so operator still knows the full picture.
     const metaEl = $('cards-meta');
     if (metaEl) {
-      const otelN = sortedAll.filter(r => agentOtelStatus(r.agent_id)).length;
       const visN = sorted.length;
       const totN = sortedAll.length;
+      const otelVisN = sorted.filter(r => agentOtelStatus(r.agent_id)).length;
+      const otelTotN = sortedAll.filter(r => agentOtelStatus(r.agent_id)).length;
       const filterActive = (visN !== totN);
       metaEl.textContent = filterActive
-        ? `${visN} of ${totN} agents shown · ${otelN} emitting OTel`
-        : `${totN} agents · ${otelN} emitting OTel`;
+        ? `${visN} of ${totN} agents shown · ${otelVisN} of ${visN} visible emitting OTel (cluster total: ${otelTotN})`
+        : `${totN} agents · ${otelTotN} emitting OTel`;
     }
   }
 
