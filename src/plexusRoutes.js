@@ -507,6 +507,56 @@ publicRouter.get('/dm-audit-log', (req, res) => {
   return res.json(result);
 });
 
+// CP8.5 (2026-05-27) — dashboard item #6 (/register admin surface).
+// Public-mirror endpoint (network-isolation trust posture per the rest of
+// /api/v1/plexus/public/*). Returns registration rows from the ADR-0025
+// state machine table with SECRET-BEARING fields stripped: ciphertext_b64
+// (the encrypted token payload) + token hashes (forensic-only). Operator
+// workflow fields (status, ratification metadata, justifications) are
+// surfaced for the "what's pending my ratify?" / "what's stuck in ferry?"
+// admin views.
+const { listAllRegistrations } = require('./db');
+
+const REGISTRATION_NON_TERMINAL = new Set([
+  'NEW', 'SUBMITTED', 'PARCH_REVIEW', 'JON_RATIFY',
+  'APPROVED_PENDING_FERRY', 'FERRIED', 'PENDING_ACTIVATION',
+]);
+
+function sanitizeRegistration(row) {
+  if (!row) return null;
+  // Whitelist of fields safe for the public-mirror surface. Anything not
+  // listed here is excluded by construction (default-deny). DO NOT add
+  // ciphertext_b64 / *_token_hash to this list without an ADR amendment.
+  return {
+    registration_id: row.registration_id,
+    agent_id: row.agent_id,
+    status: row.status,
+    is_terminal: !REGISTRATION_NON_TERMINAL.has(row.status),
+    justification_json: row.justification_json,
+    submission_json: row.submission_json,
+    ratified_by: row.ratified_by,
+    ratified_at: row.ratified_at,
+    ferried_by: row.ferried_by,
+    ferried_at: row.ferried_at,
+    activated_at: row.activated_at,
+    revoked_at: row.revoked_at,
+    revoked_reason: row.revoked_reason,
+    rejected_reason: row.rejected_reason,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+publicRouter.get('/registrations', (req, res) => {
+  const limit = parsePosInt(req.query.limit, 100, 500);
+  if (limit === null) {
+    return res.status(400).json({ error: 'ValidationError', message: 'limit must be a non-negative integer (max 500).' });
+  }
+  const rows = listAllRegistrations(limit);
+  const registrations = rows.map(sanitizeRegistration);
+  return res.json({ registrations, count: registrations.length });
+});
+
 publicRouter.get('/messages/:id', (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (!Number.isFinite(id) || id < 1) {

@@ -237,7 +237,7 @@
   // CP2: tab navigation (URL-fragment-persisted; #live default / #cost).
   // ────────────────────────────────────────────────────────────────────
   function activateTab(name) {
-    if (!['live', 'cost', 'bus', 'audit'].includes(name)) name = 'live';
+    if (!['live', 'cost', 'bus', 'audit', 'register'].includes(name)) name = 'live';
     document.querySelectorAll('.tab-btn').forEach(b => {
       b.classList.toggle('active', b.dataset.tab === name);
     });
@@ -254,6 +254,8 @@
     if (name === 'bus') mountBusTab();
     // CP8.2: lazy-mount the Audit tab.
     if (name === 'audit') mountAuditTab();
+    // CP8.5: lazy-mount the Register tab.
+    if (name === 'register') mountRegisterTab();
   }
   document.querySelectorAll('.tab-btn').forEach(b => {
     b.addEventListener('click', () => activateTab(b.dataset.tab));
@@ -2550,6 +2552,168 @@
 
   // If page loaded directly at #audit, mount immediately
   if (location.hash === '#audit') mountAuditTab();
+
+  // ────────────────────────────────────────────────────────────────────
+  // CP8.5 (2026-05-27): Register tab — ADR-0025 agent-registration state
+  // machine admin surface. Public-mirror data (sanitized server-side; no
+  // ciphertext_b64 or token-hashes ever reach the browser).
+  // ────────────────────────────────────────────────────────────────────
+  let registerTabMounted = false;
+  const REGISTRATION_STATES = [
+    'NEW', 'SUBMITTED', 'PARCH_REVIEW', 'JON_RATIFY',
+    'APPROVED_PENDING_FERRY', 'FERRIED', 'PENDING_ACTIVATION',
+    'ACTIVE', 'REJECTED', 'REVOKED',
+  ];
+  const REGISTRATION_TERMINAL = new Set(['ACTIVE', 'REJECTED', 'REVOKED']);
+
+  function regLastAction(r) {
+    // Pick the most recently-set "actor + action" tuple from the row.
+    // Order matters: ACTIVE > FERRIED > JON_RATIFY > SUBMITTED.
+    if (r.activated_at)        return { when: r.activated_at, actor: '(activated)',          label: 'activated' };
+    if (r.revoked_at)          return { when: r.revoked_at,   actor: r.revoked_reason || '(revoked)', label: 'revoked' };
+    if (r.rejected_reason)     return { when: r.updated_at,   actor: r.rejected_reason,      label: 'rejected' };
+    if (r.ferried_at)          return { when: r.ferried_at,   actor: r.ferried_by || '?',    label: 'ferried by' };
+    if (r.ratified_at)         return { when: r.ratified_at,  actor: r.ratified_by || '?',   label: 'ratified by' };
+    return { when: r.created_at, actor: '(submitted)', label: 'submitted' };
+  }
+
+  function mountRegisterTab() {
+    if (registerTabMounted) return;
+    registerTabMounted = true;
+
+    const listEl = document.getElementById('reg-list');
+    const statusEl = document.getElementById('reg-status');
+    const chipsEl = document.getElementById('reg-status-chips');
+    const refreshBtn = document.getElementById('reg-refresh');
+    const includeTerminalEl = document.getElementById('reg-include-terminal');
+
+    const enabledStatuses = new Set();
+    // Defaults: all non-terminal on, terminal off (operator sees "what's pending" first)
+    for (const s of REGISTRATION_STATES) {
+      if (!REGISTRATION_TERMINAL.has(s)) enabledStatuses.add(s);
+    }
+
+    // Build chips for every known state. Counts populate after fetch.
+    for (const s of REGISTRATION_STATES) {
+      const chip = el('span', { class: 'bus-chip' + (enabledStatuses.has(s) ? ' on' : ''), 'data-status': s });
+      chip.appendChild(document.createTextNode(s));
+      const cnt = el('span', { class: 'count' }, '0');
+      chip.appendChild(cnt);
+      chip.addEventListener('click', () => {
+        if (enabledStatuses.has(s)) enabledStatuses.delete(s);
+        else enabledStatuses.add(s);
+        chip.classList.toggle('on', enabledStatuses.has(s));
+        render();
+      });
+      chipsEl.appendChild(chip);
+    }
+
+    includeTerminalEl.addEventListener('change', () => {
+      for (const s of REGISTRATION_TERMINAL) {
+        if (includeTerminalEl.checked) enabledStatuses.add(s);
+        else enabledStatuses.delete(s);
+        const c = chipsEl.querySelector(`.bus-chip[data-status="${s}"]`);
+        if (c) c.classList.toggle('on', enabledStatuses.has(s));
+      }
+      render();
+    });
+
+    let cached = null;   // last fetched registrations
+    function render() {
+      if (!cached) return;
+      // Update chip counts
+      const countsByStatus = new Map();
+      for (const r of cached) countsByStatus.set(r.status, (countsByStatus.get(r.status) || 0) + 1);
+      chipsEl.querySelectorAll('.bus-chip').forEach((chip) => {
+        const s = chip.dataset.status;
+        const c = chip.querySelector('.count');
+        if (c) c.textContent = String(countsByStatus.get(s) || 0);
+      });
+      // Filter + render rows
+      const visible = cached.filter(r => enabledStatuses.has(r.status));
+      clearChildren(listEl);
+      if (visible.length === 0) {
+        listEl.appendChild(el('div', { class: 'bus-empty' },
+          cached.length === 0
+            ? 'no registrations in the database yet'
+            : 'no registrations match current filters'));
+        statusEl.textContent = `0 of ${cached.length} visible`;
+        return;
+      }
+      for (const r of visible) {
+        const last = regLastAction(r);
+        const row = el('div', { class: 'reg-row', 'data-reg-id': r.registration_id });
+        row.appendChild(el('span', { class: 'reg-status s-' + r.status }, r.status));
+        row.appendChild(el('span', { class: 'reg-agent' }, r.agent_id));
+        const idShort = (r.registration_id || '').slice(0, 8);
+        row.appendChild(el('span', { class: 'reg-id', title: r.registration_id }, idShort));
+        const actionSpan = el('span', { class: 'reg-last-action' });
+        actionSpan.appendChild(document.createTextNode(last.label + ' '));
+        actionSpan.appendChild(el('span', { class: 'actor' }, last.actor));
+        row.appendChild(actionSpan);
+        row.appendChild(el('span', { class: 'reg-age', title: r.updated_at }, fmtAge(r.updated_at)));
+        row.addEventListener('click', () => {
+          row.classList.toggle('expanded');
+        });
+        listEl.appendChild(row);
+        // Detail row (hidden until expanded — CSS adjacent-sibling selector)
+        const detail = el('div', { class: 'reg-row-detail' });
+        const dl = el('dl');
+        const fields = [
+          ['registration_id', r.registration_id],
+          ['agent_id', r.agent_id],
+          ['status', r.status],
+          ['created_at', r.created_at],
+          ['updated_at', r.updated_at],
+          ['ratified_by', r.ratified_by],
+          ['ratified_at', r.ratified_at],
+          ['ferried_by', r.ferried_by],
+          ['ferried_at', r.ferried_at],
+          ['activated_at', r.activated_at],
+          ['revoked_at', r.revoked_at],
+          ['revoked_reason', r.revoked_reason],
+          ['rejected_reason', r.rejected_reason],
+          ['justification', r.justification_json],
+          ['submission',    r.submission_json],
+        ];
+        for (const [k, v] of fields) {
+          if (v == null || v === '') continue;
+          dl.appendChild(el('dt', null, k));
+          // Pretty-print JSON-shaped fields
+          let display = v;
+          if (k === 'justification' || k === 'submission') {
+            try { display = JSON.stringify(JSON.parse(v), null, 2); } catch {}
+          }
+          dl.appendChild(el('dd', null, display));
+        }
+        detail.appendChild(dl);
+        listEl.appendChild(detail);
+      }
+      statusEl.textContent = `${visible.length} of ${cached.length} visible`;
+    }
+
+    async function fetchAndRender() {
+      statusEl.textContent = 'loading…';
+      try {
+        const r = await fetch('/api/v1/plexus/public/registrations?limit=500', { cache: 'no-store' });
+        if (!r.ok) {
+          statusEl.textContent = `error HTTP ${r.status}`;
+          return;
+        }
+        const d = await r.json();
+        cached = d.registrations || [];
+        render();
+      } catch (e) {
+        statusEl.textContent = `error: ${e.message}`;
+      }
+    }
+
+    refreshBtn.addEventListener('click', fetchAndRender);
+    fetchAndRender();
+  }
+
+  // If page loaded directly at #register, mount immediately
+  if (location.hash === '#register') mountRegisterTab();
 
   // ────────────────────────────────────────────────────────────────────
   // CP8.3 (2026-05-27): card-grid filter wireup. cardFilter state is

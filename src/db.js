@@ -499,6 +499,17 @@ function listRegistrationsByStatus(status) {
   return database.prepare('SELECT * FROM registrations WHERE status = ? ORDER BY created_at ASC').all(status);
 }
 
+// CP8.5 (2026-05-27) — dashboard #6 admin surface needs a list-everything
+// helper (per-status existing helper would force per-status loop on the
+// browser side). Ordered newest-first since the surface is "what's pending
+// my attention right now" + recent activity.
+function listAllRegistrations(limit = 100) {
+  const database = getDb();
+  return database
+    .prepare('SELECT * FROM registrations ORDER BY updated_at DESC LIMIT ?')
+    .all(Math.min(Math.max(limit, 1), 500));
+}
+
 function updateRegistration(registration_id, fields) {
   // Generic update: merges allowed fields. Caller is responsible for
   // state-machine legality (route handlers enforce per-transition rules).
@@ -896,6 +907,7 @@ module.exports = {
   getRegistrationByAgent,
   getActiveRegistrationByMintedTokenHash,
   listRegistrationsByStatus,
+  listAllRegistrations,
   updateRegistration,
   insertRegistrationEvent,
   listRegistrationEvents,

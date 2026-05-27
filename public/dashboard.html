@@ -391,6 +391,36 @@
   .cards-chip.on { background: rgba(96,165,250,0.18); border-color: var(--blue); color: var(--text); }
   .cards-filter-reset { font-size: 10px; padding: 3px 9px; margin-left: auto; }
 
+  /* CP8.5 (2026-05-27): Register tab — ADR-0025 state-machine admin view. */
+  .reg-controls { padding: 12px 18px; background: var(--panel); border-bottom: 1px solid var(--border); display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+  .reg-list { max-height: calc(100vh - 280px); overflow-y: auto; }
+  .reg-row { padding: 8px 18px; border-bottom: 1px solid rgba(255,255,255,0.04); display: grid; grid-template-columns: 130px 150px 180px 1fr 90px; gap: 10px; align-items: baseline; font-size: 12px; cursor: pointer; }
+  .reg-row:hover { background: rgba(255,255,255,0.02); }
+  .reg-row.expanded { background: rgba(255,255,255,0.03); }
+  .reg-row .reg-id { color: var(--muted); font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 10px; }
+  .reg-row .reg-agent { color: var(--text); font-weight: 500; }
+  .reg-row .reg-status { display: inline-block; padding: 2px 8px; border-radius: 3px; font-size: 10px; font-weight: 500; text-align: center; }
+  /* status colors mapping to state-machine progress: pending → jon-ratify (amber)
+     → ferry / activation (blue) → active (green); rejected/revoked = red */
+  .reg-status.s-NEW                    { background: rgba(255,255,255,0.05); color: var(--muted); }
+  .reg-status.s-SUBMITTED              { background: rgba(96,165,250,0.10); color: var(--blue); }
+  .reg-status.s-PARCH_REVIEW           { background: rgba(167,139,250,0.14); color: #a78bfa; }
+  .reg-status.s-JON_RATIFY             { background: rgba(250,204,21,0.18); color: var(--yellow); font-weight: 600; }
+  .reg-status.s-APPROVED_PENDING_FERRY { background: rgba(34,211,238,0.14); color: #22d3ee; }
+  .reg-status.s-FERRIED                { background: rgba(34,211,238,0.18); color: #22d3ee; }
+  .reg-status.s-PENDING_ACTIVATION     { background: rgba(74,222,128,0.12); color: #4ade80; }
+  .reg-status.s-ACTIVE                 { background: rgba(74,222,128,0.18); color: #4ade80; }
+  .reg-status.s-REJECTED               { background: rgba(248,113,113,0.14); color: #f87171; }
+  .reg-status.s-REVOKED                { background: rgba(248,113,113,0.18); color: #f87171; }
+  .reg-row .reg-last-action { color: var(--text); font-size: 11px; }
+  .reg-row .reg-last-action .actor { color: var(--muted); font-size: 10px; }
+  .reg-row .reg-age { color: var(--muted); font-size: 10px; text-align: right; font-variant-numeric: tabular-nums; }
+  .reg-row-detail { display: none; padding: 12px 18px; background: var(--bg); border-bottom: 1px solid rgba(255,255,255,0.04); font-size: 11px; }
+  .reg-row.expanded + .reg-row-detail { display: block; }
+  .reg-row-detail dl { margin: 0; display: grid; grid-template-columns: 130px 1fr; gap: 4px 12px; }
+  .reg-row-detail dt { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; }
+  .reg-row-detail dd { margin: 0; color: var(--text); word-break: break-word; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 10px; max-height: 200px; overflow-y: auto; background: rgba(255,255,255,0.02); padding: 4px 6px; border-radius: 2px; white-space: pre-wrap; }
+
   /* Cost tab stub (legacy; replaced by full panel in CP3 but kept for fallback). */
   .stub-panel { padding: 80px 18px; text-align: center; color: var(--muted); }
   .stub-panel h2 { font-size: 16px; color: var(--text); margin: 0 0 12px; }
@@ -419,6 +449,7 @@
   <button class="tab-btn" data-tab="cost">Cost<span class="badge-new">CP3</span></button>
   <button class="tab-btn" data-tab="bus">Bus<span class="badge-new">CP8</span></button>
   <button class="tab-btn" data-tab="audit">Audit<span class="badge-new">CP8.2</span></button>
+  <button class="tab-btn" data-tab="register">Register<span class="badge-new">CP8.5</span></button>
 </nav>
 
 <!-- Live tab: top-of-page Plexus charts + existing presence table preserved. -->
@@ -638,6 +669,32 @@
     </div>
   </div>
 </div>
+
+<!-- CP8.5 (2026-05-27): Register tab — ADR-0025 agent-registration state machine
+     admin surface. Public-mirror endpoint (network-isolation trust); strips
+     secret-bearing fields (ciphertext_b64, *_token_hash) at source. Operator
+     workflow view: 'what's pending my ratify?' / 'what's stuck in ferry?' -->
+<section class="tab-panel" data-tab="register" id="tab-register">
+  <div class="audit-banner">
+    🔓 <strong>Network-trust auth only (v1).</strong> Same posture as the Audit tab.
+    Secret-bearing fields (<code>ciphertext_b64</code> · <code>*_token_hash</code>) are stripped server-side.
+    State machine: NEW → SUBMITTED → PARCH_REVIEW → JON_RATIFY → APPROVED_PENDING_FERRY → FERRIED → PENDING_ACTIVATION → ACTIVE (or REJECTED / REVOKED).
+  </div>
+  <div class="reg-controls">
+    <div class="bus-chips" id="reg-status-chips">
+      <span class="bus-chips-label">status:</span>
+      <!-- chips populated by dashboard.js after first fetch -->
+    </div>
+    <button id="reg-refresh" class="audit-btn">refresh</button>
+    <label class="bus-toggle">
+      <input type="checkbox" id="reg-include-terminal" /> include terminal (ACTIVE / REJECTED / REVOKED)
+    </label>
+    <span class="bus-status" id="reg-status">loading…</span>
+  </div>
+  <div id="reg-list" class="reg-list">
+    <div class="bus-empty">loading…</div>
+  </div>
+</section>
 
 <!-- CP3: shared agent overlay popover (single instance reused). -->
 <div id="agent-popover" role="dialog" aria-hidden="true"></div>
