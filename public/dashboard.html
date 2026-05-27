@@ -285,6 +285,50 @@
   .cost-table td.bar .bar-wrap { height: 6px; background: rgba(255,255,255,0.04); border-radius: 3px; overflow: hidden; }
   .cost-table td.bar .bar-fill { height: 100%; background: var(--blue); border-radius: 3px; }
 
+  /* CP8 (2026-05-27): bus feed — shared between Live-tab ticker + Bus tab. */
+  .bus-controls { padding: 12px 18px; background: var(--panel); border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 10px; }
+  .bus-control-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+  .bus-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .bus-chips-label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; padding-right: 4px; }
+  .bus-chip { background: rgba(255,255,255,0.04); border: 1px solid var(--border); color: var(--muted); padding: 3px 9px; border-radius: 12px; font-size: 11px; cursor: pointer; user-select: none; transition: background 0.1s; }
+  .bus-chip:hover { background: rgba(255,255,255,0.08); color: var(--text); }
+  .bus-chip.on { background: rgba(96,165,250,0.18); border-color: var(--blue); color: var(--text); }
+  .bus-chip .count { color: var(--muted); margin-left: 4px; font-variant-numeric: tabular-nums; }
+  .bus-chip.on .count { color: var(--blue); }
+  .bus-input { background: rgba(255,255,255,0.03); border: 1px solid var(--border); color: var(--text); padding: 4px 8px; border-radius: 3px; font: inherit; font-size: 12px; min-width: 240px; }
+  .bus-toggle { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; cursor: pointer; user-select: none; }
+  .bus-toggle input { margin: 0; }
+  .bus-status { color: var(--muted); font-size: 11px; margin-left: auto; }
+
+  .bus-pane { overflow-y: auto; background: var(--bg); }
+  .bus-pane-ticker { max-height: 220px; min-height: 80px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+  .bus-pane-tab { height: calc(100vh - 220px); min-height: 400px; }
+  .bus-pane::-webkit-scrollbar { width: 6px; }
+  .bus-pane::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 3px; }
+  .bus-pane::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.16); }
+  .bus-empty { padding: 24px; text-align: center; color: var(--muted); font-size: 12px; }
+
+  /* Row layout: chan-chip · runtime+sender · age · body · mentions (mentions wrap below in ticker mode) */
+  .bus-row { display: grid; grid-template-columns: 70px 180px 40px 1fr; gap: 8px; padding: 6px 14px; border-bottom: 1px solid rgba(255,255,255,0.04); align-items: baseline; font-size: 12px; line-height: 1.4; cursor: pointer; }
+  .bus-pane-ticker .bus-row { padding: 4px 12px; font-size: 11px; }
+  .bus-row:hover { background: rgba(255,255,255,0.02); }
+  .bus-row.expanded { background: rgba(255,255,255,0.03); }
+  .bus-row.expanded .bus-body { white-space: pre-wrap; overflow: visible; -webkit-line-clamp: unset; }
+
+  .bus-chan { display: inline-block; padding: 1px 7px; border-radius: 3px; font-size: 10px; font-weight: 500; text-align: center; }
+  .bus-chan.chan-handoff { background: rgba(96,165,250,0.14); color: var(--blue); }
+  .bus-chan.chan-status  { background: rgba(250,204,21,0.14); color: var(--yellow); }
+  .bus-chan.chan-agents  { background: rgba(107,114,128,0.16); color: #9ca3af; }
+  .bus-chan.chan-_diag   { background: rgba(75,85,99,0.18); color: #6b7280; }
+  .bus-chan.chan-other   { background: rgba(167,139,250,0.14); color: #a78bfa; }
+  .bus-sender { display: inline-flex; align-items: center; gap: 4px; color: var(--text); font-weight: 500; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bus-sender .runtime-badge { margin: 0; }
+  .bus-age { color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; text-align: right; }
+  .bus-body { color: var(--text); overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; word-break: break-word; }
+  .bus-mentions { grid-column: 4; color: var(--muted); font-size: 10px; padding-top: 2px; }
+  .bus-mentions .bus-mention { background: rgba(255,255,255,0.05); padding: 1px 5px; border-radius: 8px; margin-right: 3px; }
+  .bus-row .bus-id { color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+
   /* Cost tab stub (legacy; replaced by full panel in CP3 but kept for fallback). */
   .stub-panel { padding: 80px 18px; text-align: center; color: var(--muted); }
   .stub-panel h2 { font-size: 16px; color: var(--text); margin: 0 0 12px; }
@@ -311,6 +355,7 @@
 <nav class="tabs" id="tabs">
   <button class="tab-btn active" data-tab="live">Live</button>
   <button class="tab-btn" data-tab="cost">Cost<span class="badge-new">CP3</span></button>
+  <button class="tab-btn" data-tab="bus">Bus<span class="badge-new">CP8</span></button>
 </nav>
 
 <!-- Live tab: top-of-page Plexus charts + existing presence table preserved. -->
@@ -347,6 +392,19 @@
         </div>
       </div>
     </div>
+  </div>
+
+  <!-- CP8 (2026-05-27): bus ticker pane — compact live feed of #handoff + #status
+       traffic. Shares BusStream singleton with the full Bus tab; this view is
+       always-on once Live tab is mounted (zero filter UI; fixed compact density). -->
+  <div class="section-divider">
+    bus ticker <span id="ticker-meta" style="text-transform: none; letter-spacing: 0; font-size: 11px;">—</span>
+    <span style="margin-left: auto; display: inline-flex; align-items: center; gap: 10px; text-transform: none; letter-spacing: 0; font-size: 11px;">
+      <a href="#bus" class="ticker-fulllink">full bus tab →</a>
+    </span>
+  </div>
+  <div id="ticker-pane" class="bus-pane bus-pane-ticker">
+    <div class="bus-empty">connecting…</div>
   </div>
 
   <div class="section-divider">
@@ -410,6 +468,30 @@
         <div class="chart-loading">loading…</div>
       </div>
     </div>
+  </div>
+</section>
+
+<!-- CP8 (2026-05-27): Bus tab — full live feed of public bus traffic with
+     interactive filter chips, sender filter, pause/resume, expand-on-click.
+     Shares BusStream singleton + row renderer with the Live-tab ticker. -->
+<section class="tab-panel" data-tab="bus" id="tab-bus">
+  <div class="bus-controls">
+    <div class="bus-control-row">
+      <div class="bus-chips" id="bus-channel-chips">
+        <span class="bus-chips-label">channels:</span>
+        <!-- chips populated by dashboard.js after first fetch -->
+      </div>
+    </div>
+    <div class="bus-control-row">
+      <input id="bus-sender-filter" class="bus-input" placeholder="filter by sender (substring)" type="text" />
+      <label class="bus-toggle">
+        <input type="checkbox" id="bus-paused" /> pause stream
+      </label>
+      <span class="bus-status" id="bus-status">connecting…</span>
+    </div>
+  </div>
+  <div id="bus-pane" class="bus-pane bus-pane-tab">
+    <div class="bus-empty">loading…</div>
   </div>
 </section>
 

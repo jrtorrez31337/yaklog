@@ -237,7 +237,7 @@
   // CP2: tab navigation (URL-fragment-persisted; #live default / #cost).
   // ────────────────────────────────────────────────────────────────────
   function activateTab(name) {
-    if (!['live', 'cost'].includes(name)) name = 'live';
+    if (!['live', 'cost', 'bus'].includes(name)) name = 'live';
     document.querySelectorAll('.tab-btn').forEach(b => {
       b.classList.toggle('active', b.dataset.tab === name);
     });
@@ -247,6 +247,11 @@
     if (location.hash !== '#' + name) {
       history.replaceState(null, '', '#' + name);
     }
+    // CP8: lazy-mount the Bus tab on first activation. Ticker is mounted
+    // unconditionally on initial page load (it lives on Live tab and is
+    // always-on; the BusStream singleton shares one EventSource between
+    // ticker + tab).
+    if (name === 'bus') mountBusTab();
   }
   document.querySelectorAll('.tab-btn').forEach(b => {
     b.addEventListener('click', () => activateTab(b.dataset.tab));
@@ -1992,6 +1997,279 @@
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(() => { for (const c of charts) c.resize(); }, 100);
   });
+
+  // ────────────────────────────────────────────────────────────────────
+  // CP8 (2026-05-27): Bus feed — public live message stream.
+  // BusStream singleton: one EventSource shared between the Live-tab
+  // ticker (always-on once Live mounted) and the Bus tab (lazy-mounted).
+  // Public-only (no auth); dmFilter unbound-path forces private=0 server-side.
+  // ────────────────────────────────────────────────────────────────────
+
+  const BUS_BUFFER_CAP = 200;
+  const BUS_BACKFILL_LIMIT = 50;
+  const BUS_TICKER_DISPLAY = 15;
+  // Default-excluded channels: high-volume / low-signal. User can re-enable.
+  const BUS_DEFAULT_EXCLUDED = new Set(['agents', '_diag']);
+  // Ticker is whitelist (don't pollute the always-on Live-tab view with everything):
+  const BUS_TICKER_WHITELIST = new Set(['handoff', 'status']);
+
+  function chanClass(channel) {
+    if (!channel) return 'chan-other';
+    if (channel === 'handoff' || channel === 'status' || channel === 'agents' || channel === '_diag') {
+      return 'chan-' + channel;
+    }
+    return 'chan-other';
+  }
+
+  function busRow(msg, opts = {}) {
+    // Build one .bus-row from a message object.
+    const row = el('div', {
+      class: 'bus-row',
+      'data-channel': msg.channel || '',
+      'data-sender': msg.sender || '',
+      'data-msg-id': String(msg.id),
+    });
+    row.appendChild(el('span', { class: 'bus-chan ' + chanClass(msg.channel) }, msg.channel || '?'));
+
+    const senderWrap = el('span', { class: 'bus-sender', title: msg.sender || '' });
+    // Reuse the runtime badge from CP7.x — lookup runtime from registry/OTel cache.
+    const runtime = resolveRuntime(msg.sender, null);
+    const badge = runtime && runtimeBadge(runtime);
+    if (badge) senderWrap.appendChild(badge);
+    senderWrap.appendChild(document.createTextNode(msg.sender || '?'));
+    row.appendChild(senderWrap);
+
+    const age = msg.created_at ? fmtAge(msg.created_at) : '—';
+    row.appendChild(el('span', { class: 'bus-age', title: msg.created_at || '' }, age));
+
+    const body = (msg.body || '').replace(/\s+/g, ' ').trim();
+    row.appendChild(el('span', { class: 'bus-body', title: body }, body));
+
+    const mentions = (msg.mentions || []).filter(m => m && m !== 'everyone');
+    if (mentions.length > 0) {
+      const mWrap = el('span', { class: 'bus-mentions' });
+      mWrap.appendChild(document.createTextNode('→ '));
+      for (const m of mentions.slice(0, 8)) {
+        mWrap.appendChild(el('span', { class: 'bus-mention' }, '@' + m));
+      }
+      if (mentions.length > 8) mWrap.appendChild(document.createTextNode(` +${mentions.length - 8}`));
+      row.appendChild(mWrap);
+    }
+
+    // Click row to expand/collapse the body.
+    row.addEventListener('click', () => row.classList.toggle('expanded'));
+    return row;
+  }
+
+  class BusStream {
+    constructor() {
+      this.buffer = [];                // newest at end
+      this.maxId = 0;
+      this.subscribers = new Set();    // each: { onAdd(msg), onBackfill(arr), onError(err) }
+      this.es = null;
+      this.state = 'idle';             // idle | connecting | open | error
+      this.lastFrameMs = 0;
+      this.channelCounts = new Map();  // channel → count seen
+    }
+    subscribe(handler) {
+      this.subscribers.add(handler);
+      // Immediately replay current buffer to the new subscriber
+      if (this.buffer.length > 0) handler.onBackfill?.(this.buffer);
+      this._ensureConnection();
+      return () => this.subscribers.delete(handler);
+    }
+    _ensureConnection() {
+      if (this.es) return;
+      this._backfillThenStream();
+    }
+    async _backfillThenStream() {
+      this.state = 'connecting';
+      this._notifyState();
+      try {
+        const res = await fetch('/api/v1/plexus/public/messages?limit=' + BUS_BACKFILL_LIMIT, { cache: 'no-store' });
+        if (res.ok) {
+          const body = await res.json();
+          const msgs = body.messages || [];
+          for (const m of msgs) this._ingest(m, /*notifySubs=*/false);
+          for (const sub of this.subscribers) sub.onBackfill?.(this.buffer);
+        }
+      } catch (e) {
+        // Backfill failure is non-fatal — SSE will still try
+      }
+      this._openSse();
+    }
+    _openSse() {
+      try {
+        const url = '/api/v1/plexus/public/messages-stream' + (this.maxId > 0 ? `?since=${this.maxId}` : '');
+        this.es = new EventSource(url);
+      } catch (e) {
+        this.state = 'error';
+        this._notifyState();
+        this._scheduleReconnect();
+        return;
+      }
+      this.es.addEventListener('open', () => {
+        this.state = 'open';
+        this._notifyState();
+      });
+      this.es.addEventListener('message', (ev) => {
+        this.lastFrameMs = Date.now();
+        let m;
+        try { m = JSON.parse(ev.data); } catch { return; }
+        this._ingest(m, /*notifySubs=*/true);
+      });
+      this.es.addEventListener('error', () => {
+        this.state = 'error';
+        this._notifyState();
+        try { this.es.close(); } catch {}
+        this.es = null;
+        this._scheduleReconnect();
+      });
+    }
+    _scheduleReconnect() {
+      setTimeout(() => this._openSse(), 4000);
+    }
+    _ingest(msg, notifySubs) {
+      if (!msg || typeof msg.id !== 'number') return;
+      // Dedup
+      if (this.buffer.some(m => m.id === msg.id)) return;
+      this.buffer.push(msg);
+      if (msg.id > this.maxId) this.maxId = msg.id;
+      // Channel-count map (for the chip badge)
+      const c = msg.channel || '?';
+      this.channelCounts.set(c, (this.channelCounts.get(c) || 0) + 1);
+      // Prune to cap
+      while (this.buffer.length > BUS_BUFFER_CAP) this.buffer.shift();
+      if (notifySubs) {
+        for (const sub of this.subscribers) sub.onAdd?.(msg);
+      }
+    }
+    _notifyState() {
+      for (const sub of this.subscribers) sub.onState?.(this.state);
+    }
+    knownChannels() {
+      return [...this.channelCounts.entries()].sort((a, b) => b[1] - a[1]);
+    }
+  }
+  const busStream = new BusStream();
+
+  // ── Ticker view (Live tab; always-on; whitelist filter; compact) ─────
+  const tickerPane = document.getElementById('ticker-pane');
+  const tickerMeta = document.getElementById('ticker-meta');
+  if (tickerPane) {
+    const renderTicker = () => {
+      const filtered = busStream.buffer
+        .filter(m => BUS_TICKER_WHITELIST.has(m.channel))
+        .slice(-BUS_TICKER_DISPLAY);
+      clearChildren(tickerPane);
+      if (filtered.length === 0) {
+        tickerPane.appendChild(el('div', { class: 'bus-empty' }, 'no recent #handoff / #status traffic'));
+      } else {
+        // Newest first
+        for (const m of filtered.reverse()) tickerPane.appendChild(busRow(m));
+      }
+      if (tickerMeta) tickerMeta.textContent = `last ${filtered.length} · ${busStream.buffer.length} buffered · #handoff + #status only`;
+    };
+    busStream.subscribe({
+      onBackfill: () => renderTicker(),
+      onAdd: (m) => { if (BUS_TICKER_WHITELIST.has(m.channel)) renderTicker(); },
+      onState: (s) => {
+        if (s === 'connecting' && busStream.buffer.length === 0) {
+          tickerPane.innerHTML = '<div class="bus-empty">connecting…</div>';
+        }
+      },
+    });
+    // 30s tick to refresh "ago" strings without new messages
+    setInterval(renderTicker, 30000);
+  }
+
+  // ── Bus tab view (lazy-mounted; interactive chips/filter/pause) ──────
+  let busTabMounted = false;
+  function mountBusTab() {
+    if (busTabMounted) return;
+    busTabMounted = true;
+    const pane = document.getElementById('bus-pane');
+    const chipsEl = document.getElementById('bus-channel-chips');
+    const senderInput = document.getElementById('bus-sender-filter');
+    const pausedEl = document.getElementById('bus-paused');
+    const statusEl = document.getElementById('bus-status');
+    if (!pane) return;
+
+    // Per-channel toggle state. Defaults: enable all known channels except
+    // the BUS_DEFAULT_EXCLUDED set. New channels seen later get added as
+    // enabled (visible) unless in the excluded set.
+    const enabledChans = new Set();
+    function ensureChip(channel, count) {
+      let chip = chipsEl.querySelector(`.bus-chip[data-channel="${CSS.escape(channel)}"]`);
+      if (!chip) {
+        chip = el('span', { class: 'bus-chip', 'data-channel': channel });
+        chip.appendChild(document.createTextNode(channel));
+        const countSpan = el('span', { class: 'count' }, String(count));
+        chip.appendChild(countSpan);
+        chip.addEventListener('click', () => {
+          if (enabledChans.has(channel)) enabledChans.delete(channel);
+          else enabledChans.add(channel);
+          chip.classList.toggle('on', enabledChans.has(channel));
+          renderTab();
+        });
+        chipsEl.appendChild(chip);
+        // Initial state: enable unless excluded
+        if (!BUS_DEFAULT_EXCLUDED.has(channel)) {
+          enabledChans.add(channel);
+          chip.classList.add('on');
+        }
+      } else {
+        chip.querySelector('.count').textContent = String(count);
+      }
+    }
+    function syncChips() {
+      for (const [chan, count] of busStream.knownChannels()) {
+        ensureChip(chan, count);
+      }
+    }
+
+    function senderMatches(msg) {
+      const q = (senderInput.value || '').trim().toLowerCase();
+      if (!q) return true;
+      return (msg.sender || '').toLowerCase().includes(q);
+    }
+
+    function renderTab() {
+      syncChips();
+      const filtered = busStream.buffer.filter(m => enabledChans.has(m.channel) && senderMatches(m));
+      clearChildren(pane);
+      if (filtered.length === 0) {
+        pane.appendChild(el('div', { class: 'bus-empty' }, 'no messages match current filters'));
+        return;
+      }
+      // Newest at top
+      for (const m of filtered.slice().reverse()) pane.appendChild(busRow(m));
+    }
+
+    function updateStatus(state) {
+      if (!statusEl) return;
+      const ageS = busStream.lastFrameMs ? Math.floor((Date.now() - busStream.lastFrameMs) / 1000) : null;
+      const ageStr = ageS == null ? 'no frame yet' : (ageS < 2 ? 'just now' : `${ageS}s ago`);
+      statusEl.textContent = `${state || busStream.state} · last frame ${ageStr} · ${busStream.buffer.length} buffered`;
+    }
+
+    senderInput.addEventListener('input', renderTab);
+    pausedEl.addEventListener('change', () => {
+      // Visual cue only; the buffer keeps growing — we just stop re-rendering on add
+    });
+
+    busStream.subscribe({
+      onBackfill: () => { renderTab(); updateStatus(); },
+      onAdd: () => {
+        if (!pausedEl.checked) renderTab();
+        updateStatus();
+      },
+      onState: (s) => updateStatus(s),
+    });
+    setInterval(() => { if (!pausedEl.checked) renderTab(); updateStatus(); }, 30000);
+  }
+  // If page loaded directly at #bus, mount immediately
+  if (location.hash === '#bus') mountBusTab();
 
   // Kick off presence polling (unchanged from v0.5.7).
   poll();

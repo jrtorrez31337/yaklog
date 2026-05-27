@@ -429,6 +429,48 @@ publicRouter.get('/templates', templatesHandler);
 const { streamHandler: plexusStreamHandler } = require('./plexusStreamer');
 publicRouter.get('/stream', plexusStreamHandler);
 
+// v0.5.8.5 (2026-05-27): bus-feed public mirror for the dashboard #bus tab
+// + Live-tab ticker. Unauth → applyDmVisibilityFilter unbound-path returns
+// public-only (private=0 rows). DM visibility deferred to item #2 of the
+// dashboard-gap plan (needs browser-side auth surface; Stage 2.5+).
+const { listMessages } = require('./db');
+const { applyDmVisibilityFilter } = require('./middleware/dmFilter');
+const { streamHandler: messageStreamHandler } = require('../src/stream');
+
+const PUBLIC_MESSAGES_CHANNEL_RE = /^[a-zA-Z0-9._-]{1,64}$/;
+function parsePosInt(v, fallback, max) {
+  if (v === undefined || v === null || v === '') return fallback;
+  const n = parseInt(v, 10);
+  if (!Number.isFinite(n) || n < 0) return null;
+  if (max !== undefined && n > max) return max;
+  return n;
+}
+
+publicRouter.get('/messages', (req, res) => {
+  const limit = parsePosInt(req.query.limit, 50, 200);
+  if (limit === null) {
+    return res.status(400).json({ error: 'ValidationError', message: 'limit must be a non-negative integer (max 200).' });
+  }
+  const channel = req.query.channel ? String(req.query.channel) : null;
+  if (channel && !PUBLIC_MESSAGES_CHANNEL_RE.test(channel)) {
+    return res.status(400).json({ error: 'ValidationError', message: 'channel must match [a-zA-Z0-9._-] (1-64 chars).' });
+  }
+  const afterId = parsePosInt(req.query.after_id, null);
+  const beforeId = parsePosInt(req.query.before_id, null);
+  if (req.query.after_id !== undefined && afterId === null && req.query.after_id !== '') {
+    return res.status(400).json({ error: 'ValidationError', message: 'after_id must be a non-negative integer.' });
+  }
+  if (req.query.before_id !== undefined && beforeId === null && req.query.before_id !== '') {
+    return res.status(400).json({ error: 'ValidationError', message: 'before_id must be a non-negative integer.' });
+  }
+  const raw = listMessages({ channel, limit, afterId, beforeId });
+  // req.auth is absent on publicRouter → dmFilter unbound path returns public only.
+  const { filtered } = applyDmVisibilityFilter(raw, req);
+  return res.json({ messages: filtered, count: filtered.length });
+});
+
+publicRouter.get('/messages-stream', messageStreamHandler);
+
 module.exports = router;
 module.exports.publicRouter = publicRouter;
 module.exports._internals = { templates, cache, COST_DIM_ALLOWLIST, RATE_WINDOW_ALLOWLIST };
