@@ -4,7 +4,8 @@ const path = require('path');
 const crypto = require('crypto');
 const { execFileSync } = require('child_process');
 const { insertMessage, listMessages, listChannels, updateMessage, deleteMessage, getMessage,
-        upsertPresence, getPresenceByAgent, listPresence, listPresenceTransitions } = require('./db');
+        upsertPresence, getPresenceByAgent, listPresence, listPresenceTransitions,
+        deletePresenceRow } = require('./db');
 const { streamHandler } = require('./stream');
 const config = require('./config');
 const { enforceSenderBinding, enforceMutationBinding, resolveAllowedSenders } = require('./middleware/senderBinding');
@@ -502,6 +503,35 @@ router.get('/presence/:agent_id', (req, res) => {
     return res.status(304).end();
   }
   return res.json({ presence, transitions });
+});
+
+// v0.5.8.4 (2026-05-27): explicit decommission. expireStalePresence only
+// flips daemon_state=down; rows never go away. For an explicit retirement
+// (e.g. aieng2 decom 2026-05-27) we want the row GONE so the dashboard
+// stops rendering a ghost card. Gated to ops-key only (admin / secops /
+// ssw-devops lane); req.auth.opsKeyId is populated by middleware/auth.js
+// path (c) when the Bearer is a YAKLOG_OPS_API_KEYS member. Records a
+// transition with the actor's opsKeyId-prefix for audit.
+router.delete('/presence/:agent_id', (req, res) => {
+  if (!req.auth || !req.auth.opsKeyId) {
+    return res.status(403).json({
+      error: 'OpsKeyRequired',
+      message: 'DELETE /presence/<id> requires a Bearer token from YAKLOG_OPS_API_KEYS.'
+    });
+  }
+  const agentId = req.params.agent_id;
+  if (!AGENT_ID_RE.test(agentId)) {
+    return res.status(400).json({
+      error: 'ValidationError',
+      message: 'agent_id must match [a-zA-Z0-9._:@/-] (1-64 chars).'
+    });
+  }
+  const reason = (req.body && typeof req.body.reason === 'string') ? req.body.reason.slice(0, 200) : 'decommissioned';
+  const deleted = deletePresenceRow(agentId, { reason, actor: `ops:${req.auth.opsKeyId}` });
+  if (!deleted) {
+    return res.status(404).json({ error: 'NotFound', message: `No presence record for ${agentId}.` });
+  }
+  return res.status(200).json({ deleted, reason });
 });
 
 router.get('/stream', streamHandler);

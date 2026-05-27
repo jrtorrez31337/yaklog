@@ -816,6 +816,29 @@ function expireStalePresence(ttlSeconds) {
   return stale.map((r) => r.agent_id);
 }
 
+// ADR-side: explicit ops-key gated decommission removes a presence row +
+// records a transition for the audit trail. Differs from expireStalePresence
+// (which only flips daemon_state=down); intended for retired agents whose
+// row should disappear from the dashboard rather than ghost as "offline".
+// Returns the deleted row (for the API response) or null if absent.
+function deletePresenceRow(agentId, { reason = 'decommissioned', actor = null } = {}) {
+  const database = getDb();
+  const existing = database.prepare('SELECT * FROM presence WHERE agent_id = ?').get(agentId);
+  if (!existing) return null;
+  const recordTransition = database.prepare(
+    'INSERT INTO presence_transitions (agent_id, from_label, to_label, occurred_at, reason) VALUES (?, ?, ?, ?, ?)'
+  );
+  const del = database.prepare('DELETE FROM presence WHERE agent_id = ?');
+  const tx = database.transaction(() => {
+    const fromLabel = deriveLabel(existing.daemon_state, existing.session_state, existing.events_consumer_count);
+    const reasonStr = actor ? `${reason}:by=${actor}` : reason;
+    recordTransition.run(agentId, fromLabel, '(decommissioned)', new Date().toISOString(), reasonStr);
+    del.run(agentId);
+  });
+  tx();
+  return existing;
+}
+
 module.exports = {
   initializeDb,
   insertMessage,
@@ -840,6 +863,7 @@ module.exports = {
   insertRegistrationEvent,
   listRegistrationEvents,
   expireStalePresence,
+  deletePresenceRow,
   deriveLabel,
   closeDb,
   messageBus
