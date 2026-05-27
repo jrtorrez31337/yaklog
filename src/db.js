@@ -690,12 +690,19 @@ function upsertPresence({
       daemon_pid = excluded.daemon_pid,
       daemon_version = excluded.daemon_version,
       daemon_started_at = excluded.daemon_started_at,
-      -- v0.5.9 runtime-execution-liveness: raw-assign matches "current
-      -- state" semantics (same pattern as current_tool). Pre-v0.5.9 daemons
-      -- never set this field, so the null→null rollback case is a no-op.
-      -- v0.5.9+ daemons emit both fields together on every transition.
-      runtime_state = excluded.runtime_state,
-      runtime_blocked_until = excluded.runtime_blocked_until
+      -- v0.5.9.1 runtime-execution-liveness: COALESCE to defend against
+      -- daemon-clobber. The yaklog-sub daemon's normal /presence/event
+      -- heartbeats (every 30s) DON'T include runtime_state → routes.js
+      -- coerces undefined → null → without COALESCE the heartbeat would
+      -- immediately wipe the runtime_state aieng's emit-side just set.
+      -- Same pattern as current_model / last_tool_name accumulators.
+      -- To clear on recovery: aieng's runtime explicitly emits
+      -- runtime_state='active' (non-null → wins COALESCE). The stale
+      -- runtime_blocked_until then becomes semantically inert (dashboard
+      -- only renders countdown when runtime_state !== 'active'), so no
+      -- explicit clear needed.
+      runtime_state = COALESCE(excluded.runtime_state, presence.runtime_state),
+      runtime_blocked_until = COALESCE(excluded.runtime_blocked_until, presence.runtime_blocked_until)
   `);
   stmt.run({
     agent_id,

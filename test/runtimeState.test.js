@@ -63,13 +63,28 @@ test('POST with invalid runtime_state value → 400 ValidationError', async () =
   assert.match(r.body.message, /runtime_state/);
 });
 
-test('Recovery flow: quota_exhausted → active clears blocked_until on raw-assign', async () => {
-  // Set blocked first
+test('Recovery flow: quota_exhausted → active (COALESCE keeps stale ETA; dashboard ignores)', async () => {
+  // v0.5.9.1: switched to COALESCE so daemon heartbeats (no runtime_state field)
+  // don't clobber. Side effect: a recovery emit with runtime_blocked_until=null
+  // does NOT clear the prior ETA (COALESCE preserves prior on null). That's
+  // fine because dashboard renderer only shows countdown when state !== 'active'.
+  // Test asserts the new semantics explicitly.
   await heartbeat({ runtime_state: 'quota_exhausted', runtime_blocked_until: '2026-05-27T20:00:00Z' });
-  // Recover with explicit null on blocked_until
   const r = await heartbeat({ runtime_state: 'active', runtime_blocked_until: null });
   assert.equal(r.body.presence.runtime_state, 'active');
-  assert.equal(r.body.presence.runtime_blocked_until, null);
+  // Stale ETA preserved by COALESCE; dashboard renderer treats as inert when state=active
+  assert.equal(r.body.presence.runtime_blocked_until, '2026-05-27T20:00:00Z');
+});
+
+test('Daemon-clobber resistance: heartbeat without runtime_state preserves prior value', async () => {
+  // The bug COALESCE fixes: yaklog-sub daemon's normal 30s heartbeat doesn't
+  // know about runtime_state → omits the field → routes.js coerces to null →
+  // without COALESCE this would wipe what aieng's emit-side set 2s ago.
+  await heartbeat({ runtime_state: 'quota_exhausted', runtime_blocked_until: '2026-05-28T01:00:00Z' });
+  // Normal daemon heartbeat (no runtime_state field at all)
+  const r = await heartbeat({});
+  assert.equal(r.body.presence.runtime_state, 'quota_exhausted', 'daemon heartbeat must not clobber');
+  assert.equal(r.body.presence.runtime_blocked_until, '2026-05-28T01:00:00Z');
 });
 
 test('GET /presence/public returns runtime_state + runtime_blocked_until fields', async () => {
