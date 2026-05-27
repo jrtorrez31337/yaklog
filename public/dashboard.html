@@ -369,6 +369,16 @@
   .audit-modal-body.audit-body-redacted { color: var(--muted); font-style: italic; text-align: center; }
   .audit-modal-actions { padding: 12px 18px; border-top: 1px solid var(--border); display: flex; gap: 10px; }
 
+  /* CP8.3 (2026-05-27): AgentCard grid filter bar */
+  .cards-filter { padding: 8px 18px 12px; display: flex; flex-wrap: wrap; gap: 14px; align-items: center; border-bottom: 1px solid var(--border); background: rgba(255,255,255,0.01); }
+  .cards-search { min-width: 200px; }
+  .cards-chip-group { display: inline-flex; gap: 4px; align-items: center; }
+  .cards-chip-group-label { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; padding-right: 2px; }
+  .cards-chip { background: rgba(255,255,255,0.04); border: 1px solid var(--border); color: var(--muted); padding: 3px 9px; border-radius: 12px; font-size: 11px; cursor: pointer; user-select: none; transition: background 0.1s; }
+  .cards-chip:hover { background: rgba(255,255,255,0.08); color: var(--text); }
+  .cards-chip.on { background: rgba(96,165,250,0.18); border-color: var(--blue); color: var(--text); }
+  .cards-filter-reset { font-size: 10px; padding: 3px 9px; margin-left: auto; }
+
   /* Cost tab stub (legacy; replaced by full panel in CP3 but kept for fallback). */
   .stub-panel { padding: 80px 18px; text-align: center; color: var(--muted); }
   .stub-panel h2 { font-size: 16px; color: var(--text); margin: 0 0 12px; }
@@ -460,6 +470,26 @@
         <button data-window-s="604800"           style="background: transparent; color: var(--muted); border: 0; padding: 3px 8px; font: inherit; font-size: 10px; cursor: pointer;">1d / 7d</button>
       </span>
     </span>
+  </div>
+  <!-- CP8.3 (2026-05-27): card-grid filter bar — item #3 of the dashboard-gap plan.
+       Pure-frontend filter: text search (agent_id substring) + status chips
+       (online/stalled/offline) + runtime chips (CC/Gemini/Codex). Defaults
+       all on. Live count of "N visible of M total". -->
+  <div class="cards-filter" id="cards-filter">
+    <input id="cards-search" class="bus-input cards-search" placeholder="search agent name…" type="text" />
+    <div class="cards-chip-group" data-group="status">
+      <span class="cards-chip-group-label">status:</span>
+      <span class="cards-chip on" data-status="online">online</span>
+      <span class="cards-chip on" data-status="stalled">stalled</span>
+      <span class="cards-chip on" data-status="offline">offline</span>
+    </div>
+    <div class="cards-chip-group" data-group="runtime">
+      <span class="cards-chip-group-label">runtime:</span>
+      <span class="cards-chip on" data-runtime="claude_code">CC</span>
+      <span class="cards-chip on" data-runtime="gemini">Gemini</span>
+      <span class="cards-chip on" data-runtime="codex">Codex</span>
+    </div>
+    <button id="cards-filter-reset" class="audit-btn audit-btn-ghost cards-filter-reset">reset</button>
   </div>
   <div id="cards-grid" class="cards-grid">
     <div class="chart-loading">loading agents…</div>

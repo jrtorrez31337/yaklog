@@ -1543,11 +1543,34 @@
     });
   });
 
+  // CP8.3 (2026-05-27): card-grid filter state. Pure-client filter applied
+  // in renderCards (cards re-render every presence poll = filter naturally
+  // re-applies). All on by default.
+  const cardFilter = {
+    search: '',
+    statuses: new Set(['online', 'stalled', 'offline']),
+    runtimes: new Set(['claude_code', 'gemini', 'codex']),
+  };
+  function statusBucket(label) {
+    if (!label) return 'offline';
+    if (label.startsWith('online') || label === 'compacting' || label === 'stop_failure') return 'online';
+    if (label === 'stalled') return 'stalled';
+    return 'offline';   // includes 'offline', 'daemon_only', 'unknown', anything else
+  }
+  function passesCardFilter(r) {
+    const q = cardFilter.search.trim().toLowerCase();
+    if (q && !((r.agent_id || '').toLowerCase().includes(q))) return false;
+    if (!cardFilter.statuses.has(statusBucket(r.label))) return false;
+    const runtime = resolveRuntime(r.agent_id, r);
+    if (runtime && !cardFilter.runtimes.has(runtime)) return false;
+    return true;
+  }
+
   function renderCards(presence) {
     const grid = $('cards-grid');
     if (!grid) return;
     // Sort: online states first, then by label, then by name
-    const sorted = presence.slice().sort((a, b) => {
+    const sortedAll = presence.slice().sort((a, b) => {
       const aOn = a.label && a.label.startsWith('online') ? 0 : 1;
       const bOn = b.label && b.label.startsWith('online') ? 0 : 1;
       if (aOn !== bOn) return aOn - bOn;
@@ -1555,12 +1578,13 @@
       if (ag !== 0) return ag;
       return (a.agent_id || '').localeCompare(b.agent_id || '');
     });
-    // Build/update cards
-    const seenIds = new Set();
+    const sorted = sortedAll.filter(passesCardFilter);
+    // Build/update cards (only for visible)
+    const visibleIds = new Set();
     let firstPaint = false;
     if (grid.querySelector('.chart-loading')) { clearChildren(grid); firstPaint = true; }
     for (const r of sorted) {
-      seenIds.add(r.agent_id);
+      visibleIds.add(r.agent_id);
       let card = cardInstances.get(r.agent_id);
       if (!card) {
         card = new AgentCard(r.agent_id);
@@ -1569,9 +1593,9 @@
       }
       card.update(r);
     }
-    // Remove cards for agents no longer in presence
+    // Remove cards for agents not in the visible set (either filtered or gone)
     for (const id of [...cardInstances.keys()]) {
-      if (!seenIds.has(id)) {
+      if (!visibleIds.has(id)) {
         const card = cardInstances.get(id);
         if (card && card.el && card.el.parentNode) card.el.parentNode.removeChild(card.el);
         cardInstances.delete(id);
@@ -1582,11 +1606,16 @@
       const card = cardInstances.get(r.agent_id);
       if (card && card.el) grid.appendChild(card.el);
     }
-    // Update meta
+    // Update meta — show filtered/total + OTel count
     const metaEl = $('cards-meta');
     if (metaEl) {
-      const otelN = sorted.filter(r => agentOtelStatus(r.agent_id)).length;
-      metaEl.textContent = `${sorted.length} agents · ${otelN} emitting OTel`;
+      const otelN = sortedAll.filter(r => agentOtelStatus(r.agent_id)).length;
+      const visN = sorted.length;
+      const totN = sortedAll.length;
+      const filterActive = (visN !== totN);
+      metaEl.textContent = filterActive
+        ? `${visN} of ${totN} agents shown · ${otelN} emitting OTel`
+        : `${totN} agents · ${otelN} emitting OTel`;
     }
   }
 
@@ -2441,6 +2470,49 @@
 
   // If page loaded directly at #audit, mount immediately
   if (location.hash === '#audit') mountAuditTab();
+
+  // ────────────────────────────────────────────────────────────────────
+  // CP8.3 (2026-05-27): card-grid filter wireup. cardFilter state is
+  // defined up by renderCards; chips + search input update it and trigger
+  // a re-render off the cached lastData.presence.
+  // ────────────────────────────────────────────────────────────────────
+  function rerenderCardsWithFilter() {
+    if (lastData && lastData.presence) renderCards(lastData.presence);
+  }
+  const searchEl = document.getElementById('cards-search');
+  if (searchEl) {
+    searchEl.addEventListener('input', () => {
+      cardFilter.search = searchEl.value;
+      rerenderCardsWithFilter();
+    });
+  }
+  document.querySelectorAll('.cards-chip').forEach((chip) => {
+    chip.addEventListener('click', () => {
+      const status = chip.dataset.status;
+      const runtime = chip.dataset.runtime;
+      if (status) {
+        if (cardFilter.statuses.has(status)) cardFilter.statuses.delete(status);
+        else cardFilter.statuses.add(status);
+        chip.classList.toggle('on', cardFilter.statuses.has(status));
+      } else if (runtime) {
+        if (cardFilter.runtimes.has(runtime)) cardFilter.runtimes.delete(runtime);
+        else cardFilter.runtimes.add(runtime);
+        chip.classList.toggle('on', cardFilter.runtimes.has(runtime));
+      }
+      rerenderCardsWithFilter();
+    });
+  });
+  const resetBtn = document.getElementById('cards-filter-reset');
+  if (resetBtn) {
+    resetBtn.addEventListener('click', () => {
+      cardFilter.search = '';
+      cardFilter.statuses = new Set(['online', 'stalled', 'offline']);
+      cardFilter.runtimes = new Set(['claude_code', 'gemini', 'codex']);
+      if (searchEl) searchEl.value = '';
+      document.querySelectorAll('.cards-chip').forEach(c => c.classList.add('on'));
+      rerenderCardsWithFilter();
+    });
+  }
 
   // Kick off presence polling (unchanged from v0.5.7).
   poll();
