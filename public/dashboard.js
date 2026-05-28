@@ -699,7 +699,48 @@
   for (const c of charts) liveStream.subscribe(c.template, c);
 
   // ── Cost-accounting card (middle slot) state + render ────────────────
-  const acctState = {
+  // Defect fix (Jon-direct via parch #6747, 2026-05-28): values 'reset on
+  // page load' because the page initially renders with '—' placeholders
+  // and the first SSE cost frame only arrives a moment later — operators
+  // see their prior numbers disappear then reappear. Fix: persist last-
+  // known state to localStorage, restore on init before SSE connects, so
+  // returning users see continuity from prior session.
+  const ACCT_STORAGE_KEY = 'yaklog_acct_state_v1';
+  const ACCT_STORAGE_MAX_AGE_MS = 6 * 3600_000;   // 6h — beyond this, prior values are stale enough to be misleading; show '—' and wait for fresh SSE
+  function loadAcctState() {
+    try {
+      const raw = localStorage.getItem(ACCT_STORAGE_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object') return null;
+      if (!parsed.lastFrameMs || (Date.now() - parsed.lastFrameMs) > ACCT_STORAGE_MAX_AGE_MS) return null;
+      return parsed;
+    } catch { return null; }
+  }
+  function saveAcctState() {
+    try {
+      // Only persist fields that survive a reload meaningfully; skip transient.
+      localStorage.setItem(ACCT_STORAGE_KEY, JSON.stringify({
+        today: acctState.today,
+        sevend: acctState.sevend,
+        mtd: acctState.mtd,
+        topAgents: acctState.topAgents,
+        byAccount: acctState.byAccount,
+        by: acctState.by,
+        lastFrameMs: acctState.lastFrameMs,
+      }));
+    } catch {}   // quota or disabled — silent
+  }
+  const _restored = loadAcctState();
+  const acctState = _restored ? {
+    today: _restored.today ?? null,
+    sevend: _restored.sevend ?? null,
+    mtd: _restored.mtd ?? null,
+    topAgents: _restored.topAgents ?? null,
+    byAccount: _restored.byAccount ?? null,
+    by: _restored.by || 'agent',
+    lastFrameMs: _restored.lastFrameMs || 0,
+  } : {
     today: null, sevend: null, mtd: null,
     topAgents: null, byAccount: null,
     by: 'agent',
@@ -786,6 +827,7 @@
     }
     acctState.lastFrameMs = Date.now();
     if (touched) renderAcctNumbers();
+    saveAcctState();   // persist after every frame so reload shows continuity
   }
   document.querySelectorAll('#acct-by button').forEach((b) => {
     b.addEventListener('click', () => {
@@ -793,8 +835,19 @@
       b.classList.add('active');
       acctState.by = b.dataset.by;
       renderAcctDrivers();
+      saveAcctState();
     });
   });
+  // CP8.6: if we restored state from localStorage, render NOW (before SSE
+  // arrives) so returning users see continuity. SSE frames will update in
+  // place a moment later. Also sync the by-toggle UI to the restored value.
+  if (_restored) {
+    document.querySelectorAll('#acct-by button').forEach((b) => {
+      b.classList.toggle('active', b.dataset.by === acctState.by);
+    });
+    renderAcctNumbers();
+    renderAcctDrivers();
+  }
   // Hook the SSE listener so accounting frames flow into the card.
   const _origConnect = PlexusLiveStream.prototype.connect;
   PlexusLiveStream.prototype.connect = function () {
