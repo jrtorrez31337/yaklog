@@ -13,7 +13,7 @@ process.env.NODE_ENV = 'test';
 
 const request = require('supertest');
 const app = require('../src/app');
-const { closeDb, expireStalePresence } = require('../src/db');
+const { closeDb, expireStalePresence, deriveLabel } = require('../src/db');
 
 const authA = { Authorization: 'Bearer token-a' };
 const authB = { Authorization: 'Bearer token-b' };
@@ -185,4 +185,25 @@ test('presence transition recorded only on state change', async () => {
   });
   const after = await request(app).get('/api/v1/presence/agent-a').set(authA);
   assert.equal(after.body.transitions.length, transitionsBefore + 1, 'exactly one transition should be added across two posts (one state change + one no-op)');
+});
+
+// v0.5.9.4 (game-designer #6898 fix): deriveLabel must handle stop_failure
+// session_state. Previously fell through to 'offline' even when daemon up
+// — visible regression for any agent whose last hook was StopFailure +
+// went idle. Reproduction shape from #6898 peer-comparison.
+test('deriveLabel: stop_failure session_state on up daemon → label stop_failure (not offline)', () => {
+  assert.equal(deriveLabel('up', 'stop_failure', 1), 'stop_failure');
+  assert.equal(deriveLabel('up', 'stop_failure', 0), 'stop_failure',
+    'consumer=0 + non-unknown session_state must NOT trigger daemon_only short-circuit');
+});
+test('deriveLabel: down daemon + stop_failure → offline (matches pattern for all session_states on down)', () => {
+  assert.equal(deriveLabel('down', 'stop_failure', 1), 'offline');
+});
+test('deriveLabel: regression coverage for the pre-existing mappings', () => {
+  // Spot-check the known-good cases so a future drive-by edit doesn't break them silently
+  assert.equal(deriveLabel('up',   'idle',     1), 'online_idle');
+  assert.equal(deriveLabel('up',   'active',   1), 'online');
+  assert.equal(deriveLabel('up',   'unknown',  1), 'stalled');
+  assert.equal(deriveLabel('up',   'unknown',  0), 'daemon_only');
+  assert.equal(deriveLabel('down', 'idle',     1), 'offline');
 });

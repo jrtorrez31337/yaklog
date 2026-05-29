@@ -578,9 +578,19 @@ const PRESENCE_LABELS = {
     unknown: 'stalled',
     tool_running: 'online_tool_running',
     idle_between_tools: 'online_idle_between_tools',
-    compacting: 'online_compacting'
+    compacting: 'online_compacting',
+    // v0.5.9.4 (game-designer #6898 fix): stop_failure was unmapped, so the
+    // deriveLabel fall-through returned 'offline' for an agent whose last
+    // hook was StopFailure even though the daemon was alive + sticky-stateful.
+    // Empirical: peer agents with last_hook=Stop stayed online_idle for
+    // hours/days while game-designer's last_hook=StopFailure session showed
+    // offline. Daemon-side is correct (stop_failure is intentionally sticky
+    // per yaklog-sub _IN_FLIGHT_STATES); the gap was server-side label
+    // derivation missing the entry. CSS for .status-stop_failure +
+    // .label-stop_failure was already in dashboard.html (dead code until now).
+    stop_failure: 'stop_failure'
   },
-  down: { active: 'offline', idle: 'offline', unknown: 'offline', tool_running: 'offline', idle_between_tools: 'offline', compacting: 'offline' }
+  down: { active: 'offline', idle: 'offline', unknown: 'offline', tool_running: 'offline', idle_between_tools: 'offline', compacting: 'offline', stop_failure: 'offline' }
 };
 
 // v0.5.6: daemon_only label per yaklog #5061 + Jon-direct #5452.
