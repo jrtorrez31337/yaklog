@@ -31,8 +31,24 @@ function parseMentions(value) {
   return { tokens };
 }
 
+// v0.5.10 channel-decomp support — accept CSV of channels, dedupe + validate.
+function parseChannels(value) {
+  if (!value) return null;
+  const seen = new Set();
+  const tokens = [];
+  for (const raw of String(value).split(',')) {
+    const t = raw.trim();
+    if (!t || seen.has(t)) continue;
+    if (!CHANNEL_RE.test(t)) return { error: t };
+    seen.add(t);
+    tokens.push(t);
+  }
+  if (tokens.length === 0) return null;
+  return { tokens };
+}
+
 function messageMatches(msg, filters) {
-  if (filters.channel && msg.channel !== filters.channel) return false;
+  if (filters.channels && !filters.channels.has(msg.channel)) return false;
   if (filters.excludeSender && msg.sender === filters.excludeSender) return false;
   if (filters.mentions) {
     const msgMentions = msg.mentions || [];
@@ -56,9 +72,21 @@ function formatEvent(msg) {
 }
 
 function streamHandler(req, res) {
-  const channel = req.query.channel ? String(req.query.channel) : null;
-  if (channel && !CHANNEL_RE.test(channel)) {
+  // channel (singular, back-compat) + channels (plural CSV, v0.5.10 lane-decomp).
+  // Both accepted; if both provided, the union of the sets is used.
+  const singleChannel = req.query.channel ? String(req.query.channel) : null;
+  if (singleChannel && !CHANNEL_RE.test(singleChannel)) {
     return res.status(400).json({ error: 'ValidationError', message: 'invalid channel' });
+  }
+  const channelsResult = parseChannels(req.query.channels);
+  if (channelsResult && channelsResult.error) {
+    return res.status(400).json({ error: 'ValidationError', message: `invalid channel token: ${channelsResult.error}` });
+  }
+  let channels = null;
+  if (singleChannel || channelsResult) {
+    channels = new Set();
+    if (singleChannel) channels.add(singleChannel);
+    if (channelsResult) for (const t of channelsResult.tokens) channels.add(t);
   }
   const excludeSender = req.query.exclude_sender ? String(req.query.exclude_sender) : null;
   if (excludeSender && !SENDER_RE.test(excludeSender)) {
@@ -79,7 +107,7 @@ function streamHandler(req, res) {
   const sinceCursor = parseCursor(req.query.since);
   const cursor = headerCursor !== null ? headerCursor : sinceCursor;
 
-  const filters = { channel, excludeSender, mentions };
+  const filters = { channels, excludeSender, mentions };
 
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
@@ -114,7 +142,8 @@ function streamHandler(req, res) {
 
   let highestReplayed = cursor !== null ? cursor : 0;
   if (cursor !== null && !closed) {
-    const rows = listMessagesAfter({ afterId: cursor, channel, excludeSender, mentions });
+    const channelsArr = channels ? Array.from(channels) : null;
+    const rows = listMessagesAfter({ afterId: cursor, channels: channelsArr, excludeSender, mentions });
     for (const msg of rows) {
       if (closed) break;
       if (!dmVisible(msg, req)) continue;

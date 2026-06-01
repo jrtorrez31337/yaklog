@@ -348,11 +348,27 @@ function listMessages({ channel, limit = 50, afterId = null, beforeId = null }) 
   return rows.reverse().map(toMessage);
 }
 
-function listMessagesAfter({ afterId, channel, excludeSender, mentions }) {
+function listMessagesAfter({ afterId, channel, channels, excludeSender, mentions }) {
   const database = getDb();
   const where = ['id > @afterId'];
   const params = { afterId };
-  if (channel) { where.push('channel = @channel'); params.channel = channel; }
+  // v0.5.10: accept channels (array, set-membership) OR channel (singular, back-compat).
+  // If both, union them. better-sqlite3 doesn't bind arrays — inline-build the
+  // placeholder list with named params (@ch0, @ch1, ...). All entries already
+  // CHANNEL_RE-validated upstream, so safe to use as param names.
+  const channelSet = new Set();
+  if (channel) channelSet.add(channel);
+  if (Array.isArray(channels)) for (const c of channels) if (c) channelSet.add(c);
+  if (channelSet.size > 0) {
+    const placeholders = [];
+    let i = 0;
+    for (const c of channelSet) {
+      const key = `ch${i++}`;
+      placeholders.push(`@${key}`);
+      params[key] = c;
+    }
+    where.push(`channel IN (${placeholders.join(', ')})`);
+  }
   if (excludeSender) { where.push('sender != @excludeSender'); params.excludeSender = excludeSender; }
   const rows = database
     .prepare(`SELECT id, channel, sender, body, metadata_json, mentions, private, created_at, updated_at

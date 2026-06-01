@@ -222,6 +222,120 @@ test('Last-Event-ID replay honors multi-mention filter', async () => {
   server.close();
 });
 
+// v0.5.10 channels plural CSV — lane-decomp substrate per #7301 / parch #7284.
+// Pre-fix: `?channels=a,b` was silently dropped (server only read singular
+// `?channel=`). Daemons advertising "subscribed to {a,b,c}" got the firehose.
+
+test('channels CSV: only configured channels delivered', async () => {
+  const server = await startServer();
+  const port = server.address().port;
+  const { events, close } = await openStream(port, '?channels=substrate,gamedev&min_quiet_ms=0');
+
+  insertMessage({ channel: 'substrate', sender: 'a', body: 'sub-msg' });
+  insertMessage({ channel: 'gamedev', sender: 'b', body: 'game-msg' });
+  insertMessage({ channel: 'aieng', sender: 'c', body: 'aieng-msg' });
+  insertMessage({ channel: 'bizdev', sender: 'd', body: 'biz-msg' });
+
+  await waitFor(() => events.filter((e) => e.startsWith('id:')).length >= 2);
+  const bodies = events.filter((e) => e.startsWith('id:')).map((e) => JSON.parse(e.split('data: ')[1]).body);
+  assert.ok(bodies.includes('sub-msg'));
+  assert.ok(bodies.includes('game-msg'));
+  assert.ok(!bodies.includes('aieng-msg'));
+  assert.ok(!bodies.includes('biz-msg'));
+
+  close();
+  server.close();
+});
+
+test('channels CSV: dedupes + whitespace-trims', async () => {
+  const server = await startServer();
+  const port = server.address().port;
+  const { events, close } = await openStream(port, '?channels=alpha,%20alpha%20,beta,,alpha&min_quiet_ms=0');
+
+  insertMessage({ channel: 'alpha', sender: 'a', body: 'a-msg' });
+  insertMessage({ channel: 'beta', sender: 'b', body: 'b-msg' });
+  insertMessage({ channel: 'gamma', sender: 'c', body: 'g-msg' });
+
+  await waitFor(() => events.filter((e) => e.startsWith('id:')).length >= 2);
+  const bodies = events.filter((e) => e.startsWith('id:')).map((e) => JSON.parse(e.split('data: ')[1]).body);
+  assert.ok(bodies.includes('a-msg'));
+  assert.ok(bodies.includes('b-msg'));
+  assert.ok(!bodies.includes('g-msg'));
+
+  close();
+  server.close();
+});
+
+test('channels CSV: invalid token rejected with 400', async () => {
+  const server = await startServer();
+  const port = server.address().port;
+  const res = await new Promise((resolve, reject) => {
+    const req = http.request({
+      host: '127.0.0.1', port, method: 'GET',
+      path: '/api/v1/stream?channels=good,bad!token',
+      headers: { Authorization: `Bearer ${TOKEN}` }
+    });
+    req.on('response', resolve);
+    req.on('error', reject);
+    req.end();
+  });
+  assert.equal(res.statusCode, 400);
+  res.resume();
+  server.close();
+});
+
+test('channels CSV: combines with singular channel (union)', async () => {
+  const server = await startServer();
+  const port = server.address().port;
+  const { events, close } = await openStream(port, '?channel=primary&channels=secondary&min_quiet_ms=0');
+
+  insertMessage({ channel: 'primary', sender: 'a', body: 'p-msg' });
+  insertMessage({ channel: 'secondary', sender: 'b', body: 's-msg' });
+  insertMessage({ channel: 'other', sender: 'c', body: 'o-msg' });
+
+  await waitFor(() => events.filter((e) => e.startsWith('id:')).length >= 2);
+  const bodies = events.filter((e) => e.startsWith('id:')).map((e) => JSON.parse(e.split('data: ')[1]).body);
+  assert.ok(bodies.includes('p-msg'));
+  assert.ok(bodies.includes('s-msg'));
+  assert.ok(!bodies.includes('o-msg'));
+
+  close();
+  server.close();
+});
+
+test('channels CSV: Last-Event-ID replay honors the set', async () => {
+  const server = await startServer();
+  const port = server.address().port;
+
+  const m1 = insertMessage({ channel: 'cr-a', sender: 'x', body: 'a-one' });
+  const m2 = insertMessage({ channel: 'cr-b', sender: 'x', body: 'b-one' });
+  const m3 = insertMessage({ channel: 'cr-c', sender: 'x', body: 'c-one' });
+
+  const { events, close } = await openStream(port, '?channels=cr-a,cr-c&min_quiet_ms=0', {
+    'Last-Event-ID': String(m1.id - 1)
+  });
+
+  await waitFor(() => events.filter((e) => e.startsWith('id:')).length >= 2);
+  const ids = events.filter((e) => e.startsWith('id:')).map((e) => Number(e.match(/^id: (\d+)/)[1]));
+  assert.deepEqual(ids, [m1.id, m3.id], `b channel msg ${m2.id} should be excluded`);
+
+  close();
+  server.close();
+});
+
+test('no channel filter: all channels delivered (back-compat)', async () => {
+  const server = await startServer();
+  const port = server.address().port;
+  const { events, close } = await openStream(port, '?min_quiet_ms=0');
+
+  insertMessage({ channel: 'any-1', sender: 'a', body: 'a1' });
+  insertMessage({ channel: 'any-2', sender: 'b', body: 'a2' });
+
+  await waitFor(() => events.filter((e) => e.startsWith('id:')).length >= 2);
+  close();
+  server.close();
+});
+
 test('emits keepalive comments periodically', async () => {
   const server = await startServer();
   const port = server.address().port;
