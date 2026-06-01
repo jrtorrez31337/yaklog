@@ -272,12 +272,63 @@
   // plexusStreamer.js (which polls Prom + pushes to SSE subscribers).
   // No client-side polling constants needed anymore.
 
-  // Color palette for series. Cycles through a Plexus-themed set.
-  const CHART_COLORS = [
-    '#60a5fa', '#4ade80', '#facc15', '#c084fc', '#f472b6',
-    '#f87171', '#22d3ee', '#a78bfa', '#fb923c', '#84cc16',
+  // CP9.1 (2026-06-01): per-agent color attribution — deterministic + stable
+  // across reloads + shared across the entire site (channel bubbles, chart
+  // series, AgentCard accents). djb2 hash → palette index; 30 hand-curated
+  // colors with familiar names; Legend modal exposes the mapping.
+  const AGENT_PALETTE = [
+    { name: 'sky',          hex: '#60a5fa' },
+    { name: 'mint',         hex: '#4ade80' },
+    { name: 'sunflower',    hex: '#facc15' },
+    { name: 'violet',       hex: '#c084fc' },
+    { name: 'rose',         hex: '#f472b6' },
+    { name: 'coral',        hex: '#f87171' },
+    { name: 'cyan',         hex: '#22d3ee' },
+    { name: 'lavender',     hex: '#a78bfa' },
+    { name: 'tangerine',    hex: '#fb923c' },
+    { name: 'lime',         hex: '#84cc16' },
+    { name: 'turquoise',    hex: '#2dd4bf' },
+    { name: 'amber',        hex: '#fbbf24' },
+    { name: 'magenta',      hex: '#e879f9' },
+    { name: 'azure',        hex: '#3b82f6' },
+    { name: 'emerald',      hex: '#10b981' },
+    { name: 'fuchsia',      hex: '#d946ef' },
+    { name: 'salmon',       hex: '#fb7185' },
+    { name: 'jade',         hex: '#14b8a6' },
+    { name: 'indigo',       hex: '#818cf8' },
+    { name: 'goldenrod',    hex: '#eab308' },
+    { name: 'peach',        hex: '#fdba74' },
+    { name: 'plum',         hex: '#a855f7' },
+    { name: 'seafoam',      hex: '#5eead4' },
+    { name: 'periwinkle',   hex: '#7c3aed' },
+    { name: 'apricot',      hex: '#fdaf64' },
+    { name: 'chartreuse',   hex: '#a3e635' },
+    { name: 'orchid',       hex: '#d8b4fe' },
+    { name: 'crimson',      hex: '#ef4444' },
+    { name: 'teal',         hex: '#0d9488' },
+    { name: 'cerulean',     hex: '#0ea5e9' },
   ];
-  function seriesColor(i) { return CHART_COLORS[i % CHART_COLORS.length]; }
+  function djb2(s) {
+    let h = 5381;
+    for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+    return Math.abs(h);
+  }
+  function hexToRgb(hex) {
+    const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex);
+    if (!m) return null;
+    return { r: parseInt(m[1], 16), g: parseInt(m[2], 16), b: parseInt(m[3], 16) };
+  }
+  function rgbStr(hex) {
+    const c = hexToRgb(hex); if (!c) return 'rgb(0,0,0)';
+    return `rgb(${c.r},${c.g},${c.b})`;
+  }
+  function agentColor(agentId) {
+    if (!agentId) return { name: 'slate', hex: '#64748b', rgb: 'rgb(100,116,139)' };
+    const entry = AGENT_PALETTE[djb2(agentId) % AGENT_PALETTE.length];
+    return { name: entry.name, hex: entry.hex, rgb: rgbStr(entry.hex) };
+  }
+  // Non-agent series fallback (aggregate buckets): first 10 palette entries.
+  function seriesColor(i) { return AGENT_PALETTE[i % 10].hex; }
 
   // Build the human-readable legend label for a Prom series given its metric labels.
   // 2026-05-25 dedup: when the chart has only ONE distinct plexus_agent_id
@@ -381,16 +432,20 @@
         const parsed = parseFloat(v);
         valuesAligned[tsIndex.get(t)] = Number.isFinite(parsed) ? parsed : null;
       }
+      // CP9.1: prefer per-agent color when series is keyed on plexus_agent_id;
+      // fall back to index-cycle palette for aggregate / non-agent series.
+      const aid = s.metric && s.metric.plexus_agent_id;
+      const stroke = aid ? agentColor(aid).hex : seriesColor(idx);
       seriesDefs.push({
         label: seriesLabel(s.metric, otherFields, omitAgentPrefix),
-        stroke: seriesColor(idx),
+        stroke,
         width: 1.5,
         spanGaps: false,
         // uPlot value formatter for legend hover
         value: (u, v) => v == null ? '—' : v.toFixed(4),
       });
       seriesData.push(valuesAligned);
-      agentIds.push(s.metric.plexus_agent_id || null);
+      agentIds.push(aid || null);
     });
     return { data: seriesData, series: seriesDefs, agentIds };
   }
@@ -1200,6 +1255,13 @@
     _renderHead() {
       clearChildren(this.headEl);
       const r = this.presence || {};
+      // CP9.1: per-agent color swatch — same color as channel bubbles + chart series
+      const ac = agentColor(this.agentId);
+      this.headEl.appendChild(el('span', {
+        class: 'agent-color-dot',
+        style: `background:${ac.hex}`,
+        title: `color: ${ac.name} · ${ac.hex} · ${ac.rgb}`,
+      }));
       // v0.5.8.2: runtime badge — OTel-derived first, server registry fallback.
       const runtime = resolveRuntime(this.agentId, r);
       const badge = runtime && runtimeBadge(runtime);
@@ -2091,9 +2153,12 @@
             valsAligned[tsIndex.get(t)] = Number.isFinite(p) ? p : null;
           }
           const labelStr = s.metric[dim] || '(empty)';
+          // CP9.1: when dim is plexus_agent_id, use the canonical agent color
+          // (same as bubbles/cards). Otherwise fall back to index-cycle palette.
+          const stroke = (dim === 'plexus_agent_id') ? agentColor(labelStr).hex : seriesColor(idx);
           seriesDefs.push({
             label: labelStr,
-            stroke: CHART_COLORS[idx % CHART_COLORS.length],
+            stroke,
             width: 1.5,
             spanGaps: false,
             value: (u, v) => v == null ? '—' : '$' + v.toFixed(8) + '/s',
@@ -2412,18 +2477,28 @@
     // msgs: array of consecutive messages from same sender within CLUSTER_GAP_MS
     const cluster = el('div', { class: `chan-cluster ${isSelf ? 'from-self' : 'from-other'}` });
     const first = msgs[0];
+    const senderId = first.sender || '?';
+    const ac = agentColor(senderId);
+    // Sender swatch as a tiny color dot next to name (also shown on self)
     const meta = el('div', { class: 'chan-cluster-meta' });
-    if (!isSelf) {
-      const senderEl = el('span', { class: 'sender-name' }, first.sender || '?');
-      meta.appendChild(senderEl);
-    }
+    const dot = el('span', {
+      class: 'chan-cluster-dot',
+      style: `background:${ac.hex}`,
+      title: `${ac.name} · ${ac.hex} · ${ac.rgb}`,
+    });
+    meta.appendChild(dot);
+    const senderEl = el('span', { class: 'sender-name' }, senderId);
+    meta.appendChild(senderEl);
     const tEl = el('span', { class: 'cluster-time' }, fmtClock(parseIso(first.created_at)));
     meta.appendChild(tEl);
     cluster.appendChild(meta);
     for (const m of msgs) {
       const bubble = el('div', {
         class: 'chan-bubble ' + (isSelf ? 'from-self' : 'from-other') + (m.private ? ' private' : ''),
-        title: `#${m.id} · ${m.created_at || ''}`,
+        // Per-agent color drives the bubble bg; CSS uses --agent-bg for the
+        // base color and computes text contrast via a CSS filter.
+        style: `--agent-bg:${ac.hex}; background:${ac.hex};`,
+        title: `#${m.id} · ${m.created_at || ''} · ${ac.name}`,
       });
       bubble.appendChild(el('span', { class: 'bubble-id' }, '#' + m.id));
       bubble.appendChild(renderBodyWithMentions(m.body || '', m.mentions || []));
@@ -2589,6 +2664,98 @@
   }
   // If page loaded directly at #bus or #bus/<channel>, mount immediately
   if ((location.hash || '').startsWith('#bus')) mountBusTab();
+
+  // ────────────────────────────────────────────────────────────────────
+  // CP9.1 (2026-06-01): Agent color legend modal.
+  // Populated from /presence (all known agents) at open-time so newly-added
+  // agents appear without a hard refresh. Click row → copy hex to clipboard.
+  // ────────────────────────────────────────────────────────────────────
+  function openLegendModal() {
+    const modal = document.getElementById('legend-modal');
+    const listEl = document.getElementById('legend-list');
+    const searchEl = document.getElementById('legend-search');
+    if (!modal || !listEl) return;
+    modal.classList.add('open');
+    listEl.innerHTML = '<div class="chan-empty">loading…</div>';
+
+    fetch('/api/v1/plexus/public/presence?limit=200').then(r => r.json()).then(j => {
+      const agents = (j.presence || []).map(p => p.agent_id).filter(Boolean).sort();
+      // Augment with the static SELF id in case it isn't in /presence
+      if (!agents.includes(SELF_AGENT_ID)) agents.unshift(SELF_AGENT_ID);
+      renderLegendList(listEl, agents, searchEl.value || '');
+    }).catch(err => {
+      listEl.innerHTML = '';
+      listEl.appendChild(el('div', { class: 'chan-empty' }, 'failed: ' + err.message));
+    });
+    searchEl.oninput = () => {
+      const q = (searchEl.value || '').toLowerCase().trim();
+      for (const row of listEl.querySelectorAll('.legend-row')) {
+        const agentId = row.dataset.agent || '';
+        const cname = row.dataset.colorName || '';
+        row.style.display = (!q || agentId.toLowerCase().includes(q) || cname.includes(q)) ? '' : 'none';
+      }
+    };
+    searchEl.focus();
+  }
+  function closeLegendModal() {
+    const modal = document.getElementById('legend-modal');
+    if (modal) modal.classList.remove('open');
+  }
+  function renderLegendList(listEl, agents, filter) {
+    clearChildren(listEl);
+    if (!agents || agents.length === 0) {
+      listEl.appendChild(el('div', { class: 'chan-empty' }, 'no agents.'));
+      return;
+    }
+    const q = (filter || '').toLowerCase().trim();
+    for (const id of agents) {
+      const ac = agentColor(id);
+      const matches = !q || id.toLowerCase().includes(q) || ac.name.includes(q);
+      const row = el('div', {
+        class: 'legend-row',
+        'data-agent': id,
+        'data-color-name': ac.name,
+        style: matches ? '' : 'display:none',
+        title: 'click to copy hex',
+      });
+      row.appendChild(el('span', { class: 'swatch', style: `background:${ac.hex}` }));
+      row.appendChild(el('span', { class: 'legend-agent' }, id));
+      row.appendChild(el('span', { class: 'legend-name' }, ac.name));
+      row.appendChild(el('span', { class: 'legend-hex' }, ac.hex));
+      row.appendChild(el('span', { class: 'legend-rgb' }, ac.rgb));
+      row.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(ac.hex);
+          row.classList.add('copied');
+          setTimeout(() => row.classList.remove('copied'), 800);
+        } catch (_) { /* clipboard denied — non-fatal */ }
+      });
+      listEl.appendChild(row);
+    }
+  }
+  // Wire button + close + Esc
+  document.addEventListener('DOMContentLoaded', () => {
+    const btn = document.getElementById('chan-legend-btn');
+    const closeBtn = document.getElementById('legend-close');
+    const modal = document.getElementById('legend-modal');
+    if (btn) btn.addEventListener('click', openLegendModal);
+    if (closeBtn) closeBtn.addEventListener('click', closeLegendModal);
+    if (modal) modal.addEventListener('click', e => { if (e.target === modal) closeLegendModal(); });
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') closeLegendModal(); });
+  });
+  // If DOMContentLoaded already fired (defer-loaded script), wire immediately
+  if (document.readyState !== 'loading') {
+    const btn = document.getElementById('chan-legend-btn');
+    if (btn && !btn._legendWired) {
+      btn.addEventListener('click', openLegendModal);
+      btn._legendWired = true;
+      const closeBtn = document.getElementById('legend-close');
+      if (closeBtn) closeBtn.addEventListener('click', closeLegendModal);
+      const modal = document.getElementById('legend-modal');
+      if (modal) modal.addEventListener('click', e => { if (e.target === modal) closeLegendModal(); });
+      document.addEventListener('keydown', e => { if (e.key === 'Escape') closeLegendModal(); });
+    }
+  }
 
   // ────────────────────────────────────────────────────────────────────
   // CP8.2 (2026-05-27): Audit tab — DM audit log reader + reveal modal.

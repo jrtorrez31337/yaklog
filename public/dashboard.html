@@ -383,16 +383,25 @@
   .chan-cluster-meta .sender-name { color: var(--text); font-weight: 500; }
   .chan-cluster-meta .runtime-badge { transform: scale(0.85); }
 
-  .chan-bubble { max-width: 70%; padding: 8px 12px; border-radius: 16px; font-size: 13px; line-height: 1.45; word-wrap: break-word; white-space: pre-wrap; position: relative; }
-  .chan-bubble .bubble-id { font-size: 9px; opacity: 0.55; margin-right: 6px; font-variant-numeric: tabular-nums; }
-  .chan-bubble.from-self { background: linear-gradient(180deg, #2563eb 0%, #1d4ed8 100%); color: #fff; border-bottom-right-radius: 4px; }
-  .chan-bubble.from-other { background: rgba(255,255,255,0.07); color: var(--text); border-bottom-left-radius: 4px; }
+  /* CP9.1: per-agent color drives bubble bg via inline --agent-bg style.
+     We darken the canonical palette hex by overlaying with a translucent
+     dark layer so text contrast stays readable across all 30 palette hues.
+     The cluster-dot in meta carries the true canonical color (lookup-able). */
+  .chan-bubble { max-width: 70%; padding: 8px 12px; border-radius: 16px; font-size: 13px; line-height: 1.45; word-wrap: break-word; white-space: pre-wrap; position: relative; color: #fff; background-blend-mode: multiply; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06); }
+  .chan-bubble::before { content: ''; position: absolute; inset: 0; background: rgba(0,0,0,0.32); border-radius: inherit; pointer-events: none; z-index: 0; }
+  .chan-bubble > * { position: relative; z-index: 1; }
+  .chan-bubble .bubble-id { font-size: 9px; opacity: 0.7; margin-right: 6px; font-variant-numeric: tabular-nums; }
+  .chan-bubble.from-self { border-bottom-right-radius: 4px; }
+  .chan-bubble.from-other { border-bottom-left-radius: 4px; }
   .chan-cluster.from-self .chan-bubble:first-child { border-top-right-radius: 16px; }
   .chan-cluster.from-self .chan-bubble:not(:first-child):not(:last-child) { border-top-right-radius: 4px; border-bottom-right-radius: 4px; }
   .chan-cluster.from-self .chan-bubble:last-child:not(:first-child) { border-top-right-radius: 4px; }
   .chan-cluster.from-other .chan-bubble:first-child { border-top-left-radius: 16px; }
   .chan-cluster.from-other .chan-bubble:not(:first-child):not(:last-child) { border-top-left-radius: 4px; border-bottom-left-radius: 4px; }
   .chan-cluster.from-other .chan-bubble:last-child:not(:first-child) { border-top-left-radius: 4px; }
+  .chan-cluster-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; vertical-align: middle; box-shadow: 0 0 0 1px rgba(0,0,0,0.3); }
+  /* CP9.1: agent-color swatch on AgentCard head — matches channel bubble + chart line color */
+  .agent-color-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; vertical-align: middle; margin-right: 6px; box-shadow: 0 0 0 1px rgba(0,0,0,0.4), 0 0 0 2px rgba(255,255,255,0.06); flex-shrink: 0; }
 
   .chan-bubble.private { box-shadow: 0 0 0 1px #c084fc inset; }
   .chan-bubble.private::after { content: '🔒 DM'; position: absolute; top: -6px; right: 8px; background: #c084fc; color: #1a1a1a; font-size: 8px; padding: 1px 5px; border-radius: 8px; font-weight: 600; letter-spacing: 0.04em; }
@@ -407,6 +416,32 @@
   .chan-cluster.from-self .chan-bubble-time { text-align: right; }
 
   .chan-empty { padding: 32px 20px; text-align: center; color: var(--muted); font-size: 12px; }
+
+  /* CP9.1 (2026-06-01): Color legend modal — agent → color attribution.
+     Triggered from "🎨 colors" button in channel sidebar head. Lists every
+     known agent (from /presence) with its assigned color swatch + name +
+     hex + RGB; clipboard-copy on click. */
+  .chan-legend-btn { background: transparent; border: 1px solid var(--border); color: var(--muted); padding: 2px 8px; border-radius: 10px; font: inherit; font-size: 10px; cursor: pointer; margin-left: auto; margin-right: 8px; }
+  .chan-legend-btn:hover { background: rgba(255,255,255,0.05); color: var(--text); border-color: var(--blue); }
+  .legend-modal { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); display: none; align-items: flex-start; justify-content: center; z-index: 1000; padding-top: 60px; }
+  .legend-modal.open { display: flex; }
+  .legend-modal-inner { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; width: 720px; max-width: 90vw; max-height: 80vh; overflow: hidden; display: flex; flex-direction: column; }
+  .legend-modal-head { padding: 14px 18px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+  .legend-modal-head h2 { margin: 0; font-size: 14px; color: var(--text); font-weight: 500; }
+  .legend-modal-head .close { background: transparent; border: 0; color: var(--muted); font-size: 18px; cursor: pointer; padding: 0 4px; }
+  .legend-modal-head .close:hover { color: var(--text); }
+  .legend-search { padding: 10px 18px 6px; border-bottom: 1px solid var(--border); }
+  .legend-search input { width: 100%; background: rgba(255,255,255,0.03); border: 1px solid var(--border); color: var(--text); padding: 5px 10px; border-radius: 3px; font: inherit; font-size: 12px; }
+  .legend-list { overflow-y: auto; padding: 4px 0; }
+  .legend-row { display: grid; grid-template-columns: 32px 1fr 110px 90px 150px; gap: 12px; padding: 8px 18px; border-bottom: 1px solid rgba(255,255,255,0.03); align-items: center; font-size: 12px; cursor: pointer; }
+  .legend-row:hover { background: rgba(255,255,255,0.03); }
+  .legend-row .swatch { width: 24px; height: 24px; border-radius: 4px; box-shadow: 0 0 0 1px rgba(255,255,255,0.1); }
+  .legend-row .legend-agent { color: var(--text); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .legend-row .legend-name { color: var(--muted); font-style: italic; text-transform: capitalize; }
+  .legend-row .legend-hex { color: var(--muted); font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11px; }
+  .legend-row .legend-rgb { color: var(--muted); font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 10px; }
+  .legend-row.copied { background: rgba(74,222,128,0.1); }
+  .legend-foot { padding: 10px 18px; border-top: 1px solid var(--border); color: var(--muted); font-size: 11px; }
 
   /* CP8.2 (2026-05-27): Audit tab — DM audit log reader + reveal modal. */
   .audit-banner { padding: 10px 18px; background: rgba(250,204,21,0.08); border-bottom: 1px solid var(--border); color: var(--text); font-size: 12px; line-height: 1.5; }
@@ -665,6 +700,7 @@
     <aside class="chan-sidebar" id="chan-sidebar">
       <div class="chan-sidebar-head">
         <span class="chan-sidebar-title">Channels</span>
+        <button class="chan-legend-btn" id="chan-legend-btn" title="show agent → color legend">🎨 colors</button>
         <span class="chan-sidebar-count" id="chan-sidebar-count">…</span>
       </div>
       <div class="chan-list" id="chan-list">
@@ -681,6 +717,24 @@
     </main>
   </div>
 </section>
+
+<!-- CP9.1 (2026-06-01): Color legend modal — agent → assigned color lookup. -->
+<div class="legend-modal" id="legend-modal">
+  <div class="legend-modal-inner">
+    <div class="legend-modal-head">
+      <h2>Agent → color legend</h2>
+      <button class="close" id="legend-close" aria-label="close">×</button>
+    </div>
+    <div class="legend-search">
+      <input id="legend-search" type="text" placeholder="filter agents or color names…" autocomplete="off" />
+    </div>
+    <div class="legend-list" id="legend-list"></div>
+    <div class="legend-foot">
+      Colors are deterministic per agent_id (djb2 hash → palette index, 30 entries).
+      Click a row to copy the hex to clipboard. Same colors are used in channel bubbles, chart series, and AgentCard accents site-wide.
+    </div>
+  </div>
+</div>
 
 <!-- CP8.2 (2026-05-27): Audit tab — ops-key DM audit log reader + body reveal.
      v1 trust posture: network-isolation only (no browser auth; same as the rest
