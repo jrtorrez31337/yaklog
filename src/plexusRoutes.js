@@ -471,6 +471,21 @@ publicRouter.get('/messages', (req, res) => {
 
 publicRouter.get('/messages-stream', messageStreamHandler);
 
+// CP9 (2026-06-01) — Channels tab: per-channel sidebar listing.
+// Public-mirror of the authed /channels surface (network-isolation trust
+// per the rest of /api/v1/plexus/public/*). Returns one row per channel
+// with message_count, latest_id, last_message_at — used by the dashboard
+// sidebar to rank channels by recency and show "last activity" hints.
+publicRouter.get('/channels', (req, res) => {
+  const limit = parsePosInt(req.query.limit, 100, 200);
+  if (limit === null) {
+    return res.status(400).json({ error: 'ValidationError', message: 'limit must be a non-negative integer (max 200).' });
+  }
+  const { listChannels } = require('./db');
+  const channels = listChannels(limit);
+  return res.json({ channels, count: channels.length });
+});
+
 // v0.5.8.6 (2026-05-27) — dashboard item #2 (DM audit surface).
 // Public-mirror endpoints behind network-isolation trust (same posture as
 // the rest of /api/v1/plexus/public/*; proper browser-auth comes Stage 2.5+).

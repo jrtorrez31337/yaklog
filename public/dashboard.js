@@ -2354,91 +2354,241 @@
 
   // ── Bus tab view (lazy-mounted; interactive chips/filter/pause) ──────
   let busTabMounted = false;
+  // ────────────────────────────────────────────────────────────────────
+  // CP9 (2026-06-01): Channels tab — sidebar listing + iMessage thread.
+  // Phase 1: static-load per channel click; no per-channel SSE yet
+  // (deferred to Phase 2). The Live-tab ticker keeps its own BusStream.
+  // ────────────────────────────────────────────────────────────────────
+  const SELF_AGENT_ID = 'yaklog-dev-agent';
+  const THREAD_PAGE_LIMIT = 80;
+  const CLUSTER_GAP_MS = 5 * 60 * 1000;   // 5 min gap = new cluster
+  const DAY_DIVIDER_MS = 12 * 60 * 60 * 1000;
+
+  function fmtClock(d) {
+    return d.toTimeString().slice(0, 5);
+  }
+  function fmtDateSep(d) {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const yest = new Date(today); yest.setDate(today.getDate() - 1);
+    const dDay = new Date(d); dDay.setHours(0, 0, 0, 0);
+    if (dDay.getTime() === today.getTime()) return 'today';
+    if (dDay.getTime() === yest.getTime()) return 'yesterday';
+    return d.toDateString();
+  }
+  function fmtChannelWhen(iso) {
+    if (!iso) return '';
+    const d = new Date(iso.includes('T') ? iso : iso.replace(' ', 'T') + 'Z');
+    const ms = Date.now() - d.getTime();
+    if (ms < 60_000) return 'now';
+    if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m`;
+    if (ms < 86_400_000) return `${Math.floor(ms / 3_600_000)}h`;
+    return `${Math.floor(ms / 86_400_000)}d`;
+  }
+  function parseIso(iso) {
+    if (!iso) return null;
+    return new Date(iso.includes('T') ? iso : iso.replace(' ', 'T') + 'Z');
+  }
+
+  // Render one message body with @mentions as styled pills + self-callout.
+  function renderBodyWithMentions(body, mentions) {
+    const frag = document.createDocumentFragment();
+    if (!body) { frag.appendChild(document.createTextNode('')); return frag; }
+    // Cheap inline split on @-tokens; for richer rendering swap in a markdown
+    // pass later. For Phase 1, plain text + mention pills is enough.
+    frag.appendChild(document.createTextNode(body));
+    if (mentions && mentions.length > 0) {
+      const mWrap = el('span', { class: 'bubble-mentions' });
+      for (const m of mentions) {
+        const cls = (m === SELF_AGENT_ID || m === 'yaklog-dev') ? 'bubble-mention self' : 'bubble-mention';
+        mWrap.appendChild(el('span', { class: cls }, '@' + m));
+      }
+      frag.appendChild(document.createElement('br'));
+      frag.appendChild(mWrap);
+    }
+    return frag;
+  }
+
+  function buildCluster(msgs, isSelf) {
+    // msgs: array of consecutive messages from same sender within CLUSTER_GAP_MS
+    const cluster = el('div', { class: `chan-cluster ${isSelf ? 'from-self' : 'from-other'}` });
+    const first = msgs[0];
+    const meta = el('div', { class: 'chan-cluster-meta' });
+    if (!isSelf) {
+      const senderEl = el('span', { class: 'sender-name' }, first.sender || '?');
+      meta.appendChild(senderEl);
+    }
+    const tEl = el('span', { class: 'cluster-time' }, fmtClock(parseIso(first.created_at)));
+    meta.appendChild(tEl);
+    cluster.appendChild(meta);
+    for (const m of msgs) {
+      const bubble = el('div', {
+        class: 'chan-bubble ' + (isSelf ? 'from-self' : 'from-other') + (m.private ? ' private' : ''),
+        title: `#${m.id} · ${m.created_at || ''}`,
+      });
+      bubble.appendChild(el('span', { class: 'bubble-id' }, '#' + m.id));
+      bubble.appendChild(renderBodyWithMentions(m.body || '', m.mentions || []));
+      cluster.appendChild(bubble);
+    }
+    return cluster;
+  }
+
+  function renderThread(bodyEl, messages) {
+    clearChildren(bodyEl);
+    if (!messages || messages.length === 0) {
+      bodyEl.appendChild(el('div', { class: 'chan-empty' }, 'no messages on this channel yet.'));
+      return;
+    }
+    // Oldest first
+    const sorted = messages.slice().sort((a, b) => a.id - b.id);
+
+    // Walk and group: emit date dividers + clusters by sender + cluster-gap.
+    let prevTs = null;
+    let prevSender = null;
+    let bucket = [];
+    let lastDayKey = null;
+
+    const flushBucket = () => {
+      if (bucket.length === 0) return;
+      const isSelf = bucket[0].sender === SELF_AGENT_ID;
+      bodyEl.appendChild(buildCluster(bucket, isSelf));
+      bucket = [];
+    };
+
+    for (const m of sorted) {
+      const ts = parseIso(m.created_at);
+      const dayKey = ts ? ts.toDateString() : 'unknown';
+      if (dayKey !== lastDayKey) {
+        flushBucket();
+        bodyEl.appendChild(el('div', { class: 'chan-divider' }, fmtDateSep(ts || new Date())));
+        lastDayKey = dayKey;
+        prevSender = null;
+      }
+      const gapBig = prevTs && (ts.getTime() - prevTs.getTime()) > CLUSTER_GAP_MS;
+      const senderChanged = prevSender !== null && prevSender !== m.sender;
+      if (gapBig || senderChanged) flushBucket();
+      bucket.push(m);
+      prevTs = ts;
+      prevSender = m.sender;
+    }
+    flushBucket();
+
+    // Auto-scroll to bottom (latest)
+    requestAnimationFrame(() => { bodyEl.scrollTop = bodyEl.scrollHeight; });
+  }
+
+  function renderChannelList(listEl, countEl, channels, selectedName, onClick) {
+    clearChildren(listEl);
+    if (!channels || channels.length === 0) {
+      listEl.appendChild(el('div', { class: 'chan-empty' }, 'no channels yet.'));
+      countEl.textContent = '0';
+      return;
+    }
+    countEl.textContent = String(channels.length);
+    // Sort: by last_message_at DESC (most-recent activity first)
+    const sorted = channels.slice().sort((a, b) => {
+      const ta = parseIso(a.last_message_at)?.getTime() || 0;
+      const tb = parseIso(b.last_message_at)?.getTime() || 0;
+      return tb - ta;
+    });
+    for (const c of sorted) {
+      const row = el('div', { class: 'chan-row' + (c.channel === selectedName ? ' active' : ''), 'data-channel': c.channel });
+      const name = el('div', { class: 'chan-name' });
+      name.appendChild(el('span', { class: 'chan-hash' }, '#'));
+      name.appendChild(document.createTextNode(c.channel));
+      row.appendChild(name);
+      const meta = el('div', { class: 'chan-meta' });
+      meta.appendChild(el('span', { class: 'chan-count' }, String(c.message_count) + ' msgs'));
+      meta.appendChild(el('span', { class: 'chan-when' }, fmtChannelWhen(c.last_message_at)));
+      row.appendChild(meta);
+      row.addEventListener('click', () => onClick(c.channel));
+      listEl.appendChild(row);
+    }
+  }
+
   function mountBusTab() {
     if (busTabMounted) return;
     busTabMounted = true;
-    const pane = document.getElementById('bus-pane');
-    const chipsEl = document.getElementById('bus-channel-chips');
-    const senderInput = document.getElementById('bus-sender-filter');
-    const pausedEl = document.getElementById('bus-paused');
-    const statusEl = document.getElementById('bus-status');
-    if (!pane) return;
+    const listEl = document.getElementById('chan-list');
+    const countEl = document.getElementById('chan-sidebar-count');
+    const headEl = document.getElementById('chan-thread-head');
+    const bodyEl = document.getElementById('chan-thread-body');
+    if (!listEl || !bodyEl) return;
 
-    // Per-channel toggle state. Defaults: enable all known channels except
-    // the BUS_DEFAULT_EXCLUDED set. New channels seen later get added as
-    // enabled (visible) unless in the excluded set.
-    const enabledChans = new Set();
-    function ensureChip(channel, count) {
-      let chip = chipsEl.querySelector(`.bus-chip[data-channel="${CSS.escape(channel)}"]`);
-      if (!chip) {
-        chip = el('span', { class: 'bus-chip', 'data-channel': channel });
-        chip.appendChild(document.createTextNode(channel));
-        const countSpan = el('span', { class: 'count' }, String(count));
-        chip.appendChild(countSpan);
-        chip.addEventListener('click', () => {
-          if (enabledChans.has(channel)) enabledChans.delete(channel);
-          else enabledChans.add(channel);
-          chip.classList.toggle('on', enabledChans.has(channel));
-          renderTab();
-        });
-        chipsEl.appendChild(chip);
-        // Initial state: enable unless excluded
-        if (!BUS_DEFAULT_EXCLUDED.has(channel)) {
-          enabledChans.add(channel);
-          chip.classList.add('on');
-        }
-      } else {
-        chip.querySelector('.count').textContent = String(count);
-      }
-    }
-    function syncChips() {
-      for (const [chan, count] of busStream.knownChannels()) {
-        ensureChip(chan, count);
+    let channels = [];
+    let selectedChannel = null;
+
+    async function loadChannels() {
+      try {
+        const r = await fetch('/api/v1/plexus/public/channels?limit=100');
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const j = await r.json();
+        channels = j.channels || [];
+        renderChannelList(listEl, countEl, channels, selectedChannel, selectChannel);
+      } catch (err) {
+        clearChildren(listEl);
+        listEl.appendChild(el('div', { class: 'chan-empty' }, 'failed to load channels: ' + err.message));
       }
     }
 
-    function senderMatches(msg) {
-      const q = (senderInput.value || '').trim().toLowerCase();
-      if (!q) return true;
-      return (msg.sender || '').toLowerCase().includes(q);
-    }
-
-    function renderTab() {
-      syncChips();
-      const filtered = busStream.buffer.filter(m => enabledChans.has(m.channel) && senderMatches(m));
-      clearChildren(pane);
-      if (filtered.length === 0) {
-        pane.appendChild(el('div', { class: 'bus-empty' }, 'no messages match current filters'));
-        return;
+    async function loadThread(channel) {
+      clearChildren(bodyEl);
+      bodyEl.appendChild(el('div', { class: 'chan-empty' }, `loading #${channel}…`));
+      try {
+        const r = await fetch(`/api/v1/plexus/public/messages?channel=${encodeURIComponent(channel)}&limit=${THREAD_PAGE_LIMIT}`);
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const j = await r.json();
+        renderThread(bodyEl, j.messages || []);
+      } catch (err) {
+        clearChildren(bodyEl);
+        bodyEl.appendChild(el('div', { class: 'chan-empty' }, `failed to load #${channel}: ${err.message}`));
       }
-      // Newest at top
-      for (const m of filtered.slice().reverse()) pane.appendChild(busRow(m));
     }
 
-    function updateStatus(state) {
-      if (!statusEl) return;
-      const ageS = busStream.lastFrameMs ? Math.floor((Date.now() - busStream.lastFrameMs) / 1000) : null;
-      const ageStr = ageS == null ? 'no frame yet' : (ageS < 2 ? 'just now' : `${ageS}s ago`);
-      statusEl.textContent = `${state || busStream.state} · last frame ${ageStr} · ${busStream.buffer.length} buffered`;
+    function selectChannel(channel) {
+      selectedChannel = channel;
+      const chMeta = channels.find(c => c.channel === channel);
+      // Refresh sidebar active-state
+      for (const row of listEl.querySelectorAll('.chan-row')) {
+        row.classList.toggle('active', row.dataset.channel === channel);
+      }
+      // Update thread head
+      clearChildren(headEl);
+      const title = el('span', { class: 'chan-thread-title' });
+      title.appendChild(el('span', { class: 'chan-hash' }, '#'));
+      title.appendChild(document.createTextNode(channel));
+      if (chMeta) {
+        title.appendChild(el('span', { class: 'chan-meta-inline' },
+          `${chMeta.message_count} msgs · last ${fmtChannelWhen(chMeta.last_message_at)}`));
+      }
+      headEl.appendChild(title);
+      const refresh = el('button', { class: 'chan-thread-refresh' }, '↻ refresh');
+      refresh.addEventListener('click', () => { loadThread(channel); loadChannels(); });
+      headEl.appendChild(refresh);
+      // Hash routing for deep-link
+      if (location.hash !== `#bus/${channel}`) {
+        history.replaceState(null, '', `#bus/${channel}`);
+      }
+      loadThread(channel);
     }
 
-    senderInput.addEventListener('input', renderTab);
-    pausedEl.addEventListener('change', () => {
-      // Visual cue only; the buffer keeps growing — we just stop re-rendering on add
+    loadChannels().then(() => {
+      // Deep-link: #bus/<channel>
+      const hash = location.hash || '';
+      const m = hash.match(/^#bus\/(.+)$/);
+      if (m && channels.some(c => c.channel === m[1])) {
+        selectChannel(m[1]);
+      } else if (channels.length > 0) {
+        // Default-select the most-recent channel
+        const sorted = channels.slice().sort((a, b) =>
+          (parseIso(b.last_message_at)?.getTime() || 0) - (parseIso(a.last_message_at)?.getTime() || 0));
+        selectChannel(sorted[0].channel);
+      }
     });
-
-    busStream.subscribe({
-      onBackfill: () => { renderTab(); updateStatus(); },
-      onAdd: () => {
-        if (!pausedEl.checked) renderTab();
-        updateStatus();
-      },
-      onState: (s) => updateStatus(s),
-    });
-    setInterval(() => { if (!pausedEl.checked) renderTab(); updateStatus(); }, 30000);
+    // Periodic channel-list refresh (lightweight, keeps last-activity hints fresh)
+    setInterval(loadChannels, 30000);
   }
-  // If page loaded directly at #bus, mount immediately
-  if (location.hash === '#bus') mountBusTab();
+  // If page loaded directly at #bus or #bus/<channel>, mount immediately
+  if ((location.hash || '').startsWith('#bus')) mountBusTab();
 
   // ────────────────────────────────────────────────────────────────────
   // CP8.2 (2026-05-27): Audit tab — DM audit log reader + reveal modal.
