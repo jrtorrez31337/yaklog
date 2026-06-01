@@ -2070,9 +2070,19 @@
         ));
         table.appendChild(thead);
         const tbody = el('tbody');
+        // CP10.1: feed cost-spike alerts when dim is plexus_agent_id.
+        // Spike alerts only fire when the cost-tab cumulative table has
+        // rendered — Phase 1 limitation; Phase 2 may add background poll.
+        const spikeAgents = new Set();
         for (const r of rows) {
           const tr = el('tr');
           if (r.rate && r.rate.ratio >= ANOMALY_RATIO) tr.classList.add('cost-anomaly');
+          if (r.rate && r.rate.ratio >= ANOMALY_RATIO && dim === 'plexus_agent_id') {
+            spikeAgents.add(r.dimValue);
+            const usdPerHr = r.rate.current * 3600;
+            const meanPerHr = r.rate.mean7d * 3600;
+            alertEngine.pushCostSpike(r.dimValue, r.rate.ratio, meanPerHr, usdPerHr);
+          }
           const dimCell = el('td', { class: 'dim-val' });
           if (dim === 'plexus_agent_id') {
             dimCell.appendChild(el('span', { class: 'agent-clickable', 'data-agent-id': r.dimValue }, r.dimValue));
@@ -2109,6 +2119,8 @@
         }
         table.appendChild(tbody);
         this.cumulativeBody.appendChild(table);
+        // CP10.1: auto-resolve cost-spike alerts for agents no longer flagged.
+        if (dim === 'plexus_agent_id') alertEngine.syncCostSpikes(spikeAgents);
         const anomalyTxt = anomalyN > 0 ? `· 🔴 ${anomalyN} anomaly` : '';
         this.setCumulativeStatus(`${rows.length} ${dim}(s) ${anomalyTxt} · ${cacheHdr || '—'} · ${new Date().toLocaleTimeString()}`);
       } catch (e) {
@@ -2756,6 +2768,290 @@
       document.addEventListener('keydown', e => { if (e.key === 'Escape') closeLegendModal(); });
     }
   }
+
+  // ────────────────────────────────────────────────────────────────────
+  // CP10.1 (2026-06-01): Alerts engine + bell dropdown.
+  // Human-only operator surface; never crosses to swarm bus per
+  // feedback_dashboard_alerts_are_human_only. Phase 1: 4 predicates,
+  // in-memory state, dedupe by (type, agent_id), auto-resolve on next
+  // poll when the predicate goes false. State lives in browser only.
+  // ────────────────────────────────────────────────────────────────────
+  const REGISTRATION_STUCK_HOURS = {
+    PENDING_FERRY: 24,
+    PENDING_ACTIVATION: 48,
+    APPROVED_PENDING_FERRY: 24,
+  };
+  const COST_SPIKE_RATIO = 2.0;  // matches existing ANOMALY_RATIO
+
+  class AlertEngine {
+    constructor() {
+      this.alerts = new Map();   // key → { key, type, agentId, ts, msg, severity, state }
+      this.listeners = [];
+      this.lastHigh = 0;  // count of firing-high last we notified — drives bell pulse
+    }
+    _fire(key, type, agentId, severity, msg) {
+      const existing = this.alerts.get(key);
+      if (existing && existing.state !== 'resolved') {
+        // already firing or acked — dedupe; update message if it drifted (e.g. blocked_until time)
+        if (existing.msg !== msg) existing.msg = msg;
+        return;
+      }
+      this.alerts.set(key, { key, type, agentId, ts: Date.now(), msg, severity, state: 'firing' });
+      this._emit();
+    }
+    _autoResolve(seenKeys) {
+      let changed = false;
+      for (const [key, a] of this.alerts) {
+        if (a.state !== 'resolved' && !seenKeys.has(key)) {
+          a.state = 'resolved';
+          a.resolvedTs = Date.now();
+          changed = true;
+        }
+      }
+      if (changed) this._emit();
+    }
+    ack(key) {
+      const a = this.alerts.get(key);
+      if (a && a.state === 'firing') { a.state = 'acked'; this._emit(); }
+    }
+    ackAll() {
+      let changed = false;
+      for (const a of this.alerts.values()) {
+        if (a.state === 'firing') { a.state = 'acked'; changed = true; }
+      }
+      if (changed) this._emit();
+    }
+    // Drop resolved alerts older than 5 minutes (keep recent ones for context).
+    purgeOld() {
+      const cutoff = Date.now() - 5 * 60_000;
+      let changed = false;
+      for (const [key, a] of this.alerts) {
+        if (a.state === 'resolved' && (a.resolvedTs || a.ts) < cutoff) {
+          this.alerts.delete(key);
+          changed = true;
+        }
+      }
+      if (changed) this._emit();
+    }
+    list() {
+      // Sort: firing-high → firing-medium → firing-low → acked → resolved; then by ts desc
+      const order = { firing: 0, acked: 1, resolved: 2 };
+      const sevOrder = { high: 0, medium: 1, low: 2 };
+      return [...this.alerts.values()].sort((a, b) => {
+        const so = order[a.state] - order[b.state]; if (so) return so;
+        const sv = sevOrder[a.severity] - sevOrder[b.severity]; if (sv) return sv;
+        return b.ts - a.ts;
+      });
+    }
+    counts() {
+      let firing = 0, firingHigh = 0;
+      for (const a of this.alerts.values()) {
+        if (a.state === 'firing') {
+          firing++;
+          if (a.severity === 'high') firingHigh++;
+        }
+      }
+      return { firing, firingHigh };
+    }
+    onChange(fn) { this.listeners.push(fn); }
+    _emit() { for (const fn of this.listeners) fn(this); }
+
+    // PREDICATE: evaluate presence rows for stop_failure + quota_exhausted.
+    evaluatePresence(rows) {
+      if (!Array.isArray(rows)) return;
+      const seen = new Set();
+      for (const p of rows) {
+        if (!p || !p.agent_id) continue;
+        if (p.label === 'stop_failure') {
+          const k = `stop_failure::${p.agent_id}`;
+          seen.add(k);
+          this._fire(k, 'stop_failure', p.agent_id, 'high',
+            `${p.agent_id}: session terminated (stop_failure)`);
+        }
+        if (p.runtime_state === 'quota_exhausted') {
+          const k = `quota_exhausted::${p.agent_id}`;
+          seen.add(k);
+          const until = p.runtime_blocked_until ? ` until ${p.runtime_blocked_until.slice(0, 16).replace('T', ' ')}` : '';
+          this._fire(k, 'quota_exhausted', p.agent_id, 'medium',
+            `${p.agent_id}: quota exhausted${until}`);
+        }
+      }
+      // Auto-resolve only THIS predicate family — don't clobber registration / cost.
+      this._autoResolveFamily('stop_failure', seen);
+      this._autoResolveFamily('quota_exhausted', seen);
+    }
+    _autoResolveFamily(typePrefix, seenKeys) {
+      let changed = false;
+      for (const [key, a] of this.alerts) {
+        if (a.type === typePrefix && a.state !== 'resolved' && !seenKeys.has(key)) {
+          a.state = 'resolved';
+          a.resolvedTs = Date.now();
+          changed = true;
+        }
+      }
+      if (changed) this._emit();
+    }
+    evaluateRegistrations(rows) {
+      if (!Array.isArray(rows)) return;
+      const seen = new Set();
+      const now = Date.now();
+      for (const r of rows) {
+        if (!r || r.is_terminal) continue;
+        const threshold = REGISTRATION_STUCK_HOURS[r.status];
+        if (!threshold) continue;
+        const updated = new Date(r.updated_at || r.created_at || 0).getTime();
+        if (!Number.isFinite(updated)) continue;
+        const ageH = (now - updated) / 3_600_000;
+        if (ageH < threshold) continue;
+        const k = `registration_stuck::${r.agent_id || r.registration_id}`;
+        seen.add(k);
+        this._fire(k, 'registration_stuck', r.agent_id || r.registration_id, 'medium',
+          `${r.agent_id || 'reg-' + r.registration_id}: stuck in ${r.status} for ${ageH.toFixed(0)}h`);
+      }
+      this._autoResolveFamily('registration_stuck', seen);
+    }
+    // Cost-spike fed externally from the cost-tab anomaly compute path
+    // (where the 2x-7d-mean comparison is already done). Phase 1 limitation
+    // noted: only fires when cost-tab has been rendered at least once.
+    pushCostSpike(agentId, ratio, meanPerHr, currentPerHr) {
+      if (!agentId || !Number.isFinite(ratio) || ratio < COST_SPIKE_RATIO) return;
+      const k = `cost_spike::${agentId}`;
+      this._fire(k, 'cost_spike', agentId, 'medium',
+        `${agentId}: cost spike ${ratio.toFixed(1)}× 7d mean ($${currentPerHr.toFixed(4)}/hr vs $${meanPerHr.toFixed(4)}/hr)`);
+    }
+    // Caller invokes after a full cost-tab refresh with the set of agents
+    // currently flagged; un-flagged agents auto-resolve.
+    syncCostSpikes(currentlyFlaggedSet) {
+      this._autoResolveFamily('cost_spike', new Set(
+        [...currentlyFlaggedSet].map(id => `cost_spike::${id}`)
+      ));
+    }
+  }
+
+  const alertEngine = new AlertEngine();
+
+  // Hook presence-poll → alertEngine.evaluatePresence
+  function evalAlertsFromLastData() {
+    if (lastData && Array.isArray(lastData.presence)) {
+      alertEngine.evaluatePresence(lastData.presence);
+    }
+  }
+  // Re-evaluate every time renderCards runs (presence poll cadence ~1s on lastData).
+  // We hook at the tail by patching the tick (less invasive than touching renderCards).
+  setInterval(evalAlertsFromLastData, 5_000);
+
+  // Background registrations fetch (every 60s) — independent of Register tab visit.
+  async function fetchRegistrationsForAlerts() {
+    try {
+      const r = await fetch('/api/v1/plexus/public/registrations?limit=200');
+      if (!r.ok) return;
+      const j = await r.json();
+      alertEngine.evaluateRegistrations(j.registrations || []);
+    } catch (_) { /* non-fatal */ }
+  }
+  fetchRegistrationsForAlerts();
+  setInterval(fetchRegistrationsForAlerts, 60_000);
+
+  // Periodic purge of stale-resolved alerts so the dropdown doesn't grow.
+  setInterval(() => alertEngine.purgeOld(), 30_000);
+
+  // ─── Alerts UI ───
+  function fmtAlertTs(ms) {
+    const ago = (Date.now() - ms) / 1000;
+    if (ago < 60) return Math.floor(ago) + 's';
+    if (ago < 3600) return Math.floor(ago / 60) + 'm';
+    if (ago < 86400) return Math.floor(ago / 3600) + 'h';
+    return Math.floor(ago / 86400) + 'd';
+  }
+  function renderAlertsBell() {
+    const bell = document.getElementById('alerts-bell');
+    const count = document.getElementById('alerts-bell-count');
+    if (!bell || !count) return;
+    const { firing, firingHigh } = alertEngine.counts();
+    bell.classList.toggle('has-firing', firing > 0);
+    bell.classList.toggle('has-firing-high', firingHigh > 0);
+    if (firing > 0) {
+      count.textContent = String(firing);
+      count.hidden = false;
+    } else {
+      count.hidden = true;
+    }
+    // Browser title-bar badge so closed-bell still surfaces count
+    if (firing > 0) {
+      if (!document.title.startsWith('(')) document.title = `(${firing}) ${document.title}`;
+      else document.title = document.title.replace(/^\(\d+\)/, `(${firing})`);
+    } else {
+      document.title = document.title.replace(/^\(\d+\)\s*/, '');
+    }
+  }
+  function renderAlertsDropdown() {
+    const list = document.getElementById('alerts-dropdown-list');
+    if (!list) return;
+    const alerts = alertEngine.list();
+    clearChildren(list);
+    if (alerts.length === 0) {
+      list.appendChild(el('div', { class: 'alerts-empty' }, 'No alerts. Cluster healthy.'));
+      return;
+    }
+    for (const a of alerts) {
+      const row = el('div', {
+        class: `alerts-row severity-${a.severity} ${a.state === 'acked' ? 'acked' : ''} ${a.state === 'resolved' ? 'resolved' : ''}`,
+        'data-alert-key': a.key,
+        title: `${a.type} · ${a.state} · ${new Date(a.ts).toLocaleTimeString()}`,
+      });
+      row.appendChild(el('span', { class: 'sev-dot' }));
+      const msgCol = el('div');
+      msgCol.appendChild(el('div', { class: 'alert-msg' }, a.msg));
+      msgCol.appendChild(el('div', { class: 'alert-ts' }, fmtAlertTs(a.ts) + (a.state === 'resolved' ? ' · resolved' : '')));
+      row.appendChild(msgCol);
+      const ackBtn = el('button', { class: 'alert-ack', type: 'button' }, 'ack');
+      ackBtn.addEventListener('click', (e) => { e.stopPropagation(); alertEngine.ack(a.key); });
+      row.appendChild(ackBtn);
+      // Click row body → jump to agent card (Live tab) + flash
+      row.addEventListener('click', () => jumpToAgentCard(a.agentId));
+      list.appendChild(row);
+    }
+  }
+  function jumpToAgentCard(agentId) {
+    if (!agentId) return;
+    // Switch to Live tab
+    const liveBtn = document.querySelector('.tab-btn[data-tab="live"]');
+    if (liveBtn) liveBtn.click();
+    // Close dropdown
+    const dd = document.getElementById('alerts-dropdown'); if (dd) dd.hidden = true;
+    // Scroll + flash
+    requestAnimationFrame(() => {
+      const card = document.querySelector(`.agent-card[data-agent-id="${CSS.escape(agentId)}"]`);
+      if (!card) return;
+      card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      card.classList.remove('alert-flash');
+      void card.offsetWidth;  // restart animation
+      card.classList.add('alert-flash');
+    });
+  }
+  alertEngine.onChange(() => { renderAlertsBell(); renderAlertsDropdown(); });
+  setInterval(renderAlertsDropdown, 30_000);  // refresh ts ticks
+
+  function wireAlertsBell() {
+    const bell = document.getElementById('alerts-bell');
+    const dd = document.getElementById('alerts-dropdown');
+    const ackAll = document.getElementById('alerts-ack-all');
+    if (!bell || !dd || bell._wired) return;
+    bell._wired = true;
+    bell.addEventListener('click', (e) => {
+      e.stopPropagation();
+      dd.hidden = !dd.hidden;
+      if (!dd.hidden) renderAlertsDropdown();
+    });
+    if (ackAll) ackAll.addEventListener('click', (e) => { e.stopPropagation(); alertEngine.ackAll(); });
+    document.addEventListener('click', (e) => {
+      if (!dd.contains(e.target) && e.target !== bell) dd.hidden = true;
+    });
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') dd.hidden = true; });
+    renderAlertsBell();
+  }
+  if (document.readyState !== 'loading') wireAlertsBell();
+  else document.addEventListener('DOMContentLoaded', wireAlertsBell);
 
   // ────────────────────────────────────────────────────────────────────
   // CP8.2 (2026-05-27): Audit tab — DM audit log reader + reveal modal.

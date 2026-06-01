@@ -443,6 +443,48 @@
   .legend-row.copied { background: rgba(74,222,128,0.1); }
   .legend-foot { padding: 10px 18px; border-top: 1px solid var(--border); color: var(--muted); font-size: 11px; }
 
+  /* CP10.1 (2026-06-01): Alerts bell + dropdown — human-only operator surface.
+     Never crosses to swarm bus per feedback_dashboard_alerts_are_human_only.
+     Phase 1: 4 predicates (stop_failure, quota_exhausted, cost-spike,
+     registration-stuck), in-memory state with dedupe + auto-resolve,
+     click-row to jump to agent card. Phase 2 adds browser notification
+     opt-in + audio chirp + mute-list (deferred 2+ weeks). */
+  .alerts-bell-wrap { position: relative; margin-left: auto; align-self: center; padding-right: 6px; }
+  .alerts-bell { background: transparent; border: 1px solid transparent; color: var(--muted); padding: 4px 10px; border-radius: 14px; font: inherit; font-size: 16px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; line-height: 1; }
+  .alerts-bell:hover { background: rgba(255,255,255,0.04); color: var(--text); }
+  .alerts-bell.has-firing { color: var(--yellow); border-color: rgba(250,204,21,0.3); }
+  .alerts-bell.has-firing-high { color: #f87171; border-color: rgba(248,113,113,0.4); animation: bellPulse 1.4s ease-in-out infinite; }
+  @keyframes bellPulse { 0%,100% { box-shadow: 0 0 0 0 rgba(248,113,113,0.0); } 50% { box-shadow: 0 0 0 4px rgba(248,113,113,0.18); } }
+  .alerts-bell-count { background: var(--yellow); color: #1a1a1a; font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 10px; min-width: 16px; text-align: center; font-variant-numeric: tabular-nums; }
+  .alerts-bell.has-firing-high .alerts-bell-count { background: #f87171; color: #1a1a1a; }
+  .alerts-dropdown { position: absolute; top: 100%; right: 0; margin-top: 6px; width: 420px; max-height: 480px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 8px 24px rgba(0,0,0,0.5); z-index: 800; display: flex; flex-direction: column; overflow: hidden; }
+  .alerts-dropdown[hidden] { display: none; }
+  .alerts-dropdown-head { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--text); font-size: 12px; font-weight: 500; }
+  .alerts-dropdown-ackall { background: transparent; border: 1px solid var(--border); color: var(--muted); padding: 2px 8px; border-radius: 3px; font: inherit; font-size: 10px; cursor: pointer; }
+  .alerts-dropdown-ackall:hover { background: rgba(255,255,255,0.05); color: var(--text); }
+  .alerts-dropdown-list { overflow-y: auto; flex: 1; min-height: 60px; }
+  .alerts-dropdown-foot { padding: 8px 14px; border-top: 1px solid var(--border); color: var(--muted); font-size: 10px; font-style: italic; }
+  .alerts-empty { padding: 24px 14px; text-align: center; color: var(--muted); font-size: 12px; }
+  .alerts-row { padding: 8px 14px; border-bottom: 1px solid rgba(255,255,255,0.04); display: grid; grid-template-columns: 16px 1fr 56px; gap: 8px; align-items: start; cursor: pointer; font-size: 12px; }
+  .alerts-row:hover { background: rgba(255,255,255,0.03); }
+  .alerts-row.severity-high { border-left: 3px solid #f87171; padding-left: 11px; }
+  .alerts-row.severity-medium { border-left: 3px solid var(--yellow); padding-left: 11px; }
+  .alerts-row.severity-low { border-left: 3px solid var(--blue); padding-left: 11px; }
+  .alerts-row.acked { opacity: 0.55; }
+  .alerts-row.resolved { opacity: 0.4; }
+  .alerts-row .sev-dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 4px; }
+  .alerts-row.severity-high .sev-dot { background: #f87171; box-shadow: 0 0 4px #f87171; }
+  .alerts-row.severity-medium .sev-dot { background: var(--yellow); }
+  .alerts-row.severity-low .sev-dot { background: var(--blue); }
+  .alerts-row .alert-msg { color: var(--text); line-height: 1.4; word-break: break-word; }
+  .alerts-row .alert-ts { color: var(--muted); font-size: 10px; padding-top: 2px; font-variant-numeric: tabular-nums; }
+  .alerts-row .alert-ack { background: transparent; border: 1px solid var(--border); color: var(--muted); padding: 2px 6px; border-radius: 3px; font: inherit; font-size: 10px; cursor: pointer; align-self: start; margin-top: 2px; }
+  .alerts-row .alert-ack:hover { background: rgba(255,255,255,0.05); color: var(--text); }
+  .alerts-row.acked .alert-ack, .alerts-row.resolved .alert-ack { display: none; }
+  /* AgentCard flash when alerts row clicked → scroll-into-view */
+  .agent-card.alert-flash { animation: cardFlash 1.2s ease-out; }
+  @keyframes cardFlash { 0% { box-shadow: 0 0 0 0 rgba(250,204,21,0.0); } 30% { box-shadow: 0 0 0 4px rgba(250,204,21,0.55); } 100% { box-shadow: 0 0 0 0 rgba(250,204,21,0.0); } }
+
   /* CP8.2 (2026-05-27): Audit tab — DM audit log reader + reveal modal. */
   .audit-banner { padding: 10px 18px; background: rgba(250,204,21,0.08); border-bottom: 1px solid var(--border); color: var(--text); font-size: 12px; line-height: 1.5; }
   .audit-banner strong { color: var(--yellow); }
@@ -552,6 +594,26 @@
   <button class="tab-btn" data-tab="bus">Channels<span class="badge-new">CP9</span></button>
   <button class="tab-btn" data-tab="audit">Audit<span class="badge-new">CP8.2</span></button>
   <button class="tab-btn" data-tab="register">Register<span class="badge-new">CP8.5</span></button>
+  <!-- CP10.1 (2026-06-01): alerts bell — human-only, client-only, never crosses
+       to bus per feedback_dashboard_alerts_are_human_only. -->
+  <div class="alerts-bell-wrap" id="alerts-bell-wrap">
+    <button class="alerts-bell" id="alerts-bell" type="button" aria-label="alerts">
+      <span class="alerts-bell-icon">🔔</span>
+      <span class="alerts-bell-count" id="alerts-bell-count" hidden>0</span>
+    </button>
+    <div class="alerts-dropdown" id="alerts-dropdown" hidden>
+      <div class="alerts-dropdown-head">
+        <span>Alerts</span>
+        <button class="alerts-dropdown-ackall" id="alerts-ack-all" type="button" title="ack all firing alerts">ack all</button>
+      </div>
+      <div class="alerts-dropdown-list" id="alerts-dropdown-list">
+        <div class="alerts-empty">No alerts. Cluster healthy.</div>
+      </div>
+      <div class="alerts-dropdown-foot">
+        Local to this browser only. Never broadcast.
+      </div>
+    </div>
+  </div>
 </nav>
 
 <!-- Live tab: top-of-page Plexus charts + existing presence table preserved. -->
