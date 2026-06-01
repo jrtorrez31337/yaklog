@@ -2256,8 +2256,16 @@
   const BUS_TICKER_DISPLAY = 15;
   // Default-excluded channels: high-volume / low-signal. User can re-enable.
   const BUS_DEFAULT_EXCLUDED = new Set(['agents', '_diag']);
-  // Ticker is whitelist (don't pollute the always-on Live-tab view with everything):
-  const BUS_TICKER_WHITELIST = new Set(['handoff', 'status']);
+  // CP10.2 (2026-06-01): ticker now shows ALL channels except the always-noisy
+  // ones in BUS_DEFAULT_EXCLUDED. Pre-CP10.2 it was whitelist=[handoff,status]
+  // which hid the new lane-channels (#substrate, #gamedev, #aieng, #bizdev)
+  // landed in parch's #7284 channel-decomp. Jon's flag: "agents are chatting
+  // and working but we are not seeing it." Exclude-set approach preserves
+  // the original intent (drop high-volume/low-signal) while including
+  // lane-channels the swarm now uses.
+  function tickerShows(channel) {
+    return channel && !BUS_DEFAULT_EXCLUDED.has(channel);
+  }
 
   function chanClass(channel) {
     if (!channel) return 'chan-other';
@@ -2405,20 +2413,23 @@
   if (tickerPane) {
     const renderTicker = () => {
       const filtered = busStream.buffer
-        .filter(m => BUS_TICKER_WHITELIST.has(m.channel))
+        .filter(m => tickerShows(m.channel))
         .slice(-BUS_TICKER_DISPLAY);
       clearChildren(tickerPane);
       if (filtered.length === 0) {
-        tickerPane.appendChild(el('div', { class: 'bus-empty' }, 'no recent #handoff / #status traffic'));
+        tickerPane.appendChild(el('div', { class: 'bus-empty' }, 'no recent bus traffic'));
       } else {
         // Newest first
         for (const m of filtered.reverse()) tickerPane.appendChild(busRow(m));
       }
-      if (tickerMeta) tickerMeta.textContent = `last ${filtered.length} · ${busStream.buffer.length} buffered · #handoff + #status only`;
+      if (tickerMeta) {
+        const excluded = [...BUS_DEFAULT_EXCLUDED].map(c => '#' + c).join(', ');
+        tickerMeta.textContent = `last ${filtered.length} · ${busStream.buffer.length} buffered · all channels except ${excluded}`;
+      }
     };
     busStream.subscribe({
       onBackfill: () => renderTicker(),
-      onAdd: (m) => { if (BUS_TICKER_WHITELIST.has(m.channel)) renderTicker(); },
+      onAdd: (m) => { if (tickerShows(m.channel)) renderTicker(); },
       onState: (s) => {
         if (s === 'connecting' && busStream.buffer.length === 0) {
           tickerPane.innerHTML = '<div class="bus-empty">connecting…</div>';
