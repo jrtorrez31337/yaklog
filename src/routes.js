@@ -5,7 +5,7 @@ const crypto = require('crypto');
 const { execFileSync } = require('child_process');
 const { insertMessage, listMessages, listChannels, updateMessage, deleteMessage, getMessage,
         upsertPresence, getPresenceByAgent, listPresence, listPresenceTransitions,
-        deletePresenceRow } = require('./db');
+        deletePresenceRow, insertAgentActivity, listAgentActivity } = require('./db');
 const { streamHandler } = require('./stream');
 const config = require('./config');
 const { enforceSenderBinding, enforceMutationBinding, resolveAllowedSenders } = require('./middleware/senderBinding');
@@ -551,6 +551,76 @@ router.delete('/presence/:agent_id', (req, res) => {
     return res.status(404).json({ error: 'NotFound', message: `No presence record for ${agentId}.` });
   }
   return res.status(200).json({ deleted, reason });
+});
+
+// CP10.3 (2026-06-02): per-agent activity timeline ingest.
+// Daemon batches distilled hook-events client-side (yaklog-sub allowlist
+// redacts secrets BEFORE they leave the daemon host) and POSTs every few
+// seconds. Server enforces daemon-binding (sender matches agent_id) and
+// caps payload size; storage layer trims to last 200 per agent on insert.
+// Operator-only visibility — never crosses to swarm bus per
+// feedback_dashboard_alerts_are_human_only generalization.
+const ACTIVITY_BATCH_MAX = 100;
+const ACTIVITY_PAYLOAD_MAX_BYTES = 4096;
+const ACTIVITY_EVENT_RE = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
+
+router.post('/agents/:agent_id/activity', (req, res) => {
+  const agent_id = req.params.agent_id;
+  if (!AGENT_ID_RE.test(agent_id)) {
+    return res.status(400).json({ error: 'ValidationError', message: 'agent_id must match [a-zA-Z0-9._:@/-] (1-64 chars).' });
+  }
+  const violation = enforceDaemonBinding(req, agent_id);
+  if (violation) return res.status(violation.status).json(violation.body);
+
+  const entries = req.body && Array.isArray(req.body.entries) ? req.body.entries : null;
+  if (!entries) {
+    return res.status(400).json({ error: 'ValidationError', message: 'entries must be an array of activity events.' });
+  }
+  if (entries.length === 0) {
+    return res.json({ inserted: 0 });
+  }
+  if (entries.length > ACTIVITY_BATCH_MAX) {
+    return res.status(400).json({ error: 'ValidationError', message: `entries length must be ≤ ${ACTIVITY_BATCH_MAX}.` });
+  }
+  // Validate each entry shape + size cap. Reject the whole batch on any
+  // bad entry — daemons should produce clean batches; partial-success
+  // semantics complicate retry logic.
+  for (const e of entries) {
+    if (!e || typeof e !== 'object') {
+      return res.status(400).json({ error: 'ValidationError', message: 'each entry must be an object.' });
+    }
+    if (typeof e.event !== 'string' || !ACTIVITY_EVENT_RE.test(e.event)) {
+      return res.status(400).json({ error: 'ValidationError', message: 'entry.event must match [A-Za-z][A-Za-z0-9_]{0,63}.' });
+    }
+    if (e.ts !== undefined && (typeof e.ts !== 'string' || e.ts.length > 40)) {
+      return res.status(400).json({ error: 'ValidationError', message: 'entry.ts must be an ISO-8601 string ≤ 40 chars.' });
+    }
+    if (e.payload !== undefined && e.payload !== null) {
+      if (typeof e.payload !== 'object') {
+        return res.status(400).json({ error: 'ValidationError', message: 'entry.payload must be an object or null.' });
+      }
+      let serialized;
+      try { serialized = JSON.stringify(e.payload); }
+      catch { return res.status(400).json({ error: 'ValidationError', message: 'entry.payload is not JSON-serializable.' }); }
+      if (serialized.length > ACTIVITY_PAYLOAD_MAX_BYTES) {
+        return res.status(413).json({ error: 'PayloadTooLarge', message: `entry.payload exceeds ${ACTIVITY_PAYLOAD_MAX_BYTES} bytes.` });
+      }
+    }
+  }
+  const inserted = insertAgentActivity(agent_id, entries);
+  return res.json({ inserted });
+});
+
+router.get('/agents/:agent_id/activity', (req, res) => {
+  const agent_id = req.params.agent_id;
+  if (!AGENT_ID_RE.test(agent_id)) {
+    return res.status(400).json({ error: 'ValidationError', message: 'agent_id must match [a-zA-Z0-9._:@/-] (1-64 chars).' });
+  }
+  const limit = req.query.limit ? parseInt(req.query.limit, 10) : 50;
+  if (!Number.isFinite(limit) || limit < 1 || limit > 200) {
+    return res.status(400).json({ error: 'ValidationError', message: 'limit must be 1-200.' });
+  }
+  return res.json({ activity: listAgentActivity(agent_id, limit) });
 });
 
 router.get('/stream', streamHandler);

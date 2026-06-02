@@ -471,6 +471,24 @@ publicRouter.get('/messages', (req, res) => {
 
 publicRouter.get('/messages-stream', messageStreamHandler);
 
+// CP10.3 (2026-06-02) — per-agent activity timeline public-mirror.
+// Operator-facing dashboard view; network-isolation trust (same posture as
+// the rest of public/*). Daemon-side allowlist redacts secrets before they
+// reach the server; this endpoint just reads back the rolling buffer.
+publicRouter.get('/activity', (req, res) => {
+  const { listAgentActivity } = require('./db');
+  const agent_id = req.query.agent_id ? String(req.query.agent_id) : null;
+  if (!agent_id || !/^[a-zA-Z0-9._:@/-]{1,64}$/.test(agent_id)) {
+    return res.status(400).json({ error: 'ValidationError', message: 'agent_id is required, must match [a-zA-Z0-9._:@/-] (1-64 chars).' });
+  }
+  const limit = parsePosInt(req.query.limit, 50, 200);
+  if (limit === null) {
+    return res.status(400).json({ error: 'ValidationError', message: 'limit must be a non-negative integer (max 200).' });
+  }
+  const activity = listAgentActivity(agent_id, limit);
+  return res.json({ agent_id, activity, count: activity.length });
+});
+
 // CP9 (2026-06-01) — Channels tab: per-channel sidebar listing.
 // Public-mirror of the authed /channels surface (network-isolation trust
 // per the rest of /api/v1/plexus/public/*). Returns one row per channel

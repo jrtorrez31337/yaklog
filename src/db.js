@@ -280,6 +280,23 @@ function initializeDb() {
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_reg_events_agent ON registration_events(agent_id, ts DESC)`).run();
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_reg_events_type ON registration_events(event_type, ts DESC)`).run();
 
+  // CP10.3 (2026-06-02): per-agent activity timeline — distilled hook stream
+  // from yaklog-sub daemon. Operator-facing structured trace of what each
+  // agent has been doing. Allowlist-redacted at daemon-side (default-deny
+  // on secrets); the server only stores what arrives. Trimmed to last 200
+  // per agent on each insert to bound disk + render cost.
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS agent_activity (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      agent_id     TEXT NOT NULL,
+      ts           TEXT NOT NULL,
+      event        TEXT NOT NULL,
+      payload_json TEXT
+    )
+  `).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_activity_agent_id_desc ON agent_activity(agent_id, id DESC)`).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_activity_ts ON agent_activity(ts DESC)`).run();
+
   return db;
 }
 
@@ -895,6 +912,57 @@ function expireStalePresence(ttlSeconds) {
 // (which only flips daemon_state=down); intended for retired agents whose
 // row should disappear from the dashboard rather than ghost as "offline".
 // Returns the deleted row (for the API response) or null if absent.
+// CP10.3: per-agent activity timeline helpers.
+const ACTIVITY_PER_AGENT_CAP = 200;
+function insertAgentActivity(agentId, entries) {
+  if (!agentId || !Array.isArray(entries) || entries.length === 0) return 0;
+  const database = getDb();
+  const ins = database.prepare(
+    'INSERT INTO agent_activity (agent_id, ts, event, payload_json) VALUES (?, ?, ?, ?)'
+  );
+  const tx = database.transaction((rows) => {
+    let n = 0;
+    for (const r of rows) {
+      if (!r || typeof r !== 'object') continue;
+      const ts = typeof r.ts === 'string' && r.ts ? r.ts : new Date().toISOString();
+      const event = typeof r.event === 'string' && r.event ? r.event.slice(0, 64) : 'unknown';
+      // Server NEVER re-parses payload — daemon-side distillation is the
+      // contract. We store whatever (already-redacted) JSON arrived as-is.
+      const payload = (r.payload === undefined) ? null : JSON.stringify(r.payload);
+      ins.run(agentId, ts, event, payload);
+      n++;
+    }
+    // Trim to cap: delete oldest beyond ACTIVITY_PER_AGENT_CAP per agent.
+    database.prepare(`
+      DELETE FROM agent_activity
+      WHERE agent_id = ?
+        AND id NOT IN (
+          SELECT id FROM agent_activity
+          WHERE agent_id = ?
+          ORDER BY id DESC
+          LIMIT ?
+        )
+    `).run(agentId, agentId, ACTIVITY_PER_AGENT_CAP);
+    return n;
+  });
+  return tx(entries);
+}
+function listAgentActivity(agentId, limit = 50) {
+  if (!agentId) return [];
+  const database = getDb();
+  const lim = Math.max(1, Math.min(200, Number(limit) || 50));
+  const rows = database
+    .prepare('SELECT id, ts, event, payload_json FROM agent_activity WHERE agent_id = ? ORDER BY id DESC LIMIT ?')
+    .all(agentId, lim);
+  return rows.map((r) => ({
+    id: r.id,
+    ts: r.ts,
+    event: r.event,
+    payload: r.payload_json ? safeParse(r.payload_json) : null,
+  }));
+}
+function safeParse(s) { try { return JSON.parse(s); } catch { return null; } }
+
 function deletePresenceRow(agentId, { reason = 'decommissioned', actor = null } = {}) {
   const database = getDb();
   const existing = database.prepare('SELECT * FROM presence WHERE agent_id = ?').get(agentId);
@@ -940,6 +1008,9 @@ module.exports = {
   expireStalePresence,
   deletePresenceRow,
   deriveLabel,
+  // CP10.3: activity timeline
+  insertAgentActivity,
+  listAgentActivity,
   closeDb,
   messageBus
 };
