@@ -42,7 +42,7 @@ const MANIFEST = {
 
     {
       name: 'yaklog-sub daemon',
-      version: '0.5.8.0',
+      version: '0.5.15',
       source_repo: '/srv/git/agent-tooling.git',
       source_path: 'yaklog-sub/yaklog-sub',
       install_command:
@@ -51,16 +51,24 @@ const MANIFEST = {
         'systemctl --user restart yaklog-sub@<YOUR-AGENT-ID>.service',
       description:
         'Per-agent Python daemon: tails state.jsonl, posts /presence/event ' +
-        'heartbeat. v0.5.8.0 adds ADR-0026 stub-not-body for private=1 ' +
-        'messages (MANDATORY for shared-uid hosts; events.ndjson is mode-664 ' +
-        'on traptop10k, so DM bodies must not land at-rest).',
+        'heartbeat. v0.5.15 adds per-event activity emission to /agents/<id>/' +
+        'activity (dashboard Trace view) + opt-in auto-update via /update/' +
+        'manifest cascade (YAKLOG_AUTO_UPDATE=1 env). v0.5.8.0 added ADR-0026 ' +
+        'stub-not-body for private=1 messages.',
       changed_in:
-        'v0.5.8.0 — ADR-0026 Phase 1b stub-not-body for private messages. ' +
-        'v0.5.7.4 — daemon-process detail reporting (CP6.10). ' +
-        'v0.5.7.3 — uid/gid/hostname/cwd reporting (CP6.8). ' +
-        'v0.5.7.1 — semantic-clear current_tool on PostToolUse (yaklog #6347).',
+        'v0.5.15 — CP10.3 M2 activity distillation (allowlist-redacted) + ' +
+        'CP10.4 UpdateWatcher cascade-upgrade (jittered 10-60min polling, ' +
+        'sha256-verified swap, systemd-restart on bump). Per Jon-direct ' +
+        '2026-06-02 design fork (A): manifest-trigger, daemon-self-execute. ' +
+        'v0.5.8.0 — ADR-0026 stub-not-body. ' +
+        'v0.5.7.4 — daemon-process detail. v0.5.7.1 — current_tool semantic-clear.',
       audience: 'every CC agent',
-      check_dashboard_pill: true,  // dashboard surfaces "update available" via this entry
+      check_dashboard_pill: true,
+      // CP10.4 (2026-06-02): cascade-upgrade fields.
+      // download_url: where v0.5.15+ daemons fetch the binary
+      // sha256: server-computed at request-time; daemon verifies before swap
+      download_url: '/api/v1/update/artifact/yaklog-sub',
+      auto_update_env: 'YAKLOG_AUTO_UPDATE=1',
     },
 
     {
@@ -186,12 +194,39 @@ const MANIFEST = {
   ],
 };
 
+// CP10.4 (2026-06-02): inject computed SHA256 for cascade-upgrade-eligible
+// artifacts so daemons can verify the download before atomic-swapping the
+// binary. Computed lazily per-request (cheap — single sha256 over ~40KB
+// Python file); never cached in case operator pushes a new daemon between
+// requests without restarting the server. If git read fails, sha256 is
+// omitted (daemon refuses to install without it — fail-closed).
+const { execFileSync: _execFileSyncForSha } = require('child_process');
+const _crypto = require('crypto');
+function _sha256OfArtifact(repo, refPath) {
+  try {
+    const content = _execFileSyncForSha('git', [
+      '--git-dir=' + repo, 'show', refPath,
+    ], { maxBuffer: 16 * 1024 * 1024 });
+    return _crypto.createHash('sha256').update(content).digest('hex');
+  } catch {
+    return null;
+  }
+}
+
 function getManifest() {
-  // Return a fresh copy with current generated_at timestamp; rest is static.
-  return {
+  // Return a fresh copy with current generated_at timestamp + computed
+  // sha256 for daemon-binary download verification.
+  const out = {
     ...MANIFEST,
     generated_at: new Date().toISOString(),
+    artifacts: MANIFEST.artifacts.map((a) => {
+      if (a.name === 'yaklog-sub daemon' && a.download_url) {
+        return { ...a, sha256: _sha256OfArtifact(a.source_repo, `HEAD:${a.source_path}`) };
+      }
+      return a;
+    }),
   };
+  return out;
 }
 
 // Convenience: pluck the canonical version of a named artifact. Used by

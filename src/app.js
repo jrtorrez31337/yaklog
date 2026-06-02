@@ -141,6 +141,40 @@ app.get('/update.js', noCacheDashboard, (req, res) => {
   res.sendFile(path.join(__dirname, '..', 'public', 'update.js'));
 });
 
+// CP10.4 (2026-06-02): cascade-upgrade artifact serving — daemon-facing.
+// Serves canonical artifact CONTENT from /srv/git/agent-tooling.git (bare-git)
+// so v0.5.15+ daemons with YAKLOG_AUTO_UPDATE=1 can pull a fresh binary
+// without touching git directly. Whitelisted by artifact name (no path
+// traversal); content fetched via `git show <ref>:<path>` of canonical
+// HEAD on the manifest-named source_repo. SHA-256 of returned content is
+// in a response header so daemon can verify against manifest before swap.
+const { execFileSync: execFileSyncForArtifact } = require('child_process');
+const cryptoForArtifact = require('crypto');
+const ARTIFACT_WHITELIST = {
+  // name in manifest → { bare-git repo path, file path within repo, ref (default HEAD) }
+  'yaklog-sub': { repo: '/srv/git/agent-tooling.git', path: 'yaklog-sub/yaklog-sub', ref: 'HEAD' },
+};
+app.get('/api/v1/update/artifact/:name', (req, res) => {
+  const name = req.params.name;
+  const spec = ARTIFACT_WHITELIST[name];
+  if (!spec) {
+    return res.status(404).json({ error: 'NotFound', message: `Unknown artifact: ${name}` });
+  }
+  let content;
+  try {
+    content = execFileSyncForArtifact('git', [
+      '--git-dir=' + spec.repo, 'show', `${spec.ref}:${spec.path}`,
+    ], { maxBuffer: 16 * 1024 * 1024 });
+  } catch (e) {
+    return res.status(500).json({ error: 'GitReadError', message: e.message });
+  }
+  const sha256 = cryptoForArtifact.createHash('sha256').update(content).digest('hex');
+  res.setHeader('X-Artifact-SHA256', sha256);
+  res.setHeader('Content-Type', 'application/octet-stream');
+  res.setHeader('Content-Length', String(content.length));
+  res.send(content);
+});
+
 // CP2: vendored frontend libs (uPlot etc.). Versioned content, served with
 // long-lived browser cache. express.static handles content-type, range,
 // etag, and 404-on-missing without us hand-rolling each file.
