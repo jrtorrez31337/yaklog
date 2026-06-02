@@ -42,33 +42,30 @@ const MANIFEST = {
 
     {
       name: 'yaklog-sub daemon',
-      version: '0.5.15',
+      version: '0.5.16',
       source_repo: '/srv/git/agent-tooling.git',
       source_path: 'yaklog-sub/yaklog-sub',
       install_command:
         'WORK=$(mktemp -d); git clone /srv/git/agent-tooling.git "$WORK/at" && ' +
-        'install -m 755 "$WORK/at/yaklog-sub/yaklog-sub" ~/.local/bin/yaklog-sub && ' +
-        'systemctl --user restart yaklog-sub@<YOUR-AGENT-ID>.service',
+        '"$WORK/at/yaklog-sub/install-plexus.sh"',
       description:
         'Per-agent Python daemon: tails state.jsonl, posts /presence/event ' +
-        'heartbeat. v0.5.15 adds per-event activity emission to /agents/<id>/' +
-        'activity (dashboard Trace view) + opt-in auto-update via /update/' +
-        'manifest cascade (YAKLOG_AUTO_UPDATE=1 env). v0.5.8.0 added ADR-0026 ' +
-        'stub-not-body for private=1 messages.',
+        'heartbeat. v0.5.16 adds ChannelWatcher (file-watcher on ' +
+        '~/.config/yaklog/channels; reconnects SSE with new subscription ' +
+        'list when file changes, no restart). v0.5.15 added activity ' +
+        'distillation (dashboard Trace view) + opt-in cascade auto-update.',
       changed_in:
-        'v0.5.15 — CP10.3 M2 activity distillation (allowlist-redacted) + ' +
-        'CP10.4 UpdateWatcher cascade-upgrade (jittered 10-60min polling, ' +
-        'sha256-verified swap, systemd-restart on bump). Per Jon-direct ' +
-        '2026-06-02 design fork (A): manifest-trigger, daemon-self-execute. ' +
-        'v0.5.8.0 — ADR-0026 stub-not-body. ' +
-        'v0.5.7.4 — daemon-process detail. v0.5.7.1 — current_tool semantic-clear.',
+        'v0.5.16 — channels-realtime file-watcher (live subscribe/unsubscribe ' +
+        'without daemon restart). ' +
+        'v0.5.15 — CP10.3 M2 activity distillation + CP10.4 UpdateWatcher ' +
+        'cascade-upgrade (jittered 10-60min polling, sha256-verified swap). ' +
+        'v0.5.8.0 — ADR-0026 stub-not-body for private messages. ' +
+        'v0.5.7.x — daemon-process detail + runtime-env + current_tool semantic-clear.',
       audience: 'every CC agent',
       check_dashboard_pill: true,
-      // CP10.4 (2026-06-02): cascade-upgrade fields.
-      // download_url: where v0.5.15+ daemons fetch the binary
-      // sha256: server-computed at request-time; daemon verifies before swap
       download_url: '/api/v1/update/artifact/yaklog-sub',
       auto_update_env: 'YAKLOG_AUTO_UPDATE=1',
+      install_via: 'install-plexus.sh',
     },
 
     {
