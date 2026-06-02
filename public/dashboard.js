@@ -974,7 +974,7 @@
   // lazy-fetched via the agent.identity.byAgentId instant template.
   // ────────────────────────────────────────────────────────────────────
 
-  const VIEW_LABELS = ['Live', 'Activity', 'Cost', 'Identity', 'Runtime'];
+  const VIEW_LABELS = ['Live', 'Activity', 'Cost', 'Identity', 'Runtime', 'Trace'];
   const cardInstances = new Map();    // agent_id → AgentCard
   // Per-agent latest SSE frame slices (for chart views).
   // SSE templates have FIXED lookback (1h); these are the default-window cache.
@@ -1342,6 +1342,7 @@
         case 2: this._renderCost(); break;
         case 3: this._renderIdentity(); break;
         case 4: this._renderRuntime(); break;
+        case 5: this._renderTrace(); break;
       }
     }
     _renderLive() {
@@ -1659,6 +1660,105 @@
       }
       this.bodyEl.appendChild(wireDl);
     }
+    // CP10.3 M3: per-agent event-trace bubble timeline.
+    // Fetches /plexus/public/activity?agent_id=X (operator-only network-isolation
+    // trust). Renders each event as an agent-colored bubble, newest-first.
+    // Distillation is daemon-side (allowlist-redacted secrets); UI just renders.
+    async _renderTrace() {
+      clearChildren(this.bodyEl);
+      this.bodyEl.className = 'agent-card-body view-trace';
+      this.bodyEl.appendChild(el('div', { class: 'view-loading-inline' }, 'loading activity…'));
+      const seq = ++this._traceSeq || (this._traceSeq = 1);
+      try {
+        const r = await fetch(`/api/v1/plexus/public/activity?agent_id=${encodeURIComponent(this.agentId)}&limit=50`);
+        if (this.currentView !== 5) return;
+        if (this._traceSeq !== seq) return;
+        clearChildren(this.bodyEl);
+        if (!r.ok) {
+          this.bodyEl.appendChild(el('div', { class: 'view-empty' }, `error: HTTP ${r.status}`));
+          return;
+        }
+        const j = await r.json();
+        const events = j.activity || [];
+        if (events.length === 0) {
+          this.bodyEl.appendChild(el('div', { class: 'view-empty' },
+            'no activity captured yet — daemon needs v0.5.15+ (M2 rollout pending)'));
+          return;
+        }
+        const ac = agentColor(this.agentId);
+        const wrap = el('div', { class: 'trace-stream' });
+        // Events come newest-first from server; render in that order (newest at top)
+        for (const ev of events) {
+          const row = el('div', { class: 'trace-row' });
+          row.appendChild(el('span', { class: 'trace-icon' }, traceIcon(ev.event)));
+          const bubble = el('div', {
+            class: 'trace-bubble',
+            style: `background:${ac.hex}`,
+            title: `${ev.event} · ${ev.ts || ''} · #${ev.id}`,
+          });
+          bubble.appendChild(el('span', { class: 'trace-evt' }, ev.event));
+          const summary = summarizeTraceEvent(ev);
+          if (summary) bubble.appendChild(el('span', { class: 'trace-sum' }, ' · ' + summary));
+          row.appendChild(bubble);
+          row.appendChild(el('span', { class: 'trace-age' }, _fmtAgeShort(ev.ts)));
+          wrap.appendChild(row);
+        }
+        this.bodyEl.appendChild(wrap);
+        // 5s auto-refresh while this view is active
+        if (this._traceInterval) clearInterval(this._traceInterval);
+        this._traceInterval = setInterval(() => {
+          if (this.currentView === 5) this._renderTrace();
+          else { clearInterval(this._traceInterval); this._traceInterval = null; }
+        }, 5000);
+      } catch (e) {
+        if (this.currentView !== 5) return;
+        clearChildren(this.bodyEl);
+        this.bodyEl.appendChild(el('div', { class: 'view-empty' }, 'error: ' + e.message));
+      }
+    }
+  }
+  // Tiny helpers for trace view — outside the class so they can stay pure.
+  function traceIcon(event) {
+    switch (event) {
+      case 'SessionStart': return '🟢';
+      case 'Stop': return '🤖';
+      case 'StopFailure': return '🛑';
+      case 'PreToolUse': return '🔧';
+      case 'PostToolUse': return '✓';
+      case 'PostToolUseFailure': return '⚠️';
+      case 'UserPromptSubmit': return '📥';
+      case 'SubagentStart': return '🧠';
+      case 'SubagentStop': return '↩️';
+      case 'Compaction': case 'PreCompact': return '💾';
+      default: return '·';
+    }
+  }
+  function summarizeTraceEvent(ev) {
+    const p = ev.payload || {};
+    const parts = [];
+    if (p.tool) parts.push(p.tool);
+    if (p.cmd) parts.push('`' + String(p.cmd).slice(0, 60) + '`');
+    else if (p.cmd_preview) parts.push('`' + String(p.cmd_preview).slice(0, 60) + '`');
+    if (p.file) parts.push(String(p.file).replace(/^\/home\/[^/]+/, '~'));
+    else if (p.file_path) parts.push(String(p.file_path).replace(/^\/home\/[^/]+/, '~'));
+    if (p.pattern) parts.push(`/${p.pattern}/`);
+    if (p.url) parts.push(p.url);
+    if (p.subagent_type) parts.push(p.subagent_type);
+    if (p.desc) parts.push('"' + String(p.desc).slice(0, 40) + '"');
+    if (p.model) parts.push(p.model);
+    if (p.status) parts.push(p.status);
+    if (p.duration_ms != null) parts.push(p.duration_ms + 'ms');
+    if (p.reason) parts.push(p.reason);
+    return parts.join(' ');
+  }
+  function _fmtAgeShort(iso) {
+    if (!iso) return '';
+    const ms = Date.now() - new Date(iso).getTime();
+    if (!Number.isFinite(ms)) return '';
+    if (ms < 60_000) return Math.floor(ms / 1000) + 's';
+    if (ms < 3_600_000) return Math.floor(ms / 60_000) + 'm';
+    if (ms < 86_400_000) return Math.floor(ms / 3_600_000) + 'h';
+    return Math.floor(ms / 86_400_000) + 'd';
   }
 
   // CP6.5: history-window toggle (1h / 6h / 24h / 7d).
