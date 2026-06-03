@@ -23,10 +23,24 @@
   const $ = (id) => document.getElementById(id);
   $('origin').textContent = location.host;
 
+  // CP10.5.3 (2026-06-03): SQLite returns `created_at` etc. as
+  // "YYYY-MM-DD HH:MM:SS" (no T, no Z) which browsers parse as LOCAL time.
+  // For UTC-stored timestamps viewed from west-of-UTC browsers, the parsed
+  // local time shifts INTO THE FUTURE → Date.now()-parsed = NEGATIVE age
+  // (Jon-flagged: "the time is wrong, it's a negative number"). Normalize
+  // to ISO-Z so Date() parses as UTC.
+  function _parseUtcIso(iso) {
+    if (!iso) return null;
+    return new Date(iso.includes('T') ? iso : iso.replace(' ', 'T') + 'Z');
+  }
   function fmtAge(iso) {
     if (!iso) return '—';
-    const ms = Date.now() - new Date(iso).getTime();
-    if (Number.isNaN(ms)) return iso;
+    const ts = _parseUtcIso(iso);
+    if (!ts || Number.isNaN(ts.getTime())) return iso;
+    let ms = Date.now() - ts.getTime();
+    // Defend against clock-skew / server-side future timestamps: clamp at 0
+    // instead of rendering a negative.
+    if (ms < 0) ms = 0;
     const s = Math.floor(ms / 1000);
     if (s < 60) return s + 's ago';
     const m = Math.floor(s / 60);
@@ -38,7 +52,9 @@
   }
   function ageClass(iso) {
     if (!iso) return 'old';
-    const ms = Date.now() - new Date(iso).getTime();
+    const ts = _parseUtcIso(iso);
+    if (!ts || Number.isNaN(ts.getTime())) return 'old';
+    const ms = Math.max(0, Date.now() - ts.getTime());
     if (ms < STALE_AFTER_MS) return 'recent';
     if (ms < OLD_AFTER_MS) return 'stale';
     return 'old';
@@ -223,7 +239,7 @@
       backoff = POLL_MS;
     } catch (e) {
       setStatus('error', 'unreachable');
-      setBanner('yaklog server unreachable: ' + e.message + ' — retry in ' + (backoff / 1000) + 's');
+      setBanner('Plexus server unreachable: ' + e.message + ' — retry in ' + (backoff / 1000) + 's');
       backoff = Math.min(backoff * 2, MAX_BACKOFF_MS);
     }
     pollTimer = setTimeout(poll, backoff);
@@ -1348,7 +1364,7 @@
         // CP7.3: agent's daemon is pre-version-reporting (pre-v0.5.7.4) so we
         // can't compare against canon. Surface a distinct "stale daemon" pill
         // so this cohort gets the upgrade nag — they were silent under CP7.2.
-        const tip = `daemon is pre-v${r.canonical_daemon_version || '0.5.7.4'} (pre-version-reporting); re-pull yaklog-sub from /update`;
+        const tip = `daemon is pre-v${r.canonical_daemon_version || '0.5.7.4'} (pre-version-reporting); re-pull the Plexus daemon from /update`;
         pills.appendChild(el('span', {
           class: 'stale-pill',
           title: tip,
@@ -1557,7 +1573,7 @@
     //                            Identity per Jon-direct 2026-05-26)
     //   3. CC session            cwd / model / source / current_tool /
     //                            last_tool_name / last_tool_status
-    //   4. Yaklog wire state     events_consumer_count / sse_connected /
+    //   4. Plexus wire state     events_consumer_count / sse_connected /
     //                            cursor_position / last_hook_at /
     //                            last_state_change_at
     //
@@ -1665,8 +1681,8 @@
       }
       this.bodyEl.appendChild(sessDl);
 
-      // ── Section 4: Yaklog wire state ─────────────────────────
-      this.bodyEl.appendChild(el('h4', null, 'Yaklog wire state'));
+      // ── Section 4: Plexus wire state ─────────────────────────
+      this.bodyEl.appendChild(el('h4', null, 'Plexus wire state'));
       const wireDl = el('dl');
       const hookAge = ageOf(r.last_hook_at);
       const stateAge = ageOf(r.last_state_change_at);
@@ -1778,9 +1794,14 @@
     return parts.join(' ');
   }
   function _fmtAgeShort(iso) {
+    // CP10.5.3: same UTC-parse fix as fmtAge (Trace view bubble ages were
+    // also negative for west-of-UTC browsers when the timestamp came from
+    // SQLite's naive 'YYYY-MM-DD HH:MM:SS' format).
     if (!iso) return '';
-    const ms = Date.now() - new Date(iso).getTime();
-    if (!Number.isFinite(ms)) return '';
+    const dStr = iso.includes('T') ? iso : iso.replace(' ', 'T') + 'Z';
+    const ts = new Date(dStr);
+    if (Number.isNaN(ts.getTime())) return '';
+    const ms = Math.max(0, Date.now() - ts.getTime());
     if (ms < 60_000) return Math.floor(ms / 1000) + 's';
     if (ms < 3_600_000) return Math.floor(ms / 60_000) + 'm';
     if (ms < 86_400_000) return Math.floor(ms / 3_600_000) + 'h';

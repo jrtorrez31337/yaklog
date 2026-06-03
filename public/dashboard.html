@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>yaklog · Plexus dashboard</title>
+<title>Plexus dashboard</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="stylesheet" href="/vendor/uPlot/uPlot.min.css">
 <style>
@@ -362,7 +362,7 @@
 
   /* CP9 (2026-06-01): Channels tab — sidebar + iMessage-style thread view.
      Replaces the flat Bus ticker; the BusStream singleton continues to power
-     the Live-tab ticker. Self (yaklog-dev-agent) right-aligned blue bubbles;
+     the Live-tab ticker. Self (the dashboard host agent) right-aligned;
      others left-aligned slate; sender label + grouped timestamps above clusters. */
   .chan-shell { display: grid; grid-template-columns: 260px 1fr; height: calc(100vh - 220px); min-height: 500px; }
   .chan-sidebar { background: var(--panel); border-right: 1px solid var(--border); overflow-y: auto; display: flex; flex-direction: column; }
@@ -612,7 +612,7 @@
 </head>
 <body>
 <header>
-  <h1>yaklog <span class="muted">· Plexus dashboard</span></h1>
+  <h1>Plexus <span class="muted">dashboard</span></h1>
   <div class="counts" id="counts"></div>
   <div class="meta">
     <span id="hwm" class="hwm-badge" title="Global highest message id across all channels. Per-agent cursors below are filtered streams (own-sender + mention-set), so cursor &lt; global HWM is the normal case, not a desync.">global HWM: —</span>
