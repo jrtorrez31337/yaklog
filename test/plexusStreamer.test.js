@@ -222,16 +222,30 @@ test('registered FRAMES includes the new cluster.cost.* templates', () => {
   }
 });
 
-test('cluster.cost.today + cluster.cost.mtd buildPromql produce valid PromQL with @ anchors', () => {
+// CP11.0 (2026-06-03): the @-anchor subtraction approach was replaced
+// with sum(increase(metric[<elapsed-window>s])) per-frame because the
+// previous shape broke under counter-reset within the window (produced
+// negative "today" values when agents restarted mid-day). Test now
+// asserts the new shape: increase() over a dynamic seconds-window
+// matching elapsed-since-start-of-period.
+test('cluster.cost.today + cluster.cost.mtd buildPromql use increase() over elapsed-since-period-start', () => {
   const { FRAMES } = require('../src/plexusStreamer');
   const today = FRAMES.find(f => f.name === 'cluster.cost.today');
   const mtd = FRAMES.find(f => f.name === 'cluster.cost.mtd');
   const q1 = today.buildPromql();
   const q2 = mtd.buildPromql();
-  assert.match(q1, /@\s+\d+/);
-  assert.match(q2, /@\s+\d+/);
-  // MTD anchor should be earlier than today's anchor (or equal on 1st of month)
-  const todayTs = parseInt(q1.match(/@\s+(\d+)/)[1], 10);
-  const mtdTs = parseInt(q2.match(/@\s+(\d+)/)[1], 10);
-  assert.ok(mtdTs <= todayTs, 'MTD anchor must be ≤ today anchor');
+  // Both must use increase() over a dynamic [Ns] window (handles counter-reset)
+  assert.match(q1, /sum\(increase\(claude_code_cost_usage_USD_total\[\d+s\]\)\)/);
+  assert.match(q2, /sum\(increase\(claude_code_cost_usage_USD_total\[\d+s\]\)\)/);
+  // MTD window should be ≥ today's window (MTD covers today + earlier days)
+  const todayWindow = parseInt(q1.match(/\[(\d+)s\]/)[1], 10);
+  const mtdWindow = parseInt(q2.match(/\[(\d+)s\]/)[1], 10);
+  assert.ok(mtdWindow >= todayWindow, `MTD window (${mtdWindow}s) must be ≥ today window (${todayWindow}s)`);
+  // Both must be at least 60s (the floor in buildPromql)
+  assert.ok(todayWindow >= 60, 'today window must be ≥ 60s floor');
+  assert.ok(mtdWindow >= 60, 'mtd window must be ≥ 60s floor');
+  // today window must be ≤ 24h (it's elapsed-since-midnight)
+  assert.ok(todayWindow <= 86400, `today window (${todayWindow}s) must be ≤ 86400s (24h)`);
+  // mtd window must be ≤ 32d (it's elapsed-since-month-start, capped by longest month + safety)
+  assert.ok(mtdWindow <= 32 * 86400, `mtd window (${mtdWindow}s) must be ≤ 32d`);
 });

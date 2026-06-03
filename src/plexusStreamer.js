@@ -87,31 +87,52 @@ const FRAMES = [
   // with dynamic @ timestamps for time-anchored "today" and "MTD" semantics
   // (computed at poll time so they roll over correctly at midnight + month).
   {
-    // Cluster spend since 00:00 UTC today. Uses @ modifier with start-of-day
-    // unix ts so the "today" window slides each new day. `or vector(0)` keeps
-    // the diff well-defined if Prom doesn't have a series at midnight yet
-    // (Stage 1 startup edge case).
+    // Cluster spend since 00:00 UTC today.
+    //
+    // CP11.0 (2026-06-03) FIX: previous query used @-modifier subtraction
+    // (sum(metric) - sum(metric @ start-of-day)) which silently breaks under
+    // counter-reset within the window. When an agent's daemon restarts during
+    // the day, its counter drops from $X→$0→$Y where Y<X; sum-of-counters now
+    // becomes less than sum-of-counters at midnight, producing NEGATIVE
+    // "today" values (operator-observed: "today (UTC) $-0.1607"). The fix
+    // uses sum(increase(...)) over a dynamic window matching elapsed time
+    // since midnight — Prom's increase() function natively handles counter
+    // resets per-series. Same shape as cluster.cost.7d which was always
+    // correct because it used increase() from day one.
+    //
+    // Known limitation: increase() window > Prom retention (default 15d)
+    // returns partial data. cluster.cost.today (≤24h) never hits this.
+    // cluster.cost.mtd (up to 31d) is incomplete in the second half of
+    // months when retention < elapsed-month. Tracked under CP11.2 (cost
+    // persistence layer).
     name: 'cluster.cost.today',
     kind: 'instant',
     buildPromql: () => {
-      const startOfDay = Math.floor(new Date(new Date().setUTCHours(0, 0, 0, 0)).getTime() / 1000);
-      return `(sum(claude_code_cost_usage_USD_total) or vector(0)) - (sum(claude_code_cost_usage_USD_total @ ${startOfDay}) or vector(0))`;
+      const now = Date.now();
+      const startOfDay = new Date(new Date().setUTCHours(0, 0, 0, 0)).getTime();
+      const elapsedS = Math.max(60, Math.floor((now - startOfDay) / 1000));
+      return `sum(increase(claude_code_cost_usage_USD_total[${elapsedS}s]))`;
     },
   },
   {
     // Cluster spend over rolling 7 days. Static `increase[7d]` query.
+    // (Note: "rolling 7d" semantics — see CP11.3 for the calendar-aware
+    // replacement discussion. Keeping this as-is for v0 bug fix scope.)
     name: 'cluster.cost.7d',
     kind: 'instant',
     promql: 'sum(increase(claude_code_cost_usage_USD_total[7d]))',
   },
   {
-    // Month-to-date cluster spend. @ start of UTC month.
+    // Month-to-date cluster spend. CP11.0 FIX (same root cause as today):
+    // replaced @-modifier subtraction with sum(increase()) over a dynamic
+    // window of elapsed-since-month-start. Bounded above by Prom retention.
     name: 'cluster.cost.mtd',
     kind: 'instant',
     buildPromql: () => {
       const now = new Date();
-      const startOfMonth = Math.floor(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).getTime() / 1000);
-      return `(sum(claude_code_cost_usage_USD_total) or vector(0)) - (sum(claude_code_cost_usage_USD_total @ ${startOfMonth}) or vector(0))`;
+      const startOfMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).getTime();
+      const elapsedS = Math.max(60, Math.floor((now.getTime() - startOfMonth) / 1000));
+      return `sum(increase(claude_code_cost_usage_USD_total[${elapsedS}s]))`;
     },
   },
   {
