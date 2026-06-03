@@ -107,8 +107,12 @@
   /* CP6.3 — AgentCard grid (replaces presence table). One card per
      cluster agent; each card has 4 dot-tab views (Live/Activity/Cost/Identity). */
   .cards-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 10px; padding: 4px 18px 18px; }
-  .agent-card { background: var(--panel); border: 1px solid var(--border); border-radius: 4px; display: flex; flex-direction: column; min-height: 240px; border-left-width: 4px; border-left-color: var(--border); transition: border-left-color 0.2s; position: relative; outline: none; }
+  /* CP10.5.1 (2026-06-03): card uses 3-column grid (prev arrow | content |
+     next arrow) so arrows never overlap data. Content column houses head
+     + body in a nested flex-column. */
+  .agent-card { background: var(--panel); border: 1px solid var(--border); border-radius: 4px; min-height: 240px; border-left-width: 4px; border-left-color: var(--border); transition: border-left-color 0.2s; outline: none; overflow: hidden; display: grid; grid-template-columns: 24px 1fr 24px; }
   .agent-card:focus { box-shadow: 0 0 0 2px rgba(96,165,250,0.4); }
+  .agent-card-content { display: flex; flex-direction: column; min-width: 0; }
   .agent-card.is-offline { opacity: 0.55; }
   /* CP6.5: status-color left border matches the v0.5.7 presence-table badge palette */
   .agent-card.status-online,
@@ -133,28 +137,26 @@
   .agent-card-body::-webkit-scrollbar { width: 6px; }
   .agent-card-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 3px; }
   .agent-card-body::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.16); }
-  /* CP10.5 (2026-06-03): side-edge prev/next arrows replace bottom dot-row.
-     Arrows are translucent until card hovered, then full-opacity. Centered
-     vertically on the card. Keyboard nav (Left/Right arrow keys) works when
-     the card itself has focus (tabIndex=0). Wrap-around cycling. */
+  /* CP10.5.1: arrows occupy their own grid columns (24px wide) flanking
+     the content. Never overlap data. Translucent at rest; opaque on
+     hover/focus. Wrap-around cycling. Keyboard: Left/Right keys while
+     card is focused (tabIndex=0). */
   .agent-card-arrow {
-    position: absolute; top: 50%; transform: translateY(-50%);
-    width: 22px; height: 44px;
-    background: rgba(0,0,0,0.35);
-    border: 1px solid rgba(255,255,255,0.08);
+    background: rgba(255,255,255,0.02);
+    border: 0;
     color: var(--muted);
-    font-size: 18px; font-weight: 600; line-height: 1; padding: 0;
+    font-size: 20px; font-weight: 600; line-height: 1; padding: 0;
     cursor: pointer; user-select: none;
-    border-radius: 3px;
-    opacity: 0.35; transition: opacity 0.15s, color 0.15s, background 0.15s;
-    z-index: 5;
+    opacity: 0.45; transition: opacity 0.15s, color 0.15s, background 0.15s;
     display: flex; align-items: center; justify-content: center;
+    min-height: 0;
   }
-  .agent-card-arrow-prev { left: 2px; }
-  .agent-card-arrow-next { right: 2px; }
+  .agent-card-arrow-prev { border-right: 1px solid var(--border); }
+  .agent-card-arrow-next { border-left: 1px solid var(--border); }
   .agent-card:hover .agent-card-arrow,
-  .agent-card:focus .agent-card-arrow { opacity: 0.85; }
-  .agent-card-arrow:hover { opacity: 1; color: var(--text); background: rgba(96,165,250,0.20); border-color: var(--blue); }
+  .agent-card:focus .agent-card-arrow { opacity: 0.75; }
+  .agent-card-arrow:hover { opacity: 1; color: var(--text); background: rgba(96,165,250,0.18); }
+  .agent-card-arrow:focus { outline: none; opacity: 1; color: var(--blue); }
   .agent-card-view-label {
     color: var(--muted); font-size: 10px; text-transform: uppercase;
     letter-spacing: 0.06em; padding: 2px 6px; border-radius: 3px;

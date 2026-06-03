@@ -1235,9 +1235,15 @@
       }, '›');
       this.prevBtn.addEventListener('click', (e) => { e.stopPropagation(); this.cycleView(-1); });
       this.nextBtn.addEventListener('click', (e) => { e.stopPropagation(); this.cycleView(+1); });
+      // CP10.5.1 (2026-06-03): content wrapper so arrows don't overlap card
+      // info. Card is now a 3-column grid: prev | content | next. Content
+      // stacks head + body as before. Arrows live in dedicated columns,
+      // never overlap data.
+      this.contentEl = el('div', { class: 'agent-card-content' });
+      this.contentEl.appendChild(this.headEl);
+      this.contentEl.appendChild(this.bodyEl);
       this.el.appendChild(this.prevBtn);
-      this.el.appendChild(this.headEl);
-      this.el.appendChild(this.bodyEl);
+      this.el.appendChild(this.contentEl);
       this.el.appendChild(this.nextBtn);
       // Keyboard nav when card is focused
       this.el.tabIndex = 0;
