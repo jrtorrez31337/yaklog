@@ -402,16 +402,18 @@
   .chan-cluster-meta .sender-name { color: var(--text); font-weight: 500; }
   .chan-cluster-meta .runtime-badge { transform: scale(0.85); }
 
-  /* CP9.1: per-agent color drives bubble bg via inline --agent-bg style.
-     We darken the canonical palette hex by overlaying with a translucent
-     dark layer so text contrast stays readable across all 30 palette hues.
-     The cluster-dot in meta carries the true canonical color (lookup-able). */
-  .chan-bubble { max-width: 70%; padding: 8px 12px; border-radius: 16px; font-size: 13px; line-height: 1.45; word-wrap: break-word; white-space: pre-wrap; position: relative; color: #fff; background-blend-mode: multiply; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06); }
-  .chan-bubble::before { content: ''; position: absolute; inset: 0; background: rgba(0,0,0,0.32); border-radius: inherit; pointer-events: none; z-index: 0; }
-  .chan-bubble > * { position: relative; z-index: 1; }
-  .chan-bubble .bubble-id { font-size: 9px; opacity: 0.7; margin-right: 6px; font-variant-numeric: tabular-nums; }
-  .chan-bubble.from-self { border-bottom-right-radius: 4px; }
-  .chan-bubble.from-other { border-bottom-left-radius: 4px; }
+  /* CP10.5.4 (2026-06-03): bubble bodies use conventional messaging-platform
+     colors (self=blue/iMessage-style, other=slate). Per-agent color identity
+     stays on the .chan-cluster-dot next to the sender name (the bullet);
+     bubble body itself is content-focused, not identity-focused. Per
+     Jon-direct 'just the agent bullet color matters next to the name; the
+     message bubble itself should mimic major messaging platform design.' */
+  .chan-bubble { max-width: 70%; padding: 8px 12px; border-radius: 16px; font-size: 13px; line-height: 1.45; word-wrap: break-word; white-space: pre-wrap; position: relative; }
+  .chan-bubble .bubble-id { font-size: 9px; opacity: 0.55; margin-right: 6px; font-variant-numeric: tabular-nums; }
+  /* Self bubbles: iMessage-blue gradient, right-aligned tail */
+  .chan-bubble.from-self { background: linear-gradient(180deg, #2563eb 0%, #1d4ed8 100%); color: #fff; border-bottom-right-radius: 4px; }
+  /* Other bubbles: slate on dark theme, left-aligned tail */
+  .chan-bubble.from-other { background: rgba(255,255,255,0.08); color: var(--text); border-bottom-left-radius: 4px; }
   .chan-cluster.from-self .chan-bubble:first-child { border-top-right-radius: 16px; }
   .chan-cluster.from-self .chan-bubble:not(:first-child):not(:last-child) { border-top-right-radius: 4px; border-bottom-right-radius: 4px; }
   .chan-cluster.from-self .chan-bubble:last-child:not(:first-child) { border-top-right-radius: 4px; }

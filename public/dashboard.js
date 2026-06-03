@@ -2663,11 +2663,11 @@
     meta.appendChild(tEl);
     cluster.appendChild(meta);
     for (const m of msgs) {
+      // CP10.5.4 (2026-06-03): bubble bg now driven by .from-self / .from-other
+      // CSS classes (iMessage-style: blue/slate). Agent identity color stays
+      // on the .chan-cluster-dot in the meta row (the bullet next to name).
       const bubble = el('div', {
         class: 'chan-bubble ' + (isSelf ? 'from-self' : 'from-other') + (m.private ? ' private' : ''),
-        // Per-agent color drives the bubble bg; CSS uses --agent-bg for the
-        // base color and computes text contrast via a CSS filter.
-        style: `--agent-bg:${ac.hex}; background:${ac.hex};`,
         title: `#${m.id} · ${m.created_at || ''} · ${ac.name}`,
       });
       bubble.appendChild(el('span', { class: 'bubble-id' }, '#' + m.id));
