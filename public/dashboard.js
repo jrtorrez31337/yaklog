@@ -1218,33 +1218,48 @@
       this.el = el('div', { class: 'agent-card', 'data-agent-id': agentId });
       this.headEl = el('div', { class: 'agent-card-head' });
       this.bodyEl = el('div', { class: 'agent-card-body' });
-      this.dotsEl = el('div', { class: 'agent-card-dots' });
+      // CP10.5 (2026-06-03): replaced bottom dot-row with side-edge prev/next
+      // arrows + a compact view-label in the header. Saves vertical card space
+      // and makes the navigation feel like a carousel. Arrows wrap around.
+      this.prevBtn = el('button', {
+        type: 'button',
+        class: 'agent-card-arrow agent-card-arrow-prev',
+        'aria-label': 'previous view',
+        title: 'previous view (or use left arrow key when card focused)',
+      }, '‹');
+      this.nextBtn = el('button', {
+        type: 'button',
+        class: 'agent-card-arrow agent-card-arrow-next',
+        'aria-label': 'next view',
+        title: 'next view (or use right arrow key when card focused)',
+      }, '›');
+      this.prevBtn.addEventListener('click', (e) => { e.stopPropagation(); this.cycleView(-1); });
+      this.nextBtn.addEventListener('click', (e) => { e.stopPropagation(); this.cycleView(+1); });
+      this.el.appendChild(this.prevBtn);
       this.el.appendChild(this.headEl);
       this.el.appendChild(this.bodyEl);
-      this.el.appendChild(this.dotsEl);
-      this._buildDots();
+      this.el.appendChild(this.nextBtn);
+      // Keyboard nav when card is focused
+      this.el.tabIndex = 0;
+      this.el.addEventListener('keydown', (e) => {
+        if (e.target !== this.el) return;
+        if (e.key === 'ArrowLeft') { e.preventDefault(); this.cycleView(-1); }
+        else if (e.key === 'ArrowRight') { e.preventDefault(); this.cycleView(+1); }
+      });
     }
-    _buildDots() {
-      for (let i = 0; i < VIEW_LABELS.length; i++) {
-        const btn = el('button', {
-          type: 'button',
-          'data-view': String(i),
-          'data-view-label': VIEW_LABELS[i],
-          'aria-label': `${VIEW_LABELS[i]} view`,
-        }, i === 0 ? '●' : '○');
-        if (i === 0) btn.classList.add('active');
-        btn.addEventListener('click', () => this.setView(i));
-        this.dotsEl.appendChild(btn);
-      }
+    cycleView(delta) {
+      const n = VIEW_LABELS.length;
+      const next = ((this.currentView + delta) % n + n) % n;
+      this.setView(next);
     }
     setView(idx) {
       if (idx === this.currentView) return;
       this.currentView = idx;
-      const dots = this.dotsEl.querySelectorAll('button');
-      dots.forEach((b, i) => {
-        b.textContent = (i === idx) ? '●' : '○';
-        b.classList.toggle('active', i === idx);
-      });
+      // Update the view-label in the header (added by _renderHead)
+      const labelEl = this.headEl.querySelector('.agent-card-view-label');
+      if (labelEl) {
+        labelEl.textContent = `${VIEW_LABELS[idx]} ${idx + 1}/${VIEW_LABELS.length}`;
+      }
       this.rerenderBody();
     }
     update(presenceRow) {
@@ -1267,6 +1282,11 @@
       const badge = runtime && runtimeBadge(runtime);
       if (badge) this.headEl.appendChild(badge);
       this.headEl.appendChild(el('span', { class: 'name' }, r.agent_id || this.agentId));
+      // CP10.5: view-label shows current carousel position (e.g. "Trace 6/6")
+      this.headEl.appendChild(el('span', {
+        class: 'agent-card-view-label',
+        title: 'click ‹/› on the card edges (or arrow keys when focused) to switch view',
+      }, `${VIEW_LABELS[this.currentView]} ${this.currentView + 1}/${VIEW_LABELS.length}`));
       const lbl = r.label || '';
       this.headEl.appendChild(el('span', {
         class: 'label-badge label-' + lbl,
