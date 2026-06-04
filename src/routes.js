@@ -531,6 +531,32 @@ router.get('/presence/:agent_id', (req, res) => {
 // ssw-devops lane); req.auth.opsKeyId is populated by middleware/auth.js
 // path (c) when the Bearer is a YAKLOG_OPS_API_KEYS member. Records a
 // transition with the actor's opsKeyId-prefix for audit.
+// CP11.2 (2026-06-04): manual rollup trigger — ops-key gated.
+// Forces a cost_daily rollup for a specific date (default today). Useful
+// for catching late-arriving data, reconciling after a Prom outage, or
+// retroactive re-rollup after operator changes cost_dimension_tags.
+router.post('/ops/cost/rollup', async (req, res) => {
+  if (!req.auth || !req.auth.opsKeyId) {
+    return res.status(403).json({
+      error: 'OpsKeyRequired',
+      message: 'POST /ops/cost/rollup requires a Bearer token from YAKLOG_OPS_API_KEYS.'
+    });
+  }
+  const date = (req.body && typeof req.body.date === 'string')
+    ? req.body.date
+    : new Date().toISOString().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return res.status(400).json({ error: 'ValidationError', message: 'date must be YYYY-MM-DD' });
+  }
+  try {
+    const { rollupDay } = require('./costRollup');
+    const result = await rollupDay(date, { source: 'manual' });
+    return res.json({ ok: true, ...result, requested_by: `ops:${req.auth.opsKeyId}` });
+  } catch (e) {
+    return res.status(500).json({ error: 'RollupFailed', message: e.message });
+  }
+});
+
 router.delete('/presence/:agent_id', (req, res) => {
   if (!req.auth || !req.auth.opsKeyId) {
     return res.status(403).json({

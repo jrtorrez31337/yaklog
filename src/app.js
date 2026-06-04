@@ -15,6 +15,22 @@ const { initializeDb, listPresence, getGlobalHwm } = require('./db');
 
 initializeDb();
 
+// CP11.2 (2026-06-04): cost-history rollup scheduling per ratified ADR-0029.
+// Skipped in test env (tests mock Prom; don't want timer-noise interfering).
+// Backfill runs after a short delay to let the server come up cleanly first;
+// schedulers run in parallel from server boot.
+if (process.env.NODE_ENV !== 'test' && process.env.YAKLOG_COST_ROLLUP_DISABLED !== '1') {
+  const costRollup = require('./costRollup');
+  setTimeout(() => {
+    costRollup.backfill(15).catch((e) => {
+      console.error(`[costRollup] startup backfill failed: ${e.message}`);
+    });
+  }, 5_000);
+  costRollup.scheduleNightly();
+  costRollup.scheduleIntraday(3600_000);  // every 1h per OQ#3 CONCUR
+  console.log('[costRollup] backfill+schedulers armed (nightly 00:30 UTC; intraday 1h)');
+}
+
 const app = express();
 
 // helmet's default CSP includes `upgrade-insecure-requests` which forces the
