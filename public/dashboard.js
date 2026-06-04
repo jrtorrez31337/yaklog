@@ -2478,7 +2478,9 @@
     try {
       const sevenDaysAgo = new Date(Date.now() - 6 * 86400_000).toISOString().slice(0, 10);
       const today = new Date().toISOString().slice(0, 10);
-      const r = await fetch(`/api/v1/plexus/public/cost/daily?from=${sevenDaysAgo}&to=${today}&by=agent_id`);
+      // R1 (ADR-0029 v2.3 §Hero strip): default top-movers to cost_center (CFO-tier)
+      // not agent_id (engineering-ops-tier). Operator-switchable dimension TBD.
+      const r = await fetch(`/api/v1/plexus/public/cost/daily?from=${sevenDaysAgo}&to=${today}&by=cost_center`);
       const j = await r.json();
       const tile = document.getElementById('tile-top-movers');
       const wrap = tile.querySelector('.tile-movers');
@@ -2489,7 +2491,8 @@
       } else {
         for (const r of top3) {
           const row = el('div', { class: 'mover-row' });
-          row.appendChild(el('span', { class: 'mover-name', title: r.agent_id || '(unattributed)' }, r.agent_id || '(unattributed)'));
+          const label = r.cost_center || '(unallocated)';
+          row.appendChild(el('span', { class: 'mover-name', title: label }, label));
           row.appendChild(el('span', { class: 'mover-cost' }, fmtUSD(r.cost_usd)));
           wrap.appendChild(row);
         }
@@ -2596,7 +2599,9 @@
   }
 
   // ─── Composition sub-view ────────────────────────────────────────────
-  let _compDim = 'agent_id';
+  // R2 (ADR-0029 v2.3 §Composition): default to cost_center (CFO-tier).
+  // Operator can switch to agent_id via the dim picker.
+  let _compDim = 'cost_center';
   let _compPeriod = 'mtd';
   async function renderComposition() {
     const panel = document.getElementById('sub-composition');
@@ -2846,10 +2851,65 @@
     panel.appendChild(tagForm);
     tagBtn.addEventListener('click', () => tagForm.classList.toggle('open'));
 
+    // R4 (ADR-0029 v2.3 §cost_budgets): divergence indicator between
+    // cluster-cap envelope and SUM(per-CC envelopes). Pre-empts an operator-
+    // confusion class at first budget-rollout. Renders only when at least
+    // one budget is set (cluster-cap or per-CC) — silent otherwise.
+    const divergence = el('div', { id: 'budget-divergence' });
+    panel.appendChild(divergence);
+
     const list = el('div', { class: 'budget-list', id: 'budget-list' });
     panel.appendChild(list);
-    refreshBtn.addEventListener('click', () => loadBudgetList());
+    refreshBtn.addEventListener('click', () => { loadBudgetList(); loadBudgetDivergence(); });
     loadBudgetList();
+    loadBudgetDivergence();
+  }
+
+  async function loadBudgetDivergence() {
+    const wrap = document.getElementById('budget-divergence');
+    if (!wrap) return;
+    clearChildren(wrap);
+    try {
+      const [clusterR, ccR] = await Promise.all([
+        fetch('/api/v1/plexus/public/cost/burn-vs-budget?cost_center=&period_kind=monthly').then(r => r.json()),
+        fetch('/api/v1/plexus/public/cost/by-cost-center?period=mtd&period_kind=monthly').then(r => r.json()),
+      ]);
+      const clusterCap = clusterR.budget_usd;
+      const ccBudgets = (ccR.rows || []).filter(r => r.budget_usd != null && r.cost_center !== '');
+      const sumCC = ccBudgets.reduce((s, r) => s + (r.budget_usd || 0), 0);
+      if (clusterCap == null && ccBudgets.length === 0) return;  // silent: no budgets
+
+      const banner = el('div', { class: 'divergence-banner' });
+      const left = el('div', { class: 'divergence-row' });
+      left.appendChild(el('span', { class: 'divergence-lbl' }, 'Cluster cap'));
+      left.appendChild(el('span', { class: 'divergence-val' }, clusterCap != null ? fmtUSD(clusterCap) : '(not set)'));
+      left.appendChild(el('span', { class: 'divergence-sep' }, '·'));
+      left.appendChild(el('span', { class: 'divergence-lbl' }, `Sum of ${ccBudgets.length} CC envelope${ccBudgets.length === 1 ? '' : 's'}`));
+      left.appendChild(el('span', { class: 'divergence-val' }, fmtUSD(sumCC)));
+      banner.appendChild(left);
+
+      if (clusterCap != null) {
+        const delta = sumCC - clusterCap;
+        const pct = clusterCap > 0 ? (delta / clusterCap) * 100 : 0;
+        const right = el('div', { class: 'divergence-delta' });
+        if (Math.abs(delta) < 0.005) {
+          right.classList.add('match');
+          right.textContent = '✓ envelopes match cluster cap';
+        } else if (delta < 0) {
+          right.classList.add('slack');
+          right.textContent = `↓ ${fmtUSD(Math.abs(delta))} cluster slack (${Math.abs(pct).toFixed(1)}% unallocated headroom)`;
+        } else {
+          right.classList.add('overage');
+          right.textContent = `↑ ${fmtUSD(delta)} CC overage (${pct.toFixed(1)}% over cluster cap)`;
+        }
+        banner.appendChild(right);
+      } else if (sumCC > 0) {
+        const right = el('div', { class: 'divergence-delta slack' });
+        right.textContent = 'no cluster-cap set — operator should set one for envelope-divergence governance';
+        banner.appendChild(right);
+      }
+      wrap.appendChild(banner);
+    } catch (e) { /* silent fail */ }
   }
 
   async function loadBudgetList() {
