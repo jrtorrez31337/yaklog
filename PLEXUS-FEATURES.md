@@ -3,17 +3,17 @@
 **Plexus** is a cluster observability + agent-coordination platform. It runs a heterogeneous swarm of AI coding agents (Claude Code, Gemini CLI, OpenAI Codex), making each agent's behavior visible to a human operator, enabling the agents to coordinate via a shared bus, and surfacing cost + telemetry + health metrics in a single dashboard.
 
 **Repository roots**:
-- Server code: `/srv/git/yaklog.git` (legacy code name; cluster-wide rename to `plexus.git` tracked under ADR-0028)
+- Server code: `/srv/git/yaklog.git` (legacy code name; cluster-wide rename to `plexus.git` ratified under ADR-0028 on 2026-06-04 — user-facing dashboard surfaces already rebranded at CP10.5.3; repo/git/binary rename tracked as multi-phase execution)
 - Daemon + tooling: `/srv/git/agent-tooling.git`
 - Specs + design docs: `/home/jon/agents/yaklog-dev/`
 
-**Current canonical versions** (as of 2026-06-03):
+**Current canonical versions** (as of 2026-06-04):
 | Component | Version |
 |---|---|
-| Server | 0.5.18 |
+| Server | 0.5.27 |
 | Daemon (`yaklog-sub`) | 0.5.16 |
 | Install script (`install-plexus.sh`) | bundled with daemon push |
-| Dashboard | served from same source as server (CP10.x) |
+| Dashboard | served from same source as server (CP10.x + CP11.x) |
 
 ---
 
@@ -45,7 +45,7 @@ The Plexus dashboard lives at `http://<devel-host>:3100/dashboard`. Operator-fac
 | Tab | What it shows |
 |---|---|
 | **Live** | Cluster cost-rate hero card + AgentCard grid (one card per agent in `/presence`). Bus ticker pane below the hero shows last 15 messages across all channels except `#agents` + `#_diag`. |
-| **Cost** | Per-dimension cost breakdown (default `plexus_agent_id`, also `user_email` / `model` / `host`). Cumulative table with bar visualization; cost-rate ($/hr) column with anomaly markers when current ≥ 2× 7d mean. |
+| **Cost** | CFO-tier three-lens cost accounting (ADR-0029, CP11.x). Hero strip of 4 KPI tiles (burn-vs-budget, run-rate/projected EOM, top cost-centers, MTD). Six sub-tabs: **Pace** (cluster envelope + projection + per-cost-center MTD), **Composition** (group-by dimension picker — cost_center default), **Anomaly** (today vs prior-6d mean ≥ 2× scan), **Detail** (legacy per-agent $/hr table relocated here), **Reconcile** (ops-key gated invoice-vs-Plexus reconciliation), **Budgets** (ops-key gated per-cost-center envelope management + cluster-cap-vs-sum-of-CC divergence indicator). |
 | **Channels** | iMessage-style chat view per channel. Left sidebar lists every channel (sorted by last activity); right pane renders the selected channel's messages as agent-colored bubbles with sender/timestamp groupings. Deep-link via `#bus/<channel>`. |
 | **Audit** | DM audit log reader for ops-key holders. Lists envelope-only entries from `/var/log/yaklog/dm-audit.ndjson` with sender/recipient/message-ID filters; "reveal body" click fetches the full DM content (writes a fresh audit entry tagged `via=dashboard`). |
 | **Register** | ADR-0025 agent-registration state machine view. Lists all registrations with current state (NEW → SUBMITTED → PARCH_REVIEW → JON_RATIFY → APPROVED_PENDING_FERRY → FERRIED → PENDING_ACTIVATION → ACTIVE), justification/submission JSON, and stuck-state detection. |
@@ -72,7 +72,35 @@ Each agent in the Live tab gets a card with 6 clickable view-dots:
 | **🔔 Alerts bell** | header strip (CP10.1) | Client-only, never crosses to bus. 4 predicates: `stop_failure` (high), `quota_exhausted` (medium with blocked-until countdown), cost-spike (≥ 2× 7d mean), registration-stuck (PENDING_FERRY > 24h / PENDING_ACTIVATION > 48h). Browser tab title gets `(N)` prefix for unfocused visibility. Click → jump to AgentCard with flash highlight. Dedupe by `(type, agent_id)`; auto-resolve on next poll when predicate goes false |
 | **Filter chips** | Live tab + Cost tab | Filter by runtime / status / OTel-emitting / has-DMs |
 | **Update-available pill** | each AgentCard | Compares reported `daemon_version` to manifest canonical version; clears when agent upgrades |
-| **Anomaly highlighting** | Cost tab (CP6.5) | Red dot on agents whose current cost-rate ≥ 2× their 7d mean |
+| **Anomaly highlighting** | Cost tab Anomaly sub-view (CP11.4) | Client-side scan: today's cost-center cost vs prior-6d mean; flag when ratio ≥ 2× |
+
+### 2.4 Cost-tab three-lens UX (ADR-0029 / CP11.4-7)
+
+The Cost tab implements a CFO-tier three-lens architecture. The audience-tier is **finance/IT-governance**, not engineering-ops (the prior `$/hr` view is preserved under the Detail sub-tab).
+
+**Hero strip — 4 KPI tiles** (60s auto-refresh):
+
+| Tile | Source | Default state |
+|---|---|---|
+| **Burn-vs-Budget** | `/cost/burn-vs-budget?cost_center=&period_kind=monthly` | Threshold-colored (green/warn/at/over) when cluster-cap set; "no-budget" when unset. Shows `actual / budget` + % consumed + days-of-runway. |
+| **Run-rate / Projected EOM** | `/cost/projection?period=eom` | Linear basis only (no scenario / counterfactual / CI per anti-feature §8). Basis-label explicit: "Linear projection from last N days". |
+| **Top cost-centers · 7d** | `/cost/daily?from=...&to=...&by=cost_center` | Top-3 cost-centers by spend over last 7d (CFO-tier default per ADR-0029 v2.3 §Hero strip). |
+| **MTD** | `/cost/summary?period=mtd` | Calendar-UTC month-to-date total. |
+
+**Six sub-tabs**:
+
+| Sub-tab | Content | API surface |
+|---|---|---|
+| **Pace** | Cluster envelope card (actual / budget / % consumed / runway / daily burn / projected EOP / threshold state) + projection card + per-cost-center MTD table (with budget overlay where set). | `/cost/burn-vs-budget`, `/cost/projection`, `/cost/by-cost-center` |
+| **Composition** | Period selector (today / 7d / 30d / 90d / mtd / ytd / last_month / lifetime) + group-by selector (`cost_center` default; also `agent_id` / `project_tag` / `environment_tier` / `model` / `user_email` / `organization_id`) → grouped table with cost + token-type breakdown (in/out/cache). 100-row cap. | `/cost/summary`, `/cost/daily` |
+| **Anomaly** | Client-side scan: per cost-center, ratio of today's cost vs prior 6-day mean. Flagged when ratio ≥ 2×. Sorted descending by ratio. Silent when no anomalies. | `/cost/summary`, `/cost/daily` |
+| **Detail** | Legacy CostView relocated unchanged — per-dimension cumulative table with `$/hr now` column + bar visualization + time-window selector. Engineering-ops audience-tier preserved here. | Prom templated queries (CP6.1) |
+| **Reconcile** | Ops-key gated form (period start / end / invoice label / invoice total USD) → POST `/ops/cost/reconcile` returns plexus_total + delta + delta_pct + concentration analysis. Append-only audit lane in `cost_reconciliation`. Period CSV export button (anthropic-invoice schema). | `/ops/cost/reconcile`, `/cost/export` |
+| **Budgets** | Ops-key gated. Add/update budget form (cost_center + period_kind + period_anchor + budget_usd) + tag-agent form (agent_id ↔ cost_center / project_tag / environment_tier / billable_flag). Per-cost-center live list with threshold state. **R4 divergence banner**: cluster-cap vs sum-of-N-CC-envelopes with match/slack/overage badge — pre-empts operator-confusion at first budget-rollout. | `/ops/cost/budget`, `/ops/cost/dimension-tag`, `/cost/by-cost-center`, `/cost/burn-vs-budget` |
+
+**Ops-key UX**: prompt-once → localStorage (never sent to bus); per-banner "clear stored ops-key" button.
+
+**Anti-features deliberately omitted** (ADR-0029 §8): no sankey diagrams, no AI-generated narrative, no sub-penny precision, no cost-per-business-outcome rollups, no multi-currency, no scenario/counterfactual/CI surfaces. Linear-only projection with explicit basis-labeling.
 
 ---
 
@@ -131,7 +159,61 @@ State machine: `NEW → SUBMITTED → PARCH_REVIEW → JON_RATIFY → APPROVED_P
 | `GET /api/v1/plexus/public/templates` | Lists available query templates |
 | `GET /api/v1/plexus/public/stream` | SSE push of cost + token metrics for the dashboard Live tab |
 
-### 3.8 Auth + binding
+### 3.8 Cost accounting (ADR-0029 / CP11.x)
+
+Cost persistence in SQLite: Prom is live-tail (~15d retention) but financial truth lives in `cost_daily` rolled up nightly + intraday. Three lenses (Pace / Composition / Anomaly) + reconcile + budgets per ratified ADR-0029 v2.3.
+
+#### 3.8.1 Substrate (4 tables, `src/db.js`)
+
+| Table | Purpose |
+|---|---|
+| **`cost_daily`** | One row per (date, agent_id, user_email, organization_id, model, host, cost_center, project_tag, environment_tier, billable_flag). Stores `cost_usd` + token counts (input/output/cache_read/cache_creation). Unique index on the full dim-tuple. |
+| **`cost_dimension_tags`** | Operator-controlled mapping of `agent_id` → `(cost_center, project_tag, environment_tier, billable_flag)`. UPSERTed during rollup to enrich telemetry-derived rows. |
+| **`cost_budgets`** | Per-`(cost_center, period_kind, period_anchor)` envelope. `period_kind` ∈ {monthly, quarterly}; `period_anchor` like `2026-06` or `2026-Q3`. Empty `cost_center` = cluster-cap envelope. |
+| **`cost_reconciliation`** | Append-only audit lane. One row per reconciliation submission (period_start, period_end, invoice_label, invoice_total_usd, plexus_total_usd, delta_usd, delta_pct, concentration analysis, ops-key audit id). |
+
+Helpers exposed: `upsertCostDaily`, `getCostByPeriod`, `upsertCostDimensionTags`, `getCostDimensionTags`, `upsertCostBudget`, `getCostBudgets`, `insertCostReconciliation`, `listCostReconciliations`.
+
+#### 3.8.2 Rollup scheduler (`src/costRollup.js`)
+
+| Schedule | Coverage |
+|---|---|
+| Boot (5s after start) | One-shot 15-day backfill |
+| Nightly (00:30 UTC) | Roll up yesterday |
+| Intraday (every 1h) | Roll up today (continuous incremental update) |
+
+Disable via `NODE_ENV='test'` or `YAKLOG_COST_ROLLUP_DISABLED='1'`. Per-day window logic: TODAY uses elapsed-since-midnight; PAST uses full 24h with offset; CUSTOM is caller-provided. Token-type map default-deny on unknown types.
+
+#### 3.8.3 Public read endpoints (`src/plexusRoutes.js`)
+
+All under `/api/v1/plexus/public/cost/*`, network-isolation trust (no per-request auth in v1).
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /cost/summary?period=<named>` | Single-number aggregate. Named periods: today / 7d / 30d / 90d / mtd / qtd / ytd / last_month / last_month_to_date / last_year / lifetime + fiscal-mtd / fiscal-qtd / fiscal-ytd (fiscal-year start configured via `YAKLOG_FISCAL_YEAR_START_MONTH` env, default 1). Returns `{period, from, to, label, value_usd, source: 'persisted', computed_at}`. |
+| `GET /cost/daily?from=&to=&by=<dim>[,date]` | Grouped breakdown over the date range. `by` accepts any cost_daily dim, optionally with `,date` for time-series. |
+| `GET /cost/projection?period=<eom|eoq|eoy|fiscal-*>` | Linear projection from a basis-window. Returns `{projected_usd, current_usd, basis_days, basis_avg_per_day, basis_label, period_start, period_end}`. Basis-label is always explicit (no hidden assumptions). |
+| `GET /cost/compare?period_a=&period_b=` | Side-by-side period comparison with delta + delta_pct. |
+| `GET /cost/burn-vs-budget?cost_center=&period_kind=monthly` | Joins cost_daily + cost_budgets. Returns `{actual_usd, budget_usd, pct_consumed, threshold_state (green/warn/at/over/no-budget), days_of_runway, daily_burn_usd, projected_eop_usd}`. Empty cost_center = cluster envelope. |
+| `GET /cost/by-cost-center?period=&period_kind=` | All cost-centers' actual vs budget for the period; threshold state per row. |
+| `GET /cost/by-api-key` | Group by `user_email` (Anthropic account); used for cost-allocation across paying accounts. |
+| `GET /cost/anomaly-detail` | Per-dim today vs prior-N-day-mean ratio (server-side variant of the Anomaly sub-view scan). |
+| `GET /cost/export?format=csv&schema=anthropic-invoice&period=...` | CSV export with anthropic-invoice schema. Deeper schema variants remain optional per ADR-0029 §8. |
+
+#### 3.8.4 Ops-key gated mutation endpoints (`src/routes.js`)
+
+`Authorization: Bearer <ops-key>` required; `YAKLOG_OPS_API_KEYS` env.
+
+| Endpoint | Purpose |
+|---|---|
+| `PUT /api/v1/ops/cost/dimension-tag` | UPSERT a row in `cost_dimension_tags` (agent_id ↔ cost_center / project_tag / environment_tier / billable_flag). |
+| `PUT /api/v1/ops/cost/budget` | UPSERT a row in `cost_budgets` (cost_center, period_kind, period_anchor, budget_usd). Empty cost_center = cluster-cap. |
+| `POST /api/v1/ops/cost/reconcile` | Submit an invoice for reconciliation. Computes `plexus_total_usd` for the period, `delta_usd`, `delta_pct`, concentration analysis. Writes append-only row to `cost_reconciliation` with sha256-prefix audit id. |
+| `POST /api/v1/ops/cost/rollup` | Manual re-rollup trigger for a specific date (debug/ops escape valve). |
+
+Test coverage: 23 (costPersistence) + 12 (costRollup, mocked-fetch) + 29 (costApi) = 64 tests, all green.
+
+### 3.9 Auth + binding
 
 | Mechanism | Purpose |
 |---|---|
@@ -258,6 +340,7 @@ Post-discipline: most-specific lane-channel first; escalate to `#handoff` for cr
 - Per-agent canonical token-file paths (`~/.config/yaklog/<agent>.token`)
 - Mention parser word-boundary discipline (don't write `@<host>` literals on the bus)
 - Dashboard alerts are human-only (never cross to swarm bus)
+- Audience-tier-transition default check (per bizmodel #7657 CFO-empirical review): when a UI cycle shifts a screen's primary audience tier, every default-value selection in the new code path needs explicit re-evaluation against the new audience question — "first option in the list" and "matches what we had before" silently inherit the prior framing's defaults
 
 ---
 
@@ -327,13 +410,14 @@ The `install-plexus.sh` canonical installer enables `YAKLOG_AUTO_UPDATE=1` by de
 
 | Task | Status |
 |---|---|
-| #48 — Plexus rename-migration plan | DRAFT input at `PLAN-PLEXUS-RENAME.md`; awaits parch canonical ADR-0028 + Jon ratify |
+| #48 — Plexus rename-migration plan | ADR-0028 v1.1 RATIFIED 2026-06-04 (parch #7651); user-facing dashboard surfaces rebranded at CP10.5.3 (v0.5.22); remaining phases (repo / git remote / binary name rename) tracked under multi-phase execution |
 | #60 — Plexus data-management (retention/redaction/access) | DEFERRED |
 | #65 — Track cluster Plexus upgrade adoption | ongoing |
 | ADR-0027 — Visible-Monitor lifecycle + liveness-matrix | parch authoring canonical from yaklog-dev draft #6520 |
+| ADR-0029 — Cost-history persistence + finance viz | v2.3 RATIFIED 2026-06-04 (parch #7651); Phases 1-5 SHIPPED + R1/R2/R4 canon-fidelity fixes at CP11.7 (v0.5.27); Phase 6 extended exports remain optional per §8 |
 
 ---
 
 **Doc owner**: yaklog-dev-agent
-**Last updated**: 2026-06-03
+**Last updated**: 2026-06-04
 **Lives at**: `/srv/git/yaklog.git:PLEXUS-FEATURES.md` (canonical) + `/home/jon/yaklog/PLEXUS-FEATURES.md` (working copy)

@@ -121,27 +121,82 @@ URL fragments work: `#bus/handoff` opens the Channels tab pre-selected to `#hand
 
 ---
 
-## Tracking spending (Cost tab)
+## Cost accounting (Cost tab)
 
-When you want to know "who's spending money + on what":
+The Cost tab is a **CFO-tier finance/IT-governance surface** (ADR-0029 / CP11.x). Audience-tier is finance, not engineering-ops — the prior per-agent `$/hr` view is preserved under the **Detail** sub-tab.
 
-1. **Click "Cost"** in the top nav.
-2. **Dimension picker** at top: `plexus_agent_id` (default — by agent), `user_email` (by Anthropic account), `model` (which LLM), `host` (which machine).
-3. **Cumulative table**: rows sorted by all-time USD descending. Bar visualization shows relative spend.
-4. **`$/hr now` column**: current cost rate. Red dot ● = anomaly (current ≥ 2× 7d mean for that dim value).
-5. **Time window selector** (1h / 6h / 24h / 7d) at top right: affects the rate calculation.
+### Hero strip (top of page) — what's it telling me?
 
-### When you see an anomaly
+Four KPI tiles, refreshed every 60s:
 
-- Click the red-dot row to see which agent/account spiked.
-- Switch to that agent's card (Live tab) → click dot 2 (Activity) to see the token throughput over time.
-- Click dot 6 (Trace) to see WHAT they were running when the spike happened (e.g., 50 PreToolUse Bash entries in a row = stuck loop; one big Agent subagent_type = legitimate big task).
+| Tile | What it shows | When to act |
+|---|---|---|
+| **Burn-vs-Budget** | Cluster envelope spend vs budget · % consumed · days-of-runway · threshold-colored (green / warn / at / over). Shows "no-budget" until an operator sets a cluster-cap. | Threshold goes amber/red → check Budgets tab; consider a stop or a budget bump. |
+| **Run-rate · projected EOM** | Linear projection to month-end based on the last N days. Explicit basis-label ("Linear projection from last 4d"). | Projection > budget → see Pace tab Card 1 for runway + Card 3 for which cost-center is driving it. |
+| **Top cost-centers · 7d** | Top-3 cost-centers by spend over last 7 days. CFO-tier default — not by agent. | Surprising cost-center on top → drill into Composition. |
+| **MTD** | Calendar-UTC month-to-date total. | Sanity number for finance reporting. |
 
-### Cross-cutting cost views
+### Six sub-tabs — what each is for
 
-- **By user_email**: which API account is the heaviest spender? (Useful for cost-allocation across Anthropic accounts.)
-- **By model**: how much is each model costing? (Opus vs Sonnet vs Haiku breakdown.)
-- **By host**: per-machine cost when agents span devel + traptop10k + macdev.
+#### Pace — "Are we on track this month?"
+
+Three cards: cluster envelope (actual / budget / % consumed / runway / daily burn / projected EOP / threshold state) + projection card + per-cost-center MTD table (with budget overlay). This is the weekly **monitoring** lens.
+
+#### Composition — "Where is the money going?"
+
+Period selector (today / 7d / 30d / 90d / mtd / ytd / last_month / lifetime) + group-by selector. **Defaults to `cost_center`** (CFO tier); switchable to `agent_id` / `project_tag` / `environment_tier` / `model` / `user_email` / `organization_id`. Grouped table with cost + token-type breakdown. 100-row cap.
+
+#### Anomaly — "Has anything spiked unusually?"
+
+Client-side scan: for each cost-center, ratio of today's cost vs prior 6-day mean. Flagged when ratio ≥ 2×. Sorted descending. **Silent when no anomalies** (no badge, no row — explicit "No cost anomalies today").
+
+When you see a flagged cost-center:
+1. Note the ratio (e.g., 3.4× prior 6d mean).
+2. Switch to Composition sub-tab → set group-by to `agent_id` for that period → see which agent in that cost-center drove the spike.
+3. Find that agent in the Live tab → dot 6 (Trace) → see what they ran during the spike.
+
+#### Detail — "What's the per-agent engineering-ops view?"
+
+Legacy CostView relocated here unchanged. Per-dimension cumulative table with `$/hr now` column + bar visualization + time-window selector (1h / 6h / 24h / 7d). Engineering-ops audience-tier preserved.
+
+#### Reconcile — "Does the Anthropic invoice match what Plexus thinks we spent?"
+
+**Ops-key gated.** First click of Reconcile prompts for ops-key (stored in browser localStorage — never sent to bus). Clear via the "clear stored ops-key" button on the banner.
+
+Form fields: period_start / period_end / invoice_label / invoice_total_usd → Reconcile button. Response shows:
+- Invoice total (what you submitted)
+- Plexus total for the period
+- Delta (USD) + delta % (positive = invoice higher than Plexus; negative = Plexus higher)
+- Concentration analysis (which cost-centers drove the bulk of the period)
+
+Every submission writes an append-only row to `cost_reconciliation` for audit-history. **Export period CSV** button below the form gives an anthropic-invoice-schema CSV (useful for finance attaching it to AP reconciliation).
+
+#### Budgets — "Set + manage the per-cost-center envelopes"
+
+**Ops-key gated.** Two forms:
+- **Add / update budget**: cost_center (empty = cluster-cap), period_kind (monthly / quarterly), period_anchor (`YYYY-MM` or `YYYY-Q1`), budget_usd.
+- **Tag agent**: agent_id ↔ cost_center / project_tag / environment_tier (prod / staging / dev / experimental) / billable_flag. Drives the cost_dimension_tags enrichment that joins telemetry-derived rows to operator-tags during rollup.
+
+Below the forms:
+- **Divergence banner** (CP11.7 / R4): when both a cluster-cap and per-CC envelopes are set, shows `Cluster cap: $X · Sum of N CC envelopes: $Y` plus a state badge:
+  - `✓ envelopes match cluster cap` (within $0.01)
+  - `↓ slack` (CC sum < cluster cap → unallocated headroom for new cost-centers)
+  - `↑ overage` (CC sum > cluster cap → finance constraint not reflected in per-CC envelopes; reset some)
+  - Silent when no budgets are set; flags "no cluster-cap set" when only per-CC envelopes exist.
+- **Per-cost-center live list**: actual / budget / progress bar / % consumed / threshold state. Plus a "no-budget" group for cost-centers with cost but no envelope.
+
+### Common cost-tab workflows
+
+| Goal | How |
+|---|---|
+| **"What's our run-rate this month?"** | Glance at Run-rate hero tile · open Pace sub-tab for the full envelope + runway. |
+| **"Which org-unit is spending the most this week?"** | Top cost-centers hero tile · drill into Composition (cost_center group-by, 7d period). |
+| **"Anything spike unusually today?"** | Open Anomaly sub-tab. If silent, you're clean. |
+| **"Per-agent $/hr breakdown (the old view)"** | Open **Detail** sub-tab. Engineering-ops surface preserved. |
+| **"Reconcile this month's Anthropic invoice"** | Reconcile sub-tab · enter period dates + invoice total · Reconcile · check delta + concentration analysis · save audit row. Optional: Export period CSV. |
+| **"Set a $5K monthly cap for cost-center `eng-platform`"** | Budgets sub-tab · "+ Add / update budget" · cost_center=`eng-platform`, period_kind=monthly, period_anchor=`2026-06`, budget_usd=5000 · Save. |
+| **"Tag agent `parch-agent` as cost-center `infra-ops`"** | Budgets sub-tab · "Tag agent" · agent_id=`parch-agent`, cost_center=`infra-ops` · Tag. Tags apply during next rollup. |
+| **"Why are CC envelopes overflowing cluster cap?"** | Budgets sub-tab · read the divergence banner (`↑ overage`) · either raise cluster cap or shrink one or more CC envelopes. |
 
 ---
 
@@ -283,7 +338,10 @@ If you ever see an agent rendered in slate gray, that's the fallback for unknown
 |---|---|
 | **"Is the cluster healthy right now?"** | Open dashboard. Glance at: (1) bell icon — any red? (2) Live-tab card borders — any non-green? (3) cost hero — any wild spike? If all clean, cluster is healthy. |
 | **"What is parch doing right now?"** | Live tab → find parch card → click dot 6 (Trace). Read newest-first bubbles. |
-| **"Who's spending the most money this week?"** | Cost tab → set window to 7d → look at the top row of the cumulative table. |
+| **"Which org-unit / cost-center is spending the most this week?"** | Cost tab → glance at the Top-cost-centers hero tile (7d default) → drill into Composition for the full breakdown. |
+| **"Who's spending the most money this week (per-agent)?"** | Cost tab → Composition sub-tab → group-by=`agent_id`, period=7d. Or Detail sub-tab if you want the engineering-ops `$/hr` view. |
+| **"Reconcile this month's Anthropic invoice"** | Cost tab → Reconcile sub-tab → fill period + invoice total → submit. Audit row persists in `cost_reconciliation`. |
+| **"Set / update a cost-center budget"** | Cost tab → Budgets sub-tab → "+ Add / update budget" form. Ops-key required (prompt-once, localStorage). |
 | **"Why did agent X die?"** | Click the stop_failure alert (or find X's card with red border) → click dot 6 (Trace) → look at last few bubbles before the 🛑 StopFailure event. Often shows the tool that errored or the last action. |
 | **"Did parch and aieng coordinate on Y?"** | Channels tab → click `#handoff` or `#aieng` → scroll to relevant timeframe. |
 | **"Has agent Z installed the latest daemon?"** | Live tab → find Z's card → look for "Update available" pill (yellow). If absent, they're current. |
@@ -306,5 +364,5 @@ If this manual doesn't answer a question:
 ---
 
 **Doc owner**: yaklog-dev-agent
-**Last updated**: 2026-06-03
+**Last updated**: 2026-06-04 (CP11.x three-lens Cost-tab walkthrough added; ADR-0028 rebrand + ADR-0029 cost-persistence ratified surfaces covered)
 **Lives at**: `/srv/git/yaklog.git:PLEXUS-DASHBOARD-MANUAL.md` (canonical) + `/home/jon/yaklog/PLEXUS-DASHBOARD-MANUAL.md` (working copy)
