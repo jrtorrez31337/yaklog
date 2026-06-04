@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const Database = require('better-sqlite3');
 const { EventEmitter } = require('node:events');
 
@@ -398,6 +399,199 @@ function initializeDb() {
   `).run();
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_recon_period ON cost_reconciliation(period_end DESC)`).run();
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // CP12.1 (2026-06-04): ADR-0030 v1.1 RATIFIED audit + governance substrate.
+  // 9 new tables per ADR-0030 §Schema (folds bizmodel #7697 OQ#4 amendment,
+  // secops #7696 Finding 2, admin #7698 R3+R5). Atomic-tombstone discipline
+  // per admin R2; hash-chain formula per admin R2; ops-key sha256-prefix
+  // forensic markers per ADR-0026 + ADR-0025 precedent; subject_directory
+  // hash-at-ingestion per bizmodel OQ#4 amendment (severs cleartext
+  // correlation; right-to-be-forgotten is single-row deletion).
+  // ─────────────────────────────────────────────────────────────────────────
+
+  // audit_tool_invocation — incident-response-load-bearing.
+  // Ingester populates from agent_activity (DRY-augment per OQ#8); adds
+  // forensic chain-of-custody hashes (full 64-char sha256 per secops R3 fold).
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS audit_tool_invocation (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_id        TEXT NOT NULL,
+      agent_id        TEXT NOT NULL,
+      occurred_at     TEXT NOT NULL,
+      tool_name       TEXT NOT NULL,
+      tool_phase      TEXT NOT NULL,
+      input_digest    TEXT,
+      output_digest   TEXT,
+      status          TEXT,
+      status_detail   TEXT,
+      subagent_type   TEXT,
+      source_event_id INTEGER,
+      payload_ref     TEXT,
+      tombstone_at    TEXT
+    )
+  `).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_audit_ti_agent_time ON audit_tool_invocation(agent_id, occurred_at)`).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_audit_ti_tool_time ON audit_tool_invocation(tool_name, occurred_at)`).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_audit_ti_event_id ON audit_tool_invocation(event_id)`).run();
+
+  // audit_file_access — Phase 1 schema only (ingester is Phase 1.5 substrate-
+  // coord with ssw-devops + secops per OQ#2 fold). Includes admin R5 + secops
+  // Finding 1 fold: attribution_confidence + session_correlator columns
+  // handle jon-uid co-residency without false-attribution.
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS audit_file_access (
+      id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_id               TEXT NOT NULL,
+      occurred_at            TEXT NOT NULL,
+      agent_id               TEXT,
+      uid                    INTEGER NOT NULL,
+      path                   TEXT NOT NULL,
+      access_mode            TEXT NOT NULL,
+      bytes_in               INTEGER,
+      bytes_out              INTEGER,
+      content_digest         TEXT,
+      attribution_confidence TEXT NOT NULL DEFAULT 'uid_unique',
+      session_correlator     TEXT,
+      payload_ref            TEXT,
+      tombstone_at           TEXT
+    )
+  `).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_audit_fa_agent_time ON audit_file_access(agent_id, occurred_at)`).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_audit_fa_path_time ON audit_file_access(path, occurred_at)`).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_audit_fa_event_id ON audit_file_access(event_id)`).run();
+
+  // audit_credential_change — token rotation events; ops-key changes; sha256-
+  // prefix only (never the secret per secrets-discipline-no-yaklog).
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS audit_credential_change (
+      id               INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_id         TEXT NOT NULL,
+      occurred_at      TEXT NOT NULL,
+      credential_class TEXT NOT NULL,
+      agent_id         TEXT,
+      change_type      TEXT NOT NULL,
+      actor            TEXT NOT NULL,
+      prior_digest     TEXT,
+      new_digest       TEXT,
+      reason           TEXT
+    )
+  `).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_audit_cc_time ON audit_credential_change(occurred_at)`).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_audit_cc_class_time ON audit_credential_change(credential_class, occurred_at)`).run();
+
+  // audit_permission_change — settings.local.json + agent-specs.git +
+  // systemd overrides + ~/.ssh/authorized_keys + gh hosts (Phase 2 source-
+  // coverage per admin R4 fold).
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS audit_permission_change (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_id     TEXT NOT NULL,
+      occurred_at  TEXT NOT NULL,
+      agent_id     TEXT NOT NULL,
+      change_type  TEXT NOT NULL,
+      rule_text    TEXT NOT NULL,
+      actor        TEXT NOT NULL,
+      source_path  TEXT,
+      reason       TEXT
+    )
+  `).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_audit_pc_agent_time ON audit_permission_change(agent_id, occurred_at)`).run();
+
+  // policy_rule — policy-as-code substrate. Sandboxed DSL evaluator per
+  // secops R1 fold (100ms / 1MB / no fs-net-proc); expansion is ADR-
+  // amendment-gated. current_version bumps on each rule body change.
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS policy_rule (
+      rule_id            TEXT PRIMARY KEY,
+      name               TEXT NOT NULL,
+      description        TEXT NOT NULL,
+      applicability_json TEXT NOT NULL,
+      predicate_dsl      TEXT NOT NULL,
+      severity_class     TEXT NOT NULL,
+      status             TEXT NOT NULL DEFAULT 'draft',
+      authored_by        TEXT NOT NULL,
+      authored_at        TEXT NOT NULL,
+      ratified_by        TEXT,
+      ratified_at        TEXT,
+      current_version    INTEGER NOT NULL DEFAULT 1
+    )
+  `).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_policy_rule_status ON policy_rule(status)`).run();
+
+  // policy_violation — enforcement-observation log. Each evaluation match
+  // produces an event. disposition lifecycle: pending → acknowledged |
+  // remediated | accepted-with-rationale | suppressed.
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS policy_violation (
+      id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_id             TEXT NOT NULL,
+      rule_id              TEXT NOT NULL,
+      rule_version         INTEGER NOT NULL,
+      occurred_at          TEXT NOT NULL,
+      agent_id             TEXT,
+      matched_object_class TEXT NOT NULL,
+      matched_object_ref   TEXT NOT NULL,
+      match_detail_json    TEXT,
+      disposition          TEXT NOT NULL DEFAULT 'pending',
+      disposition_by       TEXT,
+      disposition_at       TEXT,
+      disposition_note     TEXT
+    )
+  `).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_policy_violation_rule_time ON policy_violation(rule_id, occurred_at)`).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_policy_violation_agent_time ON policy_violation(agent_id, occurred_at)`).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_policy_violation_disposition ON policy_violation(disposition)`).run();
+
+  // audit_reconciliation — mirror of cost_reconciliation. admin R3 fold adds
+  // reconciler_agent_id (stable identity across ops-key rotations) — keeps
+  // reconciled_by as pure forensic ops-key-at-time marker.
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS audit_reconciliation (
+      id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+      period_start          TEXT NOT NULL,
+      period_end            TEXT NOT NULL,
+      external_system_label TEXT NOT NULL,
+      plexus_count          INTEGER NOT NULL,
+      external_count        INTEGER NOT NULL,
+      delta_count           INTEGER NOT NULL,
+      delta_pct             REAL NOT NULL,
+      concentration_json    TEXT,
+      notes                 TEXT,
+      reconciler_agent_id   TEXT NOT NULL,
+      reconciled_by         TEXT NOT NULL,
+      reconciled_at         TEXT NOT NULL
+    )
+  `).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_audit_recon_period ON audit_reconciliation(period_end DESC)`).run();
+
+  // audit_payload_store — separate deletable-payload store per secops R/
+  // Finding 2 fold. payload_ref UUID is the FK from audit tables. Atomic
+  // deletion in tombstone transaction per admin R2 fold.
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS audit_payload_store (
+      payload_ref  TEXT PRIMARY KEY,
+      payload      BLOB,
+      created_at   TEXT NOT NULL
+    )
+  `).run();
+
+  // subject_directory — GDPR DSAR hash-at-ingestion pattern per bizmodel
+  // #7697 OQ#4 amendment. Single place cleartext user_email lives; tombstone
+  // is single-row deletion (severs correlation; audit tables retain
+  // subject_hash; hash-chain integrity preserved). Avoids compounding-PII
+  // problem (1 row vs 7 tables per DSAR/right-to-be-forgotten).
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS subject_directory (
+      subject_hash         TEXT PRIMARY KEY,
+      user_email_cleartext TEXT,
+      created_at           TEXT NOT NULL,
+      tombstone_at         TEXT,
+      tombstone_reason     TEXT,
+      tombstone_by         TEXT
+    )
+  `).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_subject_directory_tombstone ON subject_directory(tombstone_at)`).run();
+
   return db;
 }
 
@@ -795,6 +989,581 @@ function insertCostReconciliation(row) {
 function listCostReconciliations({ limit = 100 } = {}) {
   const database = getDb();
   return database.prepare('SELECT * FROM cost_reconciliation ORDER BY id DESC LIMIT ?').all(limit);
+}
+
+// ============================================================================
+// CP12.1 (2026-06-04): ADR-0030 v1.1 audit + governance helpers.
+// Hash-chain formula per admin R2 fold-in:
+//   event_id = sha256(prev_event_id || occurred_at || agent_id || action_class || metadata_only)[0:16]
+// Subject hash for GDPR DSAR per bizmodel #7697 OQ#4 fold:
+//   subject_hash = sha256(user_email).hex (full 64 chars)
+// Atomic tombstone txn per admin R2: payload delete + tombstone_at set in
+// same SQLite transaction; reader checks tombstone_at IS NOT NULL before
+// payload dereference, returns tombstone-marker when set.
+// ============================================================================
+
+// Compute hash-chain event_id (16-char correlation handle, anchor-compatible).
+// metadata_only EXCLUDES payload_ref content per admin R2 — guarantees
+// tombstoning a payload does not break hash-chain verification.
+function computeAuditEventId(prevEventId, occurredAt, agentId, actionClass, metadataOnly) {
+  const input = [
+    prevEventId || '',
+    occurredAt || '',
+    agentId || '',
+    actionClass || '',
+    typeof metadataOnly === 'string' ? metadataOnly : JSON.stringify(metadataOnly || {}),
+  ].join('|');
+  return crypto.createHash('sha256').update(input).digest('hex').slice(0, 16);
+}
+
+// Compute subject_hash for GDPR DSAR queries (full 64-char sha256 of email).
+function subjectHash(userEmail) {
+  if (!userEmail || typeof userEmail !== 'string') return null;
+  return crypto.createHash('sha256').update(userEmail.toLowerCase().trim()).digest('hex');
+}
+
+// Compute full sha256 hex of a buffer or string (for input_digest / output_digest).
+// Full 64-char per secops R3 fold — tombstone integrity evidence after payload deletion.
+function fullSha256(input) {
+  if (input == null) return null;
+  const buf = Buffer.isBuffer(input) ? input : Buffer.from(String(input));
+  return crypto.createHash('sha256').update(buf).digest('hex');
+}
+
+// ─── audit_tool_invocation ──────────────────────────────────────────────────
+
+function insertAuditToolInvocation(row) {
+  if (!row || !row.agent_id || !row.tool_name || !row.tool_phase) {
+    throw new Error('insertAuditToolInvocation: agent_id + tool_name + tool_phase required');
+  }
+  if (!['pre', 'post', 'failure'].includes(row.tool_phase)) {
+    throw new Error(`insertAuditToolInvocation: tool_phase must be pre|post|failure (got ${row.tool_phase})`);
+  }
+  const database = getDb();
+  const occurred_at = row.occurred_at || new Date().toISOString();
+  const event_id = row.event_id || computeAuditEventId(
+    row.prev_event_id, occurred_at, row.agent_id, `tool:${row.tool_phase}`,
+    { tool_name: row.tool_name, status: row.status || null, source_event_id: row.source_event_id || null }
+  );
+  const result = database.prepare(`
+    INSERT INTO audit_tool_invocation (
+      event_id, agent_id, occurred_at, tool_name, tool_phase,
+      input_digest, output_digest, status, status_detail,
+      subagent_type, source_event_id, payload_ref
+    ) VALUES (
+      @event_id, @agent_id, @occurred_at, @tool_name, @tool_phase,
+      @input_digest, @output_digest, @status, @status_detail,
+      @subagent_type, @source_event_id, @payload_ref
+    )
+  `).run({
+    event_id,
+    agent_id: row.agent_id,
+    occurred_at,
+    tool_name: row.tool_name,
+    tool_phase: row.tool_phase,
+    input_digest: row.input_digest || null,
+    output_digest: row.output_digest || null,
+    status: row.status || null,
+    status_detail: row.status_detail ? String(row.status_detail).slice(0, 200) : null,
+    subagent_type: row.subagent_type || null,
+    source_event_id: row.source_event_id || null,
+    payload_ref: row.payload_ref || null,
+  });
+  return { id: result.lastInsertRowid, event_id };
+}
+
+function listAuditToolInvocations({ from, to, agent_id, tool_name, status, limit = 100 } = {}) {
+  const database = getDb();
+  const where = [];
+  const params = {};
+  if (from) { where.push('occurred_at >= @from'); params.from = from; }
+  if (to)   { where.push('occurred_at <= @to'); params.to = to; }
+  if (agent_id)  { where.push('agent_id = @agent_id'); params.agent_id = agent_id; }
+  if (tool_name) { where.push('tool_name = @tool_name'); params.tool_name = tool_name; }
+  if (status)    { where.push('status = @status'); params.status = status; }
+  const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  return database
+    .prepare(`SELECT * FROM audit_tool_invocation ${whereClause} ORDER BY occurred_at DESC LIMIT @limit`)
+    .all({ ...params, limit });
+}
+
+function getAuditToolInvocationByEventId(event_id) {
+  const database = getDb();
+  return database.prepare('SELECT * FROM audit_tool_invocation WHERE event_id = ?').get(event_id) || null;
+}
+
+// ─── audit_file_access ──────────────────────────────────────────────────────
+
+function insertAuditFileAccess(row) {
+  if (!row || row.uid == null || !row.path || !row.access_mode) {
+    throw new Error('insertAuditFileAccess: uid + path + access_mode required');
+  }
+  const database = getDb();
+  const occurred_at = row.occurred_at || new Date().toISOString();
+  const attribution_confidence = row.attribution_confidence || 'uid_unique';
+  if (!['uid_unique', 'uid_shared'].includes(attribution_confidence)) {
+    throw new Error(`insertAuditFileAccess: attribution_confidence must be uid_unique|uid_shared`);
+  }
+  const event_id = row.event_id || computeAuditEventId(
+    row.prev_event_id, occurred_at, row.agent_id || `uid:${row.uid}`, `file:${row.access_mode}`,
+    { path: row.path, attribution_confidence }
+  );
+  const result = database.prepare(`
+    INSERT INTO audit_file_access (
+      event_id, occurred_at, agent_id, uid, path, access_mode,
+      bytes_in, bytes_out, content_digest,
+      attribution_confidence, session_correlator, payload_ref
+    ) VALUES (
+      @event_id, @occurred_at, @agent_id, @uid, @path, @access_mode,
+      @bytes_in, @bytes_out, @content_digest,
+      @attribution_confidence, @session_correlator, @payload_ref
+    )
+  `).run({
+    event_id,
+    occurred_at,
+    agent_id: row.agent_id || null,
+    uid: row.uid,
+    path: row.path,
+    access_mode: row.access_mode,
+    bytes_in: row.bytes_in != null ? row.bytes_in : null,
+    bytes_out: row.bytes_out != null ? row.bytes_out : null,
+    content_digest: row.content_digest || null,
+    attribution_confidence,
+    session_correlator: row.session_correlator || null,
+    payload_ref: row.payload_ref || null,
+  });
+  return { id: result.lastInsertRowid, event_id };
+}
+
+function listAuditFileAccess({ from, to, agent_id, path_prefix, limit = 100 } = {}) {
+  const database = getDb();
+  const where = [];
+  const params = {};
+  if (from) { where.push('occurred_at >= @from'); params.from = from; }
+  if (to)   { where.push('occurred_at <= @to'); params.to = to; }
+  if (agent_id) { where.push('agent_id = @agent_id'); params.agent_id = agent_id; }
+  if (path_prefix) { where.push('path LIKE @path_prefix'); params.path_prefix = path_prefix + '%'; }
+  const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  return database
+    .prepare(`SELECT * FROM audit_file_access ${whereClause} ORDER BY occurred_at DESC LIMIT @limit`)
+    .all({ ...params, limit });
+}
+
+// ─── audit_credential_change ───────────────────────────────────────────────
+
+function insertAuditCredentialChange(row) {
+  if (!row || !row.credential_class || !row.change_type || !row.actor) {
+    throw new Error('insertAuditCredentialChange: credential_class + change_type + actor required');
+  }
+  const database = getDb();
+  const occurred_at = row.occurred_at || new Date().toISOString();
+  const event_id = row.event_id || computeAuditEventId(
+    row.prev_event_id, occurred_at, row.agent_id || '', `cred:${row.change_type}`,
+    { credential_class: row.credential_class }
+  );
+  const result = database.prepare(`
+    INSERT INTO audit_credential_change (
+      event_id, occurred_at, credential_class, agent_id, change_type,
+      actor, prior_digest, new_digest, reason
+    ) VALUES (
+      @event_id, @occurred_at, @credential_class, @agent_id, @change_type,
+      @actor, @prior_digest, @new_digest, @reason
+    )
+  `).run({
+    event_id,
+    occurred_at,
+    credential_class: row.credential_class,
+    agent_id: row.agent_id || null,
+    change_type: row.change_type,
+    actor: row.actor,
+    prior_digest: row.prior_digest || null,
+    new_digest: row.new_digest || null,
+    reason: row.reason ? String(row.reason).slice(0, 200) : null,
+  });
+  return { id: result.lastInsertRowid, event_id };
+}
+
+function listAuditCredentialChanges({ from, to, credential_class, limit = 100 } = {}) {
+  const database = getDb();
+  const where = [];
+  const params = {};
+  if (from) { where.push('occurred_at >= @from'); params.from = from; }
+  if (to)   { where.push('occurred_at <= @to'); params.to = to; }
+  if (credential_class) { where.push('credential_class = @credential_class'); params.credential_class = credential_class; }
+  const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  return database
+    .prepare(`SELECT * FROM audit_credential_change ${whereClause} ORDER BY occurred_at DESC LIMIT @limit`)
+    .all({ ...params, limit });
+}
+
+// ─── audit_permission_change ───────────────────────────────────────────────
+
+function insertAuditPermissionChange(row) {
+  if (!row || !row.agent_id || !row.change_type || !row.rule_text || !row.actor) {
+    throw new Error('insertAuditPermissionChange: agent_id + change_type + rule_text + actor required');
+  }
+  const database = getDb();
+  const occurred_at = row.occurred_at || new Date().toISOString();
+  const event_id = row.event_id || computeAuditEventId(
+    row.prev_event_id, occurred_at, row.agent_id, `perm:${row.change_type}`,
+    { rule_text_hash: fullSha256(row.rule_text).slice(0, 16) }
+  );
+  const result = database.prepare(`
+    INSERT INTO audit_permission_change (
+      event_id, occurred_at, agent_id, change_type, rule_text,
+      actor, source_path, reason
+    ) VALUES (
+      @event_id, @occurred_at, @agent_id, @change_type, @rule_text,
+      @actor, @source_path, @reason
+    )
+  `).run({
+    event_id,
+    occurred_at,
+    agent_id: row.agent_id,
+    change_type: row.change_type,
+    rule_text: row.rule_text,
+    actor: row.actor,
+    source_path: row.source_path || null,
+    reason: row.reason ? String(row.reason).slice(0, 200) : null,
+  });
+  return { id: result.lastInsertRowid, event_id };
+}
+
+function listAuditPermissionChanges({ from, to, agent_id, limit = 100 } = {}) {
+  const database = getDb();
+  const where = [];
+  const params = {};
+  if (from) { where.push('occurred_at >= @from'); params.from = from; }
+  if (to)   { where.push('occurred_at <= @to'); params.to = to; }
+  if (agent_id) { where.push('agent_id = @agent_id'); params.agent_id = agent_id; }
+  const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  return database
+    .prepare(`SELECT * FROM audit_permission_change ${whereClause} ORDER BY occurred_at DESC LIMIT @limit`)
+    .all({ ...params, limit });
+}
+
+// ─── policy_rule ────────────────────────────────────────────────────────────
+
+function upsertPolicyRule(row) {
+  if (!row || !row.rule_id || !row.name || !row.description || !row.applicability_json || !row.predicate_dsl || !row.severity_class || !row.authored_by) {
+    throw new Error('upsertPolicyRule: rule_id + name + description + applicability_json + predicate_dsl + severity_class + authored_by required');
+  }
+  if (!['info', 'warn', 'violation', 'critical'].includes(row.severity_class)) {
+    throw new Error('upsertPolicyRule: severity_class must be info|warn|violation|critical');
+  }
+  const database = getDb();
+  const authored_at = row.authored_at || new Date().toISOString();
+  const existing = database.prepare('SELECT current_version, predicate_dsl FROM policy_rule WHERE rule_id = ?').get(row.rule_id);
+  const next_version = existing
+    ? (existing.predicate_dsl === row.predicate_dsl ? existing.current_version : existing.current_version + 1)
+    : 1;
+  const applicability_str = typeof row.applicability_json === 'string'
+    ? row.applicability_json
+    : JSON.stringify(row.applicability_json);
+  database.prepare(`
+    INSERT INTO policy_rule (
+      rule_id, name, description, applicability_json, predicate_dsl,
+      severity_class, status, authored_by, authored_at, current_version
+    ) VALUES (
+      @rule_id, @name, @description, @applicability_json, @predicate_dsl,
+      @severity_class, @status, @authored_by, @authored_at, @current_version
+    )
+    ON CONFLICT (rule_id) DO UPDATE SET
+      name               = excluded.name,
+      description        = excluded.description,
+      applicability_json = excluded.applicability_json,
+      predicate_dsl      = excluded.predicate_dsl,
+      severity_class     = excluded.severity_class,
+      status             = excluded.status,
+      current_version    = excluded.current_version
+  `).run({
+    rule_id: row.rule_id,
+    name: row.name,
+    description: row.description,
+    applicability_json: applicability_str,
+    predicate_dsl: row.predicate_dsl,
+    severity_class: row.severity_class,
+    status: row.status || 'draft',
+    authored_by: row.authored_by,
+    authored_at,
+    current_version: next_version,
+  });
+  return { rule_id: row.rule_id, current_version: next_version };
+}
+
+function listPolicyRules({ status } = {}) {
+  const database = getDb();
+  if (status) {
+    return database.prepare('SELECT * FROM policy_rule WHERE status = ? ORDER BY rule_id').all(status);
+  }
+  return database.prepare('SELECT * FROM policy_rule ORDER BY rule_id').all();
+}
+
+function getPolicyRule(rule_id) {
+  const database = getDb();
+  return database.prepare('SELECT * FROM policy_rule WHERE rule_id = ?').get(rule_id) || null;
+}
+
+function ratifyPolicyRule(rule_id, ratified_by) {
+  if (!rule_id || !ratified_by) throw new Error('ratifyPolicyRule: rule_id + ratified_by required');
+  const database = getDb();
+  const result = database.prepare(`
+    UPDATE policy_rule
+    SET status = 'active', ratified_by = @ratified_by, ratified_at = @ratified_at
+    WHERE rule_id = @rule_id
+  `).run({ rule_id, ratified_by, ratified_at: new Date().toISOString() });
+  return { changed: result.changes };
+}
+
+function deprecatePolicyRule(rule_id) {
+  const database = getDb();
+  const result = database.prepare(`UPDATE policy_rule SET status = 'deprecated' WHERE rule_id = ?`).run(rule_id);
+  return { changed: result.changes };
+}
+
+// ─── policy_violation ───────────────────────────────────────────────────────
+
+function insertPolicyViolation(row) {
+  if (!row || !row.rule_id || !row.rule_version || !row.matched_object_class || !row.matched_object_ref) {
+    throw new Error('insertPolicyViolation: rule_id + rule_version + matched_object_class + matched_object_ref required');
+  }
+  const database = getDb();
+  const occurred_at = row.occurred_at || new Date().toISOString();
+  const event_id = row.event_id || computeAuditEventId(
+    row.prev_event_id, occurred_at, row.agent_id || '', `policy:${row.rule_id}:v${row.rule_version}`,
+    { matched_object_ref: row.matched_object_ref }
+  );
+  const result = database.prepare(`
+    INSERT INTO policy_violation (
+      event_id, rule_id, rule_version, occurred_at, agent_id,
+      matched_object_class, matched_object_ref, match_detail_json
+    ) VALUES (
+      @event_id, @rule_id, @rule_version, @occurred_at, @agent_id,
+      @matched_object_class, @matched_object_ref, @match_detail_json
+    )
+  `).run({
+    event_id,
+    rule_id: row.rule_id,
+    rule_version: row.rule_version,
+    occurred_at,
+    agent_id: row.agent_id || null,
+    matched_object_class: row.matched_object_class,
+    matched_object_ref: row.matched_object_ref,
+    match_detail_json: row.match_detail_json
+      ? (typeof row.match_detail_json === 'string' ? row.match_detail_json : JSON.stringify(row.match_detail_json))
+      : null,
+  });
+  return { id: result.lastInsertRowid, event_id };
+}
+
+function listPolicyViolations({ from, to, rule_id, disposition, limit = 100 } = {}) {
+  const database = getDb();
+  const where = [];
+  const params = {};
+  if (from) { where.push('v.occurred_at >= @from'); params.from = from; }
+  if (to)   { where.push('v.occurred_at <= @to'); params.to = to; }
+  if (rule_id) { where.push('v.rule_id = @rule_id'); params.rule_id = rule_id; }
+  if (disposition) { where.push('v.disposition = @disposition'); params.disposition = disposition; }
+  const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  // bizmodel R-A2 sort: pending first, then severity (joined from policy_rule), then time desc
+  return database.prepare(`
+    SELECT v.*, r.severity_class
+    FROM policy_violation v
+    LEFT JOIN policy_rule r ON r.rule_id = v.rule_id
+    ${whereClause}
+    ORDER BY
+      CASE WHEN v.disposition = 'pending' THEN 0 ELSE 1 END,
+      CASE r.severity_class
+        WHEN 'critical' THEN 0
+        WHEN 'violation' THEN 1
+        WHEN 'warn' THEN 2
+        WHEN 'info' THEN 3
+        ELSE 4 END,
+      v.occurred_at DESC
+    LIMIT @limit
+  `).all({ ...params, limit });
+}
+
+function disposePolicyViolation(id, { disposition, disposition_by, disposition_note }) {
+  if (!id || !disposition || !disposition_by) {
+    throw new Error('disposePolicyViolation: id + disposition + disposition_by required');
+  }
+  if (!['pending', 'acknowledged', 'remediated', 'accepted-with-rationale', 'suppressed'].includes(disposition)) {
+    throw new Error(`disposePolicyViolation: invalid disposition (${disposition})`);
+  }
+  const database = getDb();
+  const result = database.prepare(`
+    UPDATE policy_violation
+    SET disposition = @disposition, disposition_by = @disposition_by,
+        disposition_at = @disposition_at, disposition_note = @disposition_note
+    WHERE id = @id
+  `).run({
+    id,
+    disposition,
+    disposition_by,
+    disposition_at: new Date().toISOString(),
+    disposition_note: disposition_note ? String(disposition_note).slice(0, 500) : null,
+  });
+  return { changed: result.changes };
+}
+
+// ─── audit_reconciliation ───────────────────────────────────────────────────
+
+function insertAuditReconciliation(row) {
+  if (!row || !row.period_start || !row.period_end || !row.external_system_label || !row.reconciler_agent_id || !row.reconciled_by) {
+    throw new Error('insertAuditReconciliation: period_start + period_end + external_system_label + reconciler_agent_id + reconciled_by required');
+  }
+  if (!Number.isInteger(row.plexus_count) || !Number.isInteger(row.external_count)) {
+    throw new Error('insertAuditReconciliation: plexus_count + external_count must be integers');
+  }
+  const database = getDb();
+  const delta_count = row.external_count - row.plexus_count;
+  const delta_pct = row.plexus_count !== 0
+    ? (delta_count / row.plexus_count) * 100
+    : (row.external_count === 0 ? 0 : 100);
+  const result = database.prepare(`
+    INSERT INTO audit_reconciliation (
+      period_start, period_end, external_system_label,
+      plexus_count, external_count, delta_count, delta_pct,
+      concentration_json, notes, reconciler_agent_id, reconciled_by, reconciled_at
+    ) VALUES (
+      @period_start, @period_end, @external_system_label,
+      @plexus_count, @external_count, @delta_count, @delta_pct,
+      @concentration_json, @notes, @reconciler_agent_id, @reconciled_by, @reconciled_at
+    )
+  `).run({
+    period_start: row.period_start,
+    period_end: row.period_end,
+    external_system_label: row.external_system_label,
+    plexus_count: row.plexus_count,
+    external_count: row.external_count,
+    delta_count,
+    delta_pct,
+    concentration_json: row.concentration_json
+      ? (typeof row.concentration_json === 'string' ? row.concentration_json : JSON.stringify(row.concentration_json))
+      : null,
+    notes: row.notes || null,
+    reconciler_agent_id: row.reconciler_agent_id,
+    reconciled_by: row.reconciled_by,
+    reconciled_at: row.reconciled_at || new Date().toISOString(),
+  });
+  return { id: result.lastInsertRowid, delta_count, delta_pct };
+}
+
+function listAuditReconciliations({ limit = 100 } = {}) {
+  const database = getDb();
+  return database.prepare('SELECT * FROM audit_reconciliation ORDER BY id DESC LIMIT ?').all(limit);
+}
+
+// ─── audit_payload_store ───────────────────────────────────────────────────
+
+function insertAuditPayload(payload) {
+  const database = getDb();
+  const payload_ref = crypto.randomUUID();
+  const buf = Buffer.isBuffer(payload) ? payload : Buffer.from(String(payload));
+  database.prepare(`
+    INSERT INTO audit_payload_store (payload_ref, payload, created_at)
+    VALUES (?, ?, ?)
+  `).run(payload_ref, buf, new Date().toISOString());
+  return { payload_ref, content_digest: fullSha256(buf) };
+}
+
+function getAuditPayload(payload_ref) {
+  if (!payload_ref) return null;
+  const database = getDb();
+  return database.prepare('SELECT * FROM audit_payload_store WHERE payload_ref = ?').get(payload_ref) || null;
+}
+
+// Atomic tombstone per admin R2 fold: payload delete + tombstone_at set in
+// same SQLite transaction. Reader must check tombstone_at IS NOT NULL before
+// dereferencing payload_ref (returns tombstone-marker response when set).
+// table_name must be one of the audit_* tables that has tombstone_at column.
+function tombstoneAuditPayload({ table_name, row_id, ops_key_sha256, reason }) {
+  const ALLOWED = new Set(['audit_tool_invocation', 'audit_file_access']);
+  if (!ALLOWED.has(table_name)) {
+    throw new Error(`tombstoneAuditPayload: table_name must be one of ${[...ALLOWED].join(', ')}`);
+  }
+  if (!row_id || !ops_key_sha256) {
+    throw new Error('tombstoneAuditPayload: row_id + ops_key_sha256 required');
+  }
+  const database = getDb();
+  const tombstone_at = new Date().toISOString();
+  const txn = database.transaction(() => {
+    const row = database.prepare(`SELECT payload_ref, tombstone_at FROM ${table_name} WHERE id = ?`).get(row_id);
+    if (!row) throw new Error(`tombstoneAuditPayload: row ${table_name}#${row_id} not found`);
+    if (row.tombstone_at) throw new Error(`tombstoneAuditPayload: row already tombstoned at ${row.tombstone_at}`);
+    if (row.payload_ref) {
+      database.prepare(`DELETE FROM audit_payload_store WHERE payload_ref = ?`).run(row.payload_ref);
+    }
+    database.prepare(`UPDATE ${table_name} SET tombstone_at = ? WHERE id = ?`).run(tombstone_at, row_id);
+    // Meta-audit: tombstone itself produces an audit_credential_change row.
+    insertAuditCredentialChange({
+      occurred_at: tombstone_at,
+      credential_class: 'audit-payload-tombstone',
+      agent_id: null,
+      change_type: 'revoke',
+      actor: ops_key_sha256,
+      prior_digest: row.payload_ref || null,
+      new_digest: null,
+      reason: reason || `tombstone ${table_name}#${row_id}`,
+    });
+  });
+  txn();
+  return { tombstone_at, table_name, row_id };
+}
+
+// ─── subject_directory (GDPR DSAR hash-at-ingestion) ────────────────────────
+
+// UPSERT a subject. Idempotent on subject_hash; safe to call from every
+// rollup pass — only inserts if absent. Cleartext lives only here.
+function upsertSubjectDirectory(user_email) {
+  if (!user_email || typeof user_email !== 'string') return null;
+  const subject_hash = subjectHash(user_email);
+  const database = getDb();
+  database.prepare(`
+    INSERT INTO subject_directory (subject_hash, user_email_cleartext, created_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT (subject_hash) DO NOTHING
+  `).run(subject_hash, user_email.toLowerCase().trim(), new Date().toISOString());
+  return subject_hash;
+}
+
+function getSubjectByHash(subject_hash) {
+  if (!subject_hash) return null;
+  const database = getDb();
+  return database.prepare('SELECT * FROM subject_directory WHERE subject_hash = ?').get(subject_hash) || null;
+}
+
+// Right-to-be-forgotten: tombstone the cleartext (single-row deletion of
+// user_email_cleartext + tombstone_at set). audit tables retain subject_hash
+// (hash-chain intact; correlation severed).
+function tombstoneSubject({ subject_hash, ops_key_sha256, reason }) {
+  if (!subject_hash || !ops_key_sha256 || !reason) {
+    throw new Error('tombstoneSubject: subject_hash + ops_key_sha256 + reason required (lawful-basis-class)');
+  }
+  const database = getDb();
+  const tombstone_at = new Date().toISOString();
+  const result = database.prepare(`
+    UPDATE subject_directory
+    SET user_email_cleartext = NULL,
+        tombstone_at = @tombstone_at,
+        tombstone_reason = @reason,
+        tombstone_by = @ops_key_sha256
+    WHERE subject_hash = @subject_hash AND tombstone_at IS NULL
+  `).run({ subject_hash, tombstone_at, reason, ops_key_sha256 });
+  if (result.changes === 0) {
+    throw new Error(`tombstoneSubject: subject ${subject_hash.slice(0, 12)}... not found or already tombstoned`);
+  }
+  // Meta-audit
+  insertAuditCredentialChange({
+    occurred_at: tombstone_at,
+    credential_class: 'subject-directory-tombstone',
+    change_type: 'revoke',
+    actor: ops_key_sha256,
+    prior_digest: subject_hash,
+    reason: `GDPR right-to-be-forgotten: ${reason}`.slice(0, 200),
+  });
+  return { tombstone_at, subject_hash };
 }
 
 function closeDb() {
@@ -1345,6 +2114,35 @@ module.exports = {
   getCostBudgets,
   insertCostReconciliation,
   listCostReconciliations,
+  // CP12.1: audit + governance substrate (ADR-0030 v1.1 ratified)
+  computeAuditEventId,
+  subjectHash,
+  fullSha256,
+  insertAuditToolInvocation,
+  listAuditToolInvocations,
+  getAuditToolInvocationByEventId,
+  insertAuditFileAccess,
+  listAuditFileAccess,
+  insertAuditCredentialChange,
+  listAuditCredentialChanges,
+  insertAuditPermissionChange,
+  listAuditPermissionChanges,
+  upsertPolicyRule,
+  listPolicyRules,
+  getPolicyRule,
+  ratifyPolicyRule,
+  deprecatePolicyRule,
+  insertPolicyViolation,
+  listPolicyViolations,
+  disposePolicyViolation,
+  insertAuditReconciliation,
+  listAuditReconciliations,
+  insertAuditPayload,
+  getAuditPayload,
+  tombstoneAuditPayload,
+  upsertSubjectDirectory,
+  getSubjectByHash,
+  tombstoneSubject,
   closeDb,
   messageBus
 };
