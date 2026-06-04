@@ -923,6 +923,35 @@
     renderAcctNumbers();
     renderAcctDrivers();
   }
+
+  // CP11.4 (2026-06-04): Phase 4 wire-up to persisted /cost/summary endpoint.
+  // Pre-CP11.4 the hero tiles depended entirely on live Prom queries
+  // (cluster.cost.{today,7d,mtd} SSE frames), bounded by Prom retention
+  // (15d default). Past mid-month, MTD silently dropped early-month data.
+  //
+  // Post-CP11.4: hero tiles are FED BY both — SSE Prom-template frame keeps
+  // sub-hour freshness; persisted /cost/summary fetch every 60s overrides
+  // with the canonical SQLite-backed value for periods extending past
+  // Prom retention. Persisted wins on conflict (it's the canon).
+  async function refreshAcctFromPersisted() {
+    for (const [period, field] of [['today', 'today'], ['7d', 'sevend'], ['mtd', 'mtd']]) {
+      try {
+        const r = await fetch(`/api/v1/plexus/public/cost/summary?period=${period}`);
+        if (!r.ok) continue;
+        const j = await r.json();
+        if (typeof j.value_usd === 'number') {
+          acctState[field] = j.value_usd;
+        }
+      } catch { /* non-fatal; SSE Prom frames continue to drive */ }
+    }
+    acctState.lastFrameMs = Date.now();
+    renderAcctNumbers();
+    saveAcctState();
+  }
+  // Initial fetch (immediate; doesn't wait for SSE warm-up)
+  refreshAcctFromPersisted();
+  // Periodic refresh every 60s — picks up intraday-rollup updates
+  setInterval(refreshAcctFromPersisted, 60_000);
   // Hook the SSE listener so accounting frames flow into the card.
   const _origConnect = PlexusLiveStream.prototype.connect;
   PlexusLiveStream.prototype.connect = function () {
