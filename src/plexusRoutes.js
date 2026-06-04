@@ -471,6 +471,286 @@ publicRouter.get('/messages', (req, res) => {
 
 publicRouter.get('/messages-stream', messageStreamHandler);
 
+// CP11.3 (2026-06-04) — cost-history public read endpoints (9).
+// Per ratified ADR-0029 v2.3 Phase 3. Network-isolation trust per other
+// public/* endpoints. All read-only; ops-key mutation endpoints live in
+// /api/v1/ops/cost/* (routes.js).
+//
+// Hybrid persisted+live: periods ending today combine cost_daily rollup
+// (persisted) with the intraday-rollup's most-recent computed_at. Periods
+// entirely in past read pure cost_daily.
+
+const costQuery = require('./costQuery');
+const _costDb = require('./db');
+
+publicRouter.get('/cost/summary', async (req, res) => {
+  const period = String(req.query.period || 'mtd');
+  try {
+    const range = costQuery.periodToRange(period);
+    const result = await costQuery.sumCostForRange({ from: range.from, to: range.to });
+    return res.json({
+      period, ...range, ...result,
+    });
+  } catch (e) {
+    return res.status(400).json({ error: 'ValidationError', message: e.message });
+  }
+});
+
+publicRouter.get('/cost/daily', (req, res) => {
+  const from = req.query.from ? String(req.query.from) : null;
+  const to = req.query.to ? String(req.query.to) : null;
+  if (!from || !to || !/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+    return res.status(400).json({ error: 'ValidationError', message: 'from + to required (YYYY-MM-DD)' });
+  }
+  const by = req.query.by ? String(req.query.by).split(',').map(s => s.trim()) : null;
+  const VALID_DIMS = new Set(['agent_id', 'user_email', 'organization_id', 'model', 'host',
+    'cost_center', 'project_tag', 'environment_tier', 'billable_flag']);
+  if (by && !by.every(d => VALID_DIMS.has(d))) {
+    return res.status(400).json({ error: 'ValidationError', message: `by must be CSV of: ${[...VALID_DIMS].join(', ')}` });
+  }
+  // Single-table query then optionally group at JS layer (cost_daily is small enough).
+  const rows = _costDb.getCostByPeriod({ from, to });
+  let result;
+  if (by && by.length > 0) {
+    const grouped = new Map();
+    for (const r of rows) {
+      const key = by.map(d => String(r[d] != null ? r[d] : '')).join('|');
+      let g = grouped.get(key);
+      if (!g) {
+        g = { date_min: r.date, date_max: r.date,
+          cost_usd: 0, tokens_input: 0, tokens_output: 0, tokens_cache_read: 0, tokens_cache_creation: 0 };
+        for (const d of by) g[d] = r[d];
+        grouped.set(key, g);
+      }
+      g.cost_usd += r.cost_usd;
+      g.tokens_input += r.tokens_input;
+      g.tokens_output += r.tokens_output;
+      g.tokens_cache_read += r.tokens_cache_read;
+      g.tokens_cache_creation += r.tokens_cache_creation;
+      if (r.date < g.date_min) g.date_min = r.date;
+      if (r.date > g.date_max) g.date_max = r.date;
+    }
+    result = [...grouped.values()].sort((a, b) => b.cost_usd - a.cost_usd);
+  } else {
+    result = rows;
+  }
+  return res.json({ from, to, by, rows: result, count: result.length });
+});
+
+publicRouter.get('/cost/projection', (req, res) => {
+  const period = String(req.query.period || 'eom');
+  try {
+    const range = costQuery.projectionPeriodToRange(period);
+    const projection = costQuery.projectByLinear(range);
+    return res.json({ period, ...projection });
+  } catch (e) {
+    return res.status(400).json({ error: 'ValidationError', message: e.message });
+  }
+});
+
+publicRouter.get('/cost/compare', async (req, res) => {
+  const period = String(req.query.period || 'mtd');
+  const compareTo = String(req.query.compare_to || 'last_month_to_date');
+  try {
+    const cur = costQuery.periodToRange(period);
+    const prev = costQuery.periodToRange(compareTo);
+    const curSum = await costQuery.sumCostForRange({ from: cur.from, to: cur.to });
+    const prevSum = await costQuery.sumCostForRange({ from: prev.from, to: prev.to });
+    const deltaUsd = curSum.value_usd - prevSum.value_usd;
+    const deltaPct = prevSum.value_usd > 0 ? (deltaUsd / prevSum.value_usd) * 100 : (curSum.value_usd > 0 ? 100 : 0);
+    return res.json({
+      current: { period, ...cur, value_usd: curSum.value_usd },
+      compare: { period: compareTo, ...prev, value_usd: prevSum.value_usd },
+      delta_usd: deltaUsd, delta_pct: deltaPct,
+    });
+  } catch (e) {
+    return res.status(400).json({ error: 'ValidationError', message: e.message });
+  }
+});
+
+publicRouter.get('/cost/burn-vs-budget', (req, res) => {
+  const cost_center = req.query.cost_center != null ? String(req.query.cost_center) : '';
+  const period_kind = String(req.query.period_kind || req.query.period || 'monthly');
+  if (!['monthly', 'quarterly'].includes(period_kind)) {
+    return res.status(400).json({ error: 'ValidationError', message: 'period_kind must be monthly or quarterly' });
+  }
+  try {
+    return res.json(costQuery.burnVsBudget({ cost_center, period_kind }));
+  } catch (e) {
+    return res.status(500).json({ error: 'InternalError', message: e.message });
+  }
+});
+
+publicRouter.get('/cost/by-cost-center', (req, res) => {
+  const period = String(req.query.period || 'mtd');
+  const period_kind = String(req.query.period_kind || 'monthly');
+  try {
+    const range = costQuery.periodToRange(period);
+    const rows = _costDb.getCostByPeriod({ from: range.from, to: range.to });
+    const grouped = new Map();
+    for (const r of rows) {
+      const cc = r.cost_center || '';
+      let g = grouped.get(cc) || { cost_center: cc, actual_usd: 0 };
+      g.actual_usd += r.cost_usd;
+      grouped.set(cc, g);
+    }
+    // Enrich each with budget if available
+    const out = [];
+    for (const g of grouped.values()) {
+      const budget = costQuery.burnVsBudget({ cost_center: g.cost_center, period_kind });
+      out.push({
+        cost_center: g.cost_center,
+        actual_usd: g.actual_usd,
+        budget_usd: budget.budget_usd,
+        pct_consumed: budget.pct_consumed != null ? budget.pct_consumed : null,
+        threshold_state: budget.threshold_state,
+      });
+    }
+    out.sort((a, b) => b.actual_usd - a.actual_usd);
+    return res.json({ period, ...range, period_kind, rows: out, count: out.length });
+  } catch (e) {
+    return res.status(400).json({ error: 'ValidationError', message: e.message });
+  }
+});
+
+publicRouter.get('/cost/by-api-key', (req, res) => {
+  // user_email serves as the API-key-shape proxy in our schema; per
+  // bizmodel §Q6 reconciliation flow this lets the operator pick arbitrary
+  // date ranges to match Anthropic invoice periods (not just calendar-month).
+  const period_start = req.query.period_start ? String(req.query.period_start) : null;
+  const period_end = req.query.period_end ? String(req.query.period_end) : null;
+  if (!period_start || !period_end ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(period_start) || !/^\d{4}-\d{2}-\d{2}$/.test(period_end)) {
+    return res.status(400).json({ error: 'ValidationError', message: 'period_start + period_end required (YYYY-MM-DD)' });
+  }
+  const rows = _costDb.getCostByPeriod({ from: period_start, to: period_end });
+  const grouped = new Map();
+  for (const r of rows) {
+    const k = `${r.user_email}|${r.model}`;
+    let g = grouped.get(k);
+    if (!g) {
+      g = {
+        api_key_label: r.user_email || '(none)', model: r.model || '(unspecified)',
+        organization_id: r.organization_id || '',
+        tokens_input: 0, tokens_output: 0, tokens_cache_read: 0, tokens_cache_creation: 0,
+        total_usd: 0,
+      };
+      grouped.set(k, g);
+    }
+    g.tokens_input += r.tokens_input;
+    g.tokens_output += r.tokens_output;
+    g.tokens_cache_read += r.tokens_cache_read;
+    g.tokens_cache_creation += r.tokens_cache_creation;
+    g.total_usd += r.cost_usd;
+  }
+  const out = [...grouped.values()].sort((a, b) => b.total_usd - a.total_usd);
+  return res.json({ period_start, period_end, rows: out, count: out.length });
+});
+
+publicRouter.get('/cost/anomaly-detail', (req, res) => {
+  const date = req.query.date ? String(req.query.date) : null;
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return res.status(400).json({ error: 'ValidationError', message: 'date required (YYYY-MM-DD)' });
+  }
+  const dim_key = req.query.dim_key ? String(req.query.dim_key) : 'agent_id';
+  const dim_value = req.query.dim_value ? String(req.query.dim_value) : null;
+  const VALID_DIMS = new Set(['agent_id', 'user_email', 'organization_id', 'model', 'cost_center', 'project_tag', 'environment_tier']);
+  if (!VALID_DIMS.has(dim_key)) {
+    return res.status(400).json({ error: 'ValidationError', message: `dim_key must be one of: ${[...VALID_DIMS].join(', ')}` });
+  }
+
+  // Date in question + 7d baseline
+  const dayRows = _costDb.getCostByPeriod({ from: date, to: date });
+  const baselineFrom = costQuery._internal.ymd(new Date(new Date(date) - 7 * 86400_000));
+  const baselineTo = costQuery._internal.ymd(new Date(new Date(date) - 1 * 86400_000));
+  const baselineRows = _costDb.getCostByPeriod({ from: baselineFrom, to: baselineTo });
+
+  // Filter to dim_value if specified
+  const dayFilt = dim_value ? dayRows.filter(r => r[dim_key] === dim_value) : dayRows;
+  const baselineFilt = dim_value ? baselineRows.filter(r => r[dim_key] === dim_value) : baselineRows;
+
+  const dayTotal = dayFilt.reduce((s, r) => s + r.cost_usd, 0);
+  const baselineTotal = baselineFilt.reduce((s, r) => s + r.cost_usd, 0);
+  const baselineDailyAvg = baselineTotal / 7;
+  const deltaVsBaseline = dayTotal - baselineDailyAvg;
+
+  // Top contributors on the day (within filter)
+  const contribMap = new Map();
+  for (const r of dayFilt) {
+    const k = `${r.agent_id}|${r.model}`;
+    let g = contribMap.get(k) || { agent_id: r.agent_id, model: r.model, cost_usd: 0 };
+    g.cost_usd += r.cost_usd;
+    contribMap.set(k, g);
+  }
+  const topContributors = [...contribMap.values()].sort((a, b) => b.cost_usd - a.cost_usd).slice(0, 10);
+
+  return res.json({
+    date, dim_key, dim_value,
+    day_total_usd: dayTotal,
+    baseline_window: { from: baselineFrom, to: baselineTo },
+    baseline_daily_avg_usd: baselineDailyAvg,
+    delta_vs_baseline_usd: deltaVsBaseline,
+    delta_vs_baseline_pct: baselineDailyAvg > 0 ? (deltaVsBaseline / baselineDailyAvg) * 100 : null,
+    top_contributors: topContributors,
+  });
+});
+
+publicRouter.get('/cost/export', (req, res) => {
+  const format = String(req.query.format || 'csv');
+  const period = String(req.query.period || 'mtd');
+  const schema = String(req.query.schema || 'plexus-default');
+  if (format !== 'csv') {
+    return res.status(400).json({ error: 'ValidationError', message: 'only format=csv supported v1' });
+  }
+  let range;
+  try { range = costQuery.periodToRange(period); }
+  catch (e) { return res.status(400).json({ error: 'ValidationError', message: e.message }); }
+
+  const rows = _costDb.getCostByPeriod({ from: range.from, to: range.to });
+
+  const csvEsc = (v) => {
+    if (v == null) return '';
+    const s = String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+
+  let header, lines;
+  if (schema === 'anthropic-invoice') {
+    // Per bizmodel §Q6: reconciliation-friendly column schema matching Anthropic invoice shape
+    header = ['period_start', 'period_end', 'api_key_label', 'model',
+      'input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_write_tokens', 'total_cost_usd'];
+    // Group by user_email × model across the full period
+    const grouped = new Map();
+    for (const r of rows) {
+      const k = `${r.user_email}|${r.model}`;
+      let g = grouped.get(k) || {
+        api_key_label: r.user_email || '(none)', model: r.model || '(unspecified)',
+        input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, total_cost_usd: 0,
+      };
+      g.input_tokens += r.tokens_input;
+      g.output_tokens += r.tokens_output;
+      g.cache_read_tokens += r.tokens_cache_read;
+      g.cache_write_tokens += r.tokens_cache_creation;
+      g.total_cost_usd += r.cost_usd;
+      grouped.set(k, g);
+    }
+    lines = [...grouped.values()].sort((a, b) => b.total_cost_usd - a.total_cost_usd)
+      .map(g => [range.from, range.to, g.api_key_label, g.model,
+        g.input_tokens, g.output_tokens, g.cache_read_tokens, g.cache_write_tokens,
+        g.total_cost_usd.toFixed(6)].map(csvEsc).join(','));
+  } else {
+    // Default schema: full row dump
+    header = ['date', 'agent_id', 'user_email', 'organization_id', 'model', 'host',
+      'cost_center', 'project_tag', 'environment_tier', 'billable_flag',
+      'tokens_input', 'tokens_output', 'tokens_cache_read', 'tokens_cache_creation', 'cost_usd', 'source'];
+    lines = rows.map(r => header.map(h => csvEsc(r[h])).join(','));
+  }
+
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', `attachment; filename="plexus-cost-${period}-${range.from}-to-${range.to}-${schema}.csv"`);
+  res.send([header.join(','), ...lines].join('\n') + '\n');
+});
+
 // CP10.3 (2026-06-02) — per-agent activity timeline public-mirror.
 // Operator-facing dashboard view; network-isolation trust (same posture as
 // the rest of public/*). Daemon-side allowlist redacts secrets before they

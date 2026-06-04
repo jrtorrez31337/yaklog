@@ -531,6 +531,94 @@ router.get('/presence/:agent_id', (req, res) => {
 // ssw-devops lane); req.auth.opsKeyId is populated by middleware/auth.js
 // path (c) when the Bearer is a YAKLOG_OPS_API_KEYS member. Records a
 // transition with the actor's opsKeyId-prefix for audit.
+// CP11.3 (2026-06-04): Phase 3 ops-key mutation endpoints per ratified
+// ADR-0029 v2.3. Three endpoints: dimension-tag / budget / reconcile.
+// All ops-key gated; all idempotent or audit-append-only.
+
+router.put('/ops/cost/dimension-tag', (req, res) => {
+  if (!req.auth || !req.auth.opsKeyId) {
+    return res.status(403).json({ error: 'OpsKeyRequired', message: 'requires ops-key' });
+  }
+  const b = req.body || {};
+  if (!b.agent_id || typeof b.agent_id !== 'string') {
+    return res.status(400).json({ error: 'ValidationError', message: 'agent_id required' });
+  }
+  try {
+    const { upsertCostDimensionTags } = require('./db');
+    upsertCostDimensionTags({
+      agent_id: b.agent_id,
+      cost_center: b.cost_center || '',
+      project_tag: b.project_tag || '',
+      environment_tier: b.environment_tier || '',
+      billable_flag: b.billable_flag ? 1 : 0,
+      updated_by: `ops:${req.auth.opsKeyId}`,
+    });
+    return res.json({ ok: true, agent_id: b.agent_id });
+  } catch (e) {
+    return res.status(500).json({ error: 'UpsertFailed', message: e.message });
+  }
+});
+
+router.put('/ops/cost/budget', (req, res) => {
+  if (!req.auth || !req.auth.opsKeyId) {
+    return res.status(403).json({ error: 'OpsKeyRequired', message: 'requires ops-key' });
+  }
+  const b = req.body || {};
+  if (b.cost_center == null || !b.period_kind || !b.period_anchor || b.budget_usd == null) {
+    return res.status(400).json({ error: 'ValidationError',
+      message: 'cost_center + period_kind (monthly|quarterly) + period_anchor (YYYY-MM or YYYY-Qn) + budget_usd required' });
+  }
+  try {
+    const { upsertCostBudget } = require('./db');
+    upsertCostBudget({ ...b, updated_by: `ops:${req.auth.opsKeyId}` });
+    return res.json({ ok: true, cost_center: b.cost_center, period_kind: b.period_kind, period_anchor: b.period_anchor });
+  } catch (e) {
+    return res.status(400).json({ error: 'UpsertFailed', message: e.message });
+  }
+});
+
+router.post('/ops/cost/reconcile', (req, res) => {
+  if (!req.auth || !req.auth.opsKeyId) {
+    return res.status(403).json({ error: 'OpsKeyRequired', message: 'requires ops-key' });
+  }
+  const b = req.body || {};
+  if (!b.period_start || !b.period_end || b.invoice_total_usd == null) {
+    return res.status(400).json({ error: 'ValidationError',
+      message: 'period_start + period_end + invoice_total_usd required' });
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(b.period_start) || !/^\d{4}-\d{2}-\d{2}$/.test(b.period_end)) {
+    return res.status(400).json({ error: 'ValidationError', message: 'period_start/end must be YYYY-MM-DD' });
+  }
+  try {
+    // Compute plexus-side total for the same period; insert audit row with delta.
+    const { getCostByPeriod, insertCostReconciliation } = require('./db');
+    const rows = getCostByPeriod({ from: b.period_start, to: b.period_end });
+    const plexusTotal = rows.reduce((s, r) => s + r.cost_usd, 0);
+
+    // Concentration analysis: where does divergence pile up by (user_email × model)?
+    const concentration = {};
+    const byDim = new Map();
+    for (const r of rows) {
+      const k = `${r.user_email}|${r.model}`;
+      byDim.set(k, (byDim.get(k) || 0) + r.cost_usd);
+    }
+    concentration.by_user_email_model = [...byDim.entries()]
+      .map(([k, v]) => { const [user_email, model] = k.split('|'); return { user_email, model, plexus_usd: v }; })
+      .sort((a, b) => b.plexus_usd - a.plexus_usd).slice(0, 10);
+
+    const result = insertCostReconciliation({
+      period_start: b.period_start, period_end: b.period_end,
+      invoice_label: b.invoice_label || null,
+      invoice_total_usd: b.invoice_total_usd, plexus_total_usd: plexusTotal,
+      concentration_json: concentration, notes: b.notes || null,
+      reconciled_by: `ops:${req.auth.opsKeyId}`,
+    });
+    return res.json({ ok: true, ...result, plexus_total_usd: plexusTotal, top_dims: concentration.by_user_email_model.slice(0, 5) });
+  } catch (e) {
+    return res.status(400).json({ error: 'ReconcileFailed', message: e.message });
+  }
+});
+
 // CP11.2 (2026-06-04): manual rollup trigger — ops-key gated.
 // Forces a cost_daily rollup for a specific date (default today). Useful
 // for catching late-arriving data, reconciling after a Prom outage, or
