@@ -817,11 +817,15 @@
     by: 'agent',
     lastFrameMs: 0,
   };
+  // CP11.0.1 (2026-06-04): hero-tile USD precision floor — ALWAYS 2-decimal
+  // regardless of magnitude. Per bizmodel R3 refinement (#7640 + #7643 v2.1)
+  // CFO-readability standard: sub-penny precision is anti-pattern on a
+  // finance screen; readers expect $0.12 not $0.1234 or $0.0001. For
+  // large values, drop decimals (compact CFO display) above the $1000 threshold.
   const fmtUSD = (v) => {
     if (v == null || Number.isNaN(v)) return '—';
     if (v >= 1000) return '$' + v.toFixed(0);
-    if (v >= 1)    return '$' + v.toFixed(2);
-    return '$' + v.toFixed(4);
+    return '$' + v.toFixed(2);
   };
   const valFromVector = (payload) => {
     const r = payload && payload.data && payload.data.result;

@@ -297,6 +297,107 @@ function initializeDb() {
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_activity_agent_id_desc ON agent_activity(agent_id, id DESC)`).run();
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_activity_ts ON agent_activity(ts DESC)`).run();
 
+  // CP11.1 (2026-06-04): cost-persistence Phase 1 substrate (PLAN-CP11 v2 §4).
+  // Pre-staged pre-canonical per Jon-direct "do not stop until #cost has been
+  // updated and ready for review" — additive only (no existing-table changes),
+  // fully reversible (DROP TABLE), aligns with parch ADR-0029 ratify-drive
+  // (yaklog-dev OQ CONCUR-all-10 at #7644; facts-provision at #7646). Once
+  // ADR-0029 ratifies, schema becomes what canonical says; this pre-stage
+  // lets parch empirically verify the design matches actual implementation.
+  //
+  // cost_daily — canonical financial history; daily granularity per dimension
+  // tuple; UPSERT-idempotent via unique index. Includes 4 bizmodel-derived
+  // operator-tagged dimension columns (cost_center / project_tag /
+  // environment_tier / billable_flag) — empty string default, NOT auto-derived.
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS cost_daily (
+      id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+      date                  TEXT NOT NULL,
+      agent_id              TEXT NOT NULL DEFAULT '',
+      user_email            TEXT NOT NULL DEFAULT '',
+      organization_id       TEXT NOT NULL DEFAULT '',
+      model                 TEXT NOT NULL DEFAULT '',
+      host                  TEXT NOT NULL DEFAULT '',
+      cost_center           TEXT NOT NULL DEFAULT '',
+      project_tag           TEXT NOT NULL DEFAULT '',
+      environment_tier      TEXT NOT NULL DEFAULT '',
+      billable_flag         INTEGER NOT NULL DEFAULT 0,
+      tokens_input          INTEGER NOT NULL DEFAULT 0,
+      tokens_output         INTEGER NOT NULL DEFAULT 0,
+      tokens_cache_read     INTEGER NOT NULL DEFAULT 0,
+      tokens_cache_creation INTEGER NOT NULL DEFAULT 0,
+      cost_usd              REAL NOT NULL DEFAULT 0,
+      source                TEXT NOT NULL DEFAULT 'prom',
+      computed_at           TEXT NOT NULL
+    )
+  `).run();
+  db.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS uq_cost_daily ON cost_daily(
+    date, agent_id, user_email, organization_id, model, host,
+    cost_center, project_tag, environment_tier, billable_flag
+  )`).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_cost_daily_date ON cost_daily(date)`).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_cost_daily_agent_date ON cost_daily(agent_id, date)`).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_cost_daily_account_date ON cost_daily(user_email, date)`).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_cost_daily_cost_center_date ON cost_daily(cost_center, date)`).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_cost_daily_project_date ON cost_daily(project_tag, date)`).run();
+
+  // cost_dimension_tags — operator-assigned tag mapping per agent_id.
+  // Forward-propagates to NEW rollup rows (does NOT retroactively re-tag
+  // historical cost_daily rows per bizmodel §Q2 audit-preservation discipline).
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS cost_dimension_tags (
+      agent_id              TEXT PRIMARY KEY,
+      cost_center           TEXT NOT NULL DEFAULT '',
+      project_tag           TEXT NOT NULL DEFAULT '',
+      environment_tier      TEXT NOT NULL DEFAULT '',
+      billable_flag         INTEGER NOT NULL DEFAULT 0,
+      updated_at            TEXT NOT NULL,
+      updated_by            TEXT
+    )
+  `).run();
+
+  // cost_budgets — per-cost-center envelopes (monthly + quarterly v1).
+  // Empty cost_center allowed for cluster-wide envelope. Carry-over policy
+  // operator-controlled. 3-tier threshold defaults (80% / 100% / 120%).
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS cost_budgets (
+      id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+      cost_center           TEXT NOT NULL,
+      period_kind           TEXT NOT NULL,
+      period_anchor         TEXT NOT NULL,
+      budget_usd            REAL NOT NULL,
+      carry_over            TEXT NOT NULL DEFAULT 'strict',
+      threshold_pct_warn    INTEGER NOT NULL DEFAULT 80,
+      threshold_pct_at      INTEGER NOT NULL DEFAULT 100,
+      threshold_pct_over    INTEGER NOT NULL DEFAULT 120,
+      note                  TEXT,
+      created_at            TEXT NOT NULL,
+      updated_at            TEXT NOT NULL,
+      updated_by            TEXT
+    )
+  `).run();
+  db.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS uq_cost_budgets ON cost_budgets(cost_center, period_kind, period_anchor)`).run();
+
+  // cost_reconciliation — append-only audit of operator invoice-tie-out events.
+  // Never UPDATE; new reconciliation events insert new rows. Preserves history.
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS cost_reconciliation (
+      id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+      period_start          TEXT NOT NULL,
+      period_end            TEXT NOT NULL,
+      invoice_label         TEXT,
+      invoice_total_usd     REAL NOT NULL,
+      plexus_total_usd      REAL NOT NULL,
+      delta_usd             REAL NOT NULL,
+      delta_pct             REAL NOT NULL,
+      concentration_json    TEXT,
+      notes                 TEXT,
+      reconciled_by         TEXT NOT NULL,
+      reconciled_at         TEXT NOT NULL
+    )
+  `).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_recon_period ON cost_reconciliation(period_end DESC)`).run();
+
   return db;
 }
 
@@ -470,6 +571,230 @@ function deleteMessage(id) {
   const database = getDb();
   const result = database.prepare('DELETE FROM messages WHERE id = ?').run(id);
   return result.changes > 0;
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// CP11.1 (2026-06-04): cost-persistence helpers (PLAN-CP11 v2 §4).
+// Pre-staged pre-canonical per Jon-direct "do not stop until #cost has
+// been updated and ready for review". UPSERT-idempotent semantics on
+// cost_daily + cost_dimension_tags + cost_budgets. Append-only on
+// cost_reconciliation. All helpers operate on the schema added in
+// initializeDb() above; nothing in this block touches existing tables.
+// ────────────────────────────────────────────────────────────────────────
+
+// UPSERT a cost_daily row. Unique on (date, full dim-tuple); INSERT OR
+// REPLACE preserves the auto-increment id-cycle but is acceptable for
+// daily-rollup re-runs (id stability not load-bearing for cost_daily).
+function upsertCostDaily(row) {
+  if (!row || !row.date || typeof row.date !== 'string') {
+    throw new Error('upsertCostDaily: row.date is required (YYYY-MM-DD)');
+  }
+  const database = getDb();
+  const computed_at = row.computed_at || new Date().toISOString();
+  database.prepare(`
+    INSERT INTO cost_daily (
+      date, agent_id, user_email, organization_id, model, host,
+      cost_center, project_tag, environment_tier, billable_flag,
+      tokens_input, tokens_output, tokens_cache_read, tokens_cache_creation,
+      cost_usd, source, computed_at
+    ) VALUES (
+      @date, @agent_id, @user_email, @organization_id, @model, @host,
+      @cost_center, @project_tag, @environment_tier, @billable_flag,
+      @tokens_input, @tokens_output, @tokens_cache_read, @tokens_cache_creation,
+      @cost_usd, @source, @computed_at
+    )
+    ON CONFLICT (date, agent_id, user_email, organization_id, model, host,
+                 cost_center, project_tag, environment_tier, billable_flag)
+    DO UPDATE SET
+      tokens_input          = excluded.tokens_input,
+      tokens_output         = excluded.tokens_output,
+      tokens_cache_read     = excluded.tokens_cache_read,
+      tokens_cache_creation = excluded.tokens_cache_creation,
+      cost_usd              = excluded.cost_usd,
+      source                = excluded.source,
+      computed_at           = excluded.computed_at
+  `).run({
+    date: row.date,
+    agent_id: row.agent_id || '',
+    user_email: row.user_email || '',
+    organization_id: row.organization_id || '',
+    model: row.model || '',
+    host: row.host || '',
+    cost_center: row.cost_center || '',
+    project_tag: row.project_tag || '',
+    environment_tier: row.environment_tier || '',
+    billable_flag: row.billable_flag ? 1 : 0,
+    tokens_input: Number.isInteger(row.tokens_input) ? row.tokens_input : 0,
+    tokens_output: Number.isInteger(row.tokens_output) ? row.tokens_output : 0,
+    tokens_cache_read: Number.isInteger(row.tokens_cache_read) ? row.tokens_cache_read : 0,
+    tokens_cache_creation: Number.isInteger(row.tokens_cache_creation) ? row.tokens_cache_creation : 0,
+    cost_usd: Number.isFinite(row.cost_usd) ? row.cost_usd : 0,
+    source: row.source || 'prom',
+    computed_at,
+  });
+}
+
+// Query cost_daily rows by date range with optional dimension filter.
+// Returns array of row objects (NOT aggregated; caller sums if needed).
+function getCostByPeriod({ from, to, agent_id, user_email, cost_center, project_tag, environment_tier, model, billable_flag } = {}) {
+  if (!from || !to) throw new Error('getCostByPeriod: from + to are required (YYYY-MM-DD)');
+  const database = getDb();
+  const where = ['date >= @from', 'date <= @to'];
+  const params = { from, to };
+  if (agent_id != null) { where.push('agent_id = @agent_id'); params.agent_id = agent_id; }
+  if (user_email != null) { where.push('user_email = @user_email'); params.user_email = user_email; }
+  if (cost_center != null) { where.push('cost_center = @cost_center'); params.cost_center = cost_center; }
+  if (project_tag != null) { where.push('project_tag = @project_tag'); params.project_tag = project_tag; }
+  if (environment_tier != null) { where.push('environment_tier = @environment_tier'); params.environment_tier = environment_tier; }
+  if (model != null) { where.push('model = @model'); params.model = model; }
+  if (billable_flag != null) { where.push('billable_flag = @billable_flag'); params.billable_flag = billable_flag ? 1 : 0; }
+  return database
+    .prepare(`SELECT * FROM cost_daily WHERE ${where.join(' AND ')} ORDER BY date ASC, id ASC`)
+    .all(params);
+}
+
+// UPSERT a cost_dimension_tags row for an agent_id. Forward-propagates
+// to NEW cost_daily rows (rollup job reads this table at write-time);
+// does NOT retroactively re-tag historical rows.
+function upsertCostDimensionTags(row) {
+  if (!row || !row.agent_id) throw new Error('upsertCostDimensionTags: row.agent_id is required');
+  const database = getDb();
+  const updated_at = row.updated_at || new Date().toISOString();
+  database.prepare(`
+    INSERT INTO cost_dimension_tags (agent_id, cost_center, project_tag, environment_tier, billable_flag, updated_at, updated_by)
+    VALUES (@agent_id, @cost_center, @project_tag, @environment_tier, @billable_flag, @updated_at, @updated_by)
+    ON CONFLICT (agent_id) DO UPDATE SET
+      cost_center      = excluded.cost_center,
+      project_tag      = excluded.project_tag,
+      environment_tier = excluded.environment_tier,
+      billable_flag    = excluded.billable_flag,
+      updated_at       = excluded.updated_at,
+      updated_by       = excluded.updated_by
+  `).run({
+    agent_id: row.agent_id,
+    cost_center: row.cost_center || '',
+    project_tag: row.project_tag || '',
+    environment_tier: row.environment_tier || '',
+    billable_flag: row.billable_flag ? 1 : 0,
+    updated_at,
+    updated_by: row.updated_by || null,
+  });
+}
+
+// Fetch tags for a specific agent_id (or all if agent_id omitted).
+function getCostDimensionTags(agent_id) {
+  const database = getDb();
+  if (agent_id) {
+    return database.prepare('SELECT * FROM cost_dimension_tags WHERE agent_id = ?').get(agent_id) || null;
+  }
+  return database.prepare('SELECT * FROM cost_dimension_tags ORDER BY agent_id').all();
+}
+
+// UPSERT a cost_budgets envelope.
+function upsertCostBudget(row) {
+  if (!row || row.cost_center == null || !row.period_kind || !row.period_anchor) {
+    throw new Error('upsertCostBudget: cost_center + period_kind + period_anchor required');
+  }
+  const VALID_KINDS = new Set(['monthly', 'quarterly']);
+  if (!VALID_KINDS.has(row.period_kind)) {
+    throw new Error(`upsertCostBudget: period_kind must be one of ${[...VALID_KINDS].join(', ')}`);
+  }
+  if (!Number.isFinite(row.budget_usd) || row.budget_usd < 0) {
+    throw new Error('upsertCostBudget: budget_usd must be non-negative finite');
+  }
+  const database = getDb();
+  const now = new Date().toISOString();
+  database.prepare(`
+    INSERT INTO cost_budgets (
+      cost_center, period_kind, period_anchor, budget_usd,
+      carry_over, threshold_pct_warn, threshold_pct_at, threshold_pct_over,
+      note, created_at, updated_at, updated_by
+    ) VALUES (
+      @cost_center, @period_kind, @period_anchor, @budget_usd,
+      @carry_over, @threshold_pct_warn, @threshold_pct_at, @threshold_pct_over,
+      @note, @now, @now, @updated_by
+    )
+    ON CONFLICT (cost_center, period_kind, period_anchor) DO UPDATE SET
+      budget_usd            = excluded.budget_usd,
+      carry_over            = excluded.carry_over,
+      threshold_pct_warn    = excluded.threshold_pct_warn,
+      threshold_pct_at      = excluded.threshold_pct_at,
+      threshold_pct_over    = excluded.threshold_pct_over,
+      note                  = excluded.note,
+      updated_at            = excluded.updated_at,
+      updated_by            = excluded.updated_by
+  `).run({
+    cost_center: row.cost_center,
+    period_kind: row.period_kind,
+    period_anchor: row.period_anchor,
+    budget_usd: row.budget_usd,
+    carry_over: row.carry_over || 'strict',
+    threshold_pct_warn: Number.isInteger(row.threshold_pct_warn) ? row.threshold_pct_warn : 80,
+    threshold_pct_at: Number.isInteger(row.threshold_pct_at) ? row.threshold_pct_at : 100,
+    threshold_pct_over: Number.isInteger(row.threshold_pct_over) ? row.threshold_pct_over : 120,
+    note: row.note || null,
+    now,
+    updated_by: row.updated_by || null,
+  });
+}
+
+// List budgets (optionally filtered).
+function getCostBudgets({ cost_center, period_kind, period_anchor } = {}) {
+  const database = getDb();
+  const where = [];
+  const params = {};
+  if (cost_center != null) { where.push('cost_center = @cost_center'); params.cost_center = cost_center; }
+  if (period_kind != null) { where.push('period_kind = @period_kind'); params.period_kind = period_kind; }
+  if (period_anchor != null) { where.push('period_anchor = @period_anchor'); params.period_anchor = period_anchor; }
+  const sql = where.length
+    ? `SELECT * FROM cost_budgets WHERE ${where.join(' AND ')} ORDER BY cost_center, period_kind, period_anchor`
+    : `SELECT * FROM cost_budgets ORDER BY cost_center, period_kind, period_anchor`;
+  return database.prepare(sql).all(params);
+}
+
+// Insert a cost_reconciliation row (append-only).
+function insertCostReconciliation(row) {
+  if (!row || !row.period_start || !row.period_end || !row.reconciled_by) {
+    throw new Error('insertCostReconciliation: period_start + period_end + reconciled_by required');
+  }
+  if (!Number.isFinite(row.invoice_total_usd) || !Number.isFinite(row.plexus_total_usd)) {
+    throw new Error('insertCostReconciliation: invoice_total_usd + plexus_total_usd must be finite');
+  }
+  const database = getDb();
+  const delta_usd = row.invoice_total_usd - row.plexus_total_usd;
+  const delta_pct = row.plexus_total_usd !== 0
+    ? (delta_usd / row.plexus_total_usd) * 100
+    : (row.invoice_total_usd === 0 ? 0 : 100);
+  const result = database.prepare(`
+    INSERT INTO cost_reconciliation (
+      period_start, period_end, invoice_label,
+      invoice_total_usd, plexus_total_usd, delta_usd, delta_pct,
+      concentration_json, notes, reconciled_by, reconciled_at
+    ) VALUES (
+      @period_start, @period_end, @invoice_label,
+      @invoice_total_usd, @plexus_total_usd, @delta_usd, @delta_pct,
+      @concentration_json, @notes, @reconciled_by, @reconciled_at
+    )
+  `).run({
+    period_start: row.period_start,
+    period_end: row.period_end,
+    invoice_label: row.invoice_label || null,
+    invoice_total_usd: row.invoice_total_usd,
+    plexus_total_usd: row.plexus_total_usd,
+    delta_usd,
+    delta_pct,
+    concentration_json: row.concentration_json ? (typeof row.concentration_json === 'string' ? row.concentration_json : JSON.stringify(row.concentration_json)) : null,
+    notes: row.notes || null,
+    reconciled_by: row.reconciled_by,
+    reconciled_at: row.reconciled_at || new Date().toISOString(),
+  });
+  return { id: result.lastInsertRowid, delta_usd, delta_pct };
+}
+
+// List reconciliation rows (newest first).
+function listCostReconciliations({ limit = 100 } = {}) {
+  const database = getDb();
+  return database.prepare('SELECT * FROM cost_reconciliation ORDER BY id DESC LIMIT ?').all(limit);
 }
 
 function closeDb() {
@@ -1011,6 +1336,15 @@ module.exports = {
   // CP10.3: activity timeline
   insertAgentActivity,
   listAgentActivity,
+  // CP11.1: cost-persistence (pre-staged for ADR-0029 Phase 1)
+  upsertCostDaily,
+  getCostByPeriod,
+  upsertCostDimensionTags,
+  getCostDimensionTags,
+  upsertCostBudget,
+  getCostBudgets,
+  insertCostReconciliation,
+  listCostReconciliations,
   closeDb,
   messageBus
 };
