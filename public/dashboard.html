@@ -286,6 +286,106 @@
   #agent-popover .pop-error { padding: 12px 14px; text-align: center; color: var(--red); font-size: 12px; }
 
   /* CP3: Cost tab. */
+  /* CP11.4-6 (2026-06-04): three-lens cost tab + ops-key gated sub-views */
+  .cost-hero { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; padding: 16px 18px; background: var(--panel); border-bottom: 1px solid var(--border); }
+  .cost-tile { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; min-height: 100px; }
+  .cost-tile .tile-lbl { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; }
+  .cost-tile .tile-val { color: var(--text); font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.15; }
+  .cost-tile .tile-sub { color: var(--muted); font-size: 11px; line-height: 1.3; }
+  .cost-tile .tile-bar { width: 100%; height: 6px; background: rgba(255,255,255,0.06); border-radius: 3px; overflow: hidden; }
+  .cost-tile .tile-bar-fill { height: 100%; background: var(--green); border-radius: 3px; transition: width 0.3s; }
+  .cost-tile.threshold-green .tile-bar-fill { background: var(--green); }
+  .cost-tile.threshold-warn .tile-bar-fill { background: var(--yellow); }
+  .cost-tile.threshold-at .tile-bar-fill { background: #fb923c; }
+  .cost-tile.threshold-over .tile-bar-fill { background: var(--red); }
+  .cost-tile.threshold-warn .tile-val { color: var(--yellow); }
+  .cost-tile.threshold-at .tile-val { color: #fb923c; }
+  .cost-tile.threshold-over .tile-val { color: var(--red); }
+  .cost-tile .tile-movers { display: flex; flex-direction: column; gap: 3px; font-size: 11px; }
+  .cost-tile .mover-row { display: flex; justify-content: space-between; gap: 8px; color: var(--text); }
+  .cost-tile .mover-row .mover-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+  .cost-tile .mover-row .mover-cost { color: var(--muted); font-variant-numeric: tabular-nums; flex-shrink: 0; }
+
+  .cost-subnav { display: flex; gap: 0; background: var(--panel); border-bottom: 1px solid var(--border); padding: 0 18px; }
+  .cost-subnav button { background: transparent; color: var(--muted); border: 0; padding: 10px 16px; font: inherit; font-size: 12px; cursor: pointer; border-bottom: 2px solid transparent; transition: color 0.1s; }
+  .cost-subnav button:hover { color: var(--text); }
+  .cost-subnav button.active { color: var(--blue); border-bottom-color: var(--blue); }
+
+  .cost-subpanel { display: none; padding: 18px; }
+  .cost-subpanel.active { display: block; }
+  .cost-loading { color: var(--muted); font-size: 12px; padding: 24px 0; text-align: center; }
+
+  /* Per-sub-view styling */
+  .pace-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .pace-card { background: var(--panel); border: 1px solid var(--border); border-radius: 4px; padding: 14px; }
+  .pace-card h3 { margin: 0 0 10px; font-size: 13px; color: var(--text); font-weight: 500; }
+  .pace-card .pace-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.04); font-size: 12px; }
+  .pace-card .pace-row:last-child { border-bottom: 0; }
+  .pace-card .pace-row .pace-lbl { color: var(--muted); }
+  .pace-card .pace-row .pace-val { color: var(--text); font-variant-numeric: tabular-nums; }
+
+  .comp-controls { display: flex; gap: 16px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
+  .comp-controls label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
+  .comp-controls select { background: rgba(255,255,255,0.03); border: 1px solid var(--border); color: var(--text); padding: 5px 8px; border-radius: 3px; font: inherit; font-size: 12px; }
+  .comp-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .comp-table th { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); color: var(--muted); font-weight: 500; font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; }
+  .comp-table td { padding: 6px 10px; border-bottom: 1px solid rgba(255,255,255,0.04); color: var(--text); }
+  .comp-table td.num { font-variant-numeric: tabular-nums; text-align: right; }
+
+  .anomaly-list { display: flex; flex-direction: column; gap: 8px; }
+  .anomaly-row { background: var(--panel); border: 1px solid var(--border); border-left: 3px solid var(--red); border-radius: 4px; padding: 10px 14px; display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+  .anomaly-row .anomaly-meta { display: flex; flex-direction: column; gap: 2px; }
+  .anomaly-row .anomaly-meta .anomaly-headline { font-size: 13px; color: var(--text); }
+  .anomaly-row .anomaly-meta .anomaly-sub { font-size: 11px; color: var(--muted); }
+  .anomaly-row .anomaly-val { color: var(--red); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+  .recon-controls { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 16px; padding: 14px; background: var(--panel); border: 1px solid var(--border); border-radius: 4px; }
+  .recon-controls .recon-field { display: flex; flex-direction: column; gap: 3px; }
+  .recon-controls .recon-field label { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; }
+  .recon-controls input { background: rgba(255,255,255,0.03); border: 1px solid var(--border); color: var(--text); padding: 5px 8px; border-radius: 3px; font: inherit; font-size: 12px; }
+  .recon-controls button { background: rgba(96,165,250,0.12); border: 1px solid var(--blue); color: var(--text); padding: 6px 14px; border-radius: 3px; font: inherit; font-size: 12px; cursor: pointer; }
+  .recon-controls button:hover { background: rgba(96,165,250,0.22); }
+  .recon-controls button.ghost { background: transparent; border-color: var(--border); color: var(--muted); }
+  .recon-list { display: flex; flex-direction: column; gap: 8px; }
+  .recon-row { background: var(--panel); border: 1px solid var(--border); border-radius: 4px; padding: 10px 14px; display: grid; grid-template-columns: 140px 1fr 100px 100px 110px; gap: 12px; align-items: center; font-size: 12px; }
+  .recon-row .recon-period { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .recon-row .recon-label { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .recon-row .recon-num { color: var(--text); font-variant-numeric: tabular-nums; text-align: right; }
+  .recon-row .recon-delta-pos { color: var(--yellow); font-variant-numeric: tabular-nums; text-align: right; }
+  .recon-row .recon-delta-neg { color: var(--green); font-variant-numeric: tabular-nums; text-align: right; }
+  .recon-banner { padding: 10px 14px; background: rgba(250,204,21,0.08); border: 1px solid var(--yellow); border-radius: 4px; color: var(--text); font-size: 12px; margin-bottom: 16px; }
+
+  .budget-controls { display: flex; gap: 10px; align-items: center; margin-bottom: 16px; padding: 12px 14px; background: var(--panel); border-radius: 4px; flex-wrap: wrap; }
+  .budget-controls button { background: rgba(96,165,250,0.12); border: 1px solid var(--blue); color: var(--text); padding: 6px 12px; border-radius: 3px; font: inherit; font-size: 12px; cursor: pointer; }
+  .budget-list { display: flex; flex-direction: column; gap: 8px; }
+  .budget-row { background: var(--panel); border: 1px solid var(--border); border-left: 3px solid var(--green); border-radius: 4px; padding: 10px 14px; display: grid; grid-template-columns: 140px 100px 100px 1fr 100px 80px; gap: 12px; align-items: center; font-size: 12px; }
+  .budget-row.threshold-warn { border-left-color: var(--yellow); }
+  .budget-row.threshold-at { border-left-color: #fb923c; }
+  .budget-row.threshold-over { border-left-color: var(--red); }
+  .budget-row .budget-cc { color: var(--text); font-weight: 500; }
+  .budget-row .budget-num { font-variant-numeric: tabular-nums; text-align: right; }
+  .budget-row .budget-bar { width: 100%; height: 6px; background: rgba(255,255,255,0.06); border-radius: 3px; overflow: hidden; }
+  .budget-row .budget-bar-fill { height: 100%; background: var(--green); border-radius: 3px; }
+  .budget-row.threshold-warn .budget-bar-fill { background: var(--yellow); }
+  .budget-row.threshold-at .budget-bar-fill { background: #fb923c; }
+  .budget-row.threshold-over .budget-bar-fill { background: var(--red); }
+  .budget-row .budget-pct { color: var(--muted); font-variant-numeric: tabular-nums; text-align: right; }
+  .budget-row .budget-state { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; padding: 2px 6px; border-radius: 3px; text-align: center; }
+  .budget-row.threshold-green .budget-state { background: var(--green-bg); color: var(--green); }
+  .budget-row.threshold-warn .budget-state { background: var(--yellow-bg); color: var(--yellow); }
+  .budget-row.threshold-at .budget-state { background: rgba(251,146,60,0.18); color: #fb923c; }
+  .budget-row.threshold-over .budget-state { background: var(--red-bg); color: var(--red); }
+  .budget-empty { color: var(--muted); font-size: 12px; padding: 20px; text-align: center; font-style: italic; }
+  .budget-add-form { background: var(--panel); border: 1px dashed var(--border); border-radius: 4px; padding: 14px; margin-bottom: 16px; display: none; }
+  .budget-add-form.open { display: block; }
+  .budget-add-form .field-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
+  .budget-add-form .recon-field { display: flex; flex-direction: column; gap: 3px; }
+  .budget-add-form input, .budget-add-form select { background: rgba(255,255,255,0.03); border: 1px solid var(--border); color: var(--text); padding: 5px 8px; border-radius: 3px; font: inherit; font-size: 12px; }
+
+  .ops-banner { padding: 10px 14px; background: rgba(192,132,252,0.08); border: 1px solid #c084fc; border-radius: 4px; color: var(--text); font-size: 12px; margin-bottom: 16px; }
+  .ops-banner strong { color: #c084fc; }
+  .ops-banner code { background: rgba(255,255,255,0.05); padding: 1px 5px; border-radius: 3px; font-size: 11px; }
+
   .cost-controls { padding: 14px 18px; background: var(--panel); border-bottom: 1px solid var(--border); display: flex; flex-wrap: wrap; gap: 22px; align-items: center; }
   .cost-controls fieldset { border: 0; padding: 0; margin: 0; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   .cost-controls legend { display: contents; }
@@ -739,49 +839,106 @@
   </div>
 </section>
 
-<!-- Cost tab: full per-account attribution view (CP3). -->
+<!-- CP11.4-6 (2026-06-04): Cost tab restructured per ratified ADR-0029 v2.3 §7.
+     Three-lens architecture (Pace / Composition / Anomaly) + Detail + ops-key
+     sub-views (Reconcile + Budgets). Hero strip displaces $/hr from primary
+     tile position; headline KPIs are Burn-vs-Budget + Run-rate-vs-Target +
+     Top-3-Cost-Movers + MTD per bizmodel CFO-lens framing (#7635). -->
 <section class="tab-panel" data-tab="cost" id="tab-cost">
-  <div class="cost-controls">
-    <fieldset>
-      <span class="lbl">slice by</span>
-      <div class="opts" id="cost-dim-opts">
-        <button data-dim="plexus_agent_id" class="active">agent</button>
-        <button data-dim="user_email">user email</button>
-        <button data-dim="user_account_id">account</button>
-        <button data-dim="organization_id">org</button>
-        <button data-dim="model">model</button>
-      </div>
-    </fieldset>
-    <fieldset>
-      <span class="lbl">window</span>
-      <div class="opts" id="cost-window-opts">
-        <button data-window-s="3600">1h</button>
-        <button data-window-s="21600">6h</button>
-        <button data-window-s="86400" class="active">24h</button>
-        <button data-window-s="604800">7d</button>
-      </div>
-    </fieldset>
+  <!-- Hero strip: always-visible 4-tile finance KPI summary -->
+  <div class="cost-hero" id="cost-hero">
+    <div class="cost-tile" id="tile-burn-budget">
+      <div class="tile-lbl">Burn vs Budget (cluster · monthly)</div>
+      <div class="tile-val">—</div>
+      <div class="tile-bar"><div class="tile-bar-fill"></div></div>
+      <div class="tile-sub">—</div>
+    </div>
+    <div class="cost-tile" id="tile-runrate">
+      <div class="tile-lbl">Run-rate · projected EOM</div>
+      <div class="tile-val">—</div>
+      <div class="tile-sub">—</div>
+    </div>
+    <div class="cost-tile" id="tile-top-movers">
+      <div class="tile-lbl">Top spenders · 7d</div>
+      <div class="tile-movers">—</div>
+    </div>
+    <div class="cost-tile" id="tile-mtd">
+      <div class="tile-lbl">MTD (UTC)</div>
+      <div class="tile-val">—</div>
+      <div class="tile-sub">—</div>
+    </div>
   </div>
 
-  <div class="cost-grid">
-    <div class="chart-card" data-chart="cost-cumulative">
-      <div class="chart-card-head">
-        <h2>Cumulative cost <span class="sub">total USD · sorted desc</span></h2>
-        <span class="sub" data-chart-status>—</span>
+  <!-- Sub-tab strip -->
+  <nav class="cost-subnav" id="cost-subnav">
+    <button data-sub="pace" class="active">Pace</button>
+    <button data-sub="composition">Composition</button>
+    <button data-sub="anomaly">Anomaly</button>
+    <button data-sub="detail">Detail</button>
+    <button data-sub="reconcile">Reconcile</button>
+    <button data-sub="budgets">Budgets</button>
+  </nav>
+
+  <!-- Sub-view panels -->
+  <div class="cost-subpanel active" data-sub="pace" id="sub-pace">
+    <div class="cost-loading">loading pace data…</div>
+  </div>
+
+  <div class="cost-subpanel" data-sub="composition" id="sub-composition">
+    <div class="cost-loading">switch to this sub-view to load.</div>
+  </div>
+
+  <div class="cost-subpanel" data-sub="anomaly" id="sub-anomaly">
+    <div class="cost-loading">switch to this sub-view to load.</div>
+  </div>
+
+  <div class="cost-subpanel" data-sub="detail" id="sub-detail">
+    <!-- Existing per-dimension cumulative table (relocated from old top-level Cost tab) -->
+    <div class="cost-controls">
+      <fieldset>
+        <span class="lbl">slice by</span>
+        <div class="opts" id="cost-dim-opts">
+          <button data-dim="plexus_agent_id" class="active">agent</button>
+          <button data-dim="user_email">user email</button>
+          <button data-dim="user_account_id">account</button>
+          <button data-dim="organization_id">org</button>
+          <button data-dim="model">model</button>
+        </div>
+      </fieldset>
+      <fieldset>
+        <span class="lbl">window</span>
+        <div class="opts" id="cost-window-opts">
+          <button data-window-s="3600">1h</button>
+          <button data-window-s="21600">6h</button>
+          <button data-window-s="86400" class="active">24h</button>
+          <button data-window-s="604800">7d</button>
+        </div>
+      </fieldset>
+    </div>
+    <div class="cost-grid" style="margin-top: 14px;">
+      <div class="chart-card" data-chart="cost-cumulative">
+        <div class="chart-card-head">
+          <h2>Cumulative cost <span class="sub">total USD · sorted desc</span></h2>
+          <span class="sub" data-chart-status>—</span>
+        </div>
+        <div class="chart-card-body"><div class="chart-loading">loading…</div></div>
       </div>
-      <div class="chart-card-body">
-        <div class="chart-loading">loading…</div>
+      <div class="chart-card" data-chart="cost-rate">
+        <div class="chart-card-head">
+          <h2>Cost rate over time <span class="sub">rate(5m) · USD/sec</span></h2>
+          <span class="sub" data-chart-status>—</span>
+        </div>
+        <div class="chart-card-body"><div class="chart-loading">loading…</div></div>
       </div>
     </div>
-    <div class="chart-card" data-chart="cost-rate">
-      <div class="chart-card-head">
-        <h2>Cost rate over time <span class="sub">rate(5m) · USD/sec</span></h2>
-        <span class="sub" data-chart-status>—</span>
-      </div>
-      <div class="chart-card-body">
-        <div class="chart-loading">loading…</div>
-      </div>
-    </div>
+  </div>
+
+  <div class="cost-subpanel" data-sub="reconcile" id="sub-reconcile">
+    <div class="cost-loading">switch to this sub-view to load.</div>
+  </div>
+
+  <div class="cost-subpanel" data-sub="budgets" id="sub-budgets">
+    <div class="cost-loading">switch to this sub-view to load.</div>
   </div>
 </section>
 

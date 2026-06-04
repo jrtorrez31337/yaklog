@@ -2401,16 +2401,607 @@
     }
   }
 
-  // Lazy-init Cost view on first activation (don't burn Prom queries unless
-  // the user is actually looking at the Cost tab).
-  let costView = null;
-  function ensureCostView() {
-    if (costView) return;
-    costView = new CostView();
-    bindOpts('#cost-dim-opts',    () => costView.refresh().catch(() => {}));
-    bindOpts('#cost-window-opts', () => costView.refresh().catch(() => {}));
-    costView.start();
+  // ────────────────────────────────────────────────────────────────────
+  // CP11.4-6 (2026-06-04): three-lens Cost-tab mount.
+  // Lazy-init Cost view on first activation. Builds hero strip (4 KPI
+  // tiles fed by /cost/* endpoints), sub-tab nav, + per-sub-view content
+  // (Pace, Composition, Anomaly, Detail, Reconcile, Budgets). Detail
+  // sub-view retains the existing CostView (Prom-templated charts).
+  // ────────────────────────────────────────────────────────────────────
+  let _costMounted = false;
+  let _costSubActive = 'pace';
+  let _costView = null;            // CostView instance (Detail sub-view; lazy)
+  const _opsKeyStorageKey = 'yaklog_ops_key_v1';
+
+  async function ensureCostView() {
+    if (_costMounted) return;
+    _costMounted = true;
+    refreshHeroStrip();
+    setInterval(refreshHeroStrip, 60_000);  // 1m hero refresh
+    document.querySelectorAll('#cost-subnav button').forEach((b) => {
+      b.addEventListener('click', () => costShowSub(b.dataset.sub));
+    });
+    costShowSub('pace');
   }
+
+  function costShowSub(name) {
+    _costSubActive = name;
+    document.querySelectorAll('#cost-subnav button').forEach((b) => {
+      b.classList.toggle('active', b.dataset.sub === name);
+    });
+    document.querySelectorAll('.cost-subpanel').forEach((p) => {
+      p.classList.toggle('active', p.dataset.sub === name);
+    });
+    switch (name) {
+      case 'pace':         renderPace(); break;
+      case 'composition':  renderComposition(); break;
+      case 'anomaly':      renderAnomaly(); break;
+      case 'detail':       ensureDetail(); break;
+      case 'reconcile':    renderReconcile(); break;
+      case 'budgets':      renderBudgets(); break;
+    }
+  }
+
+  // ─── Hero strip ──────────────────────────────────────────────────────
+  async function refreshHeroStrip() {
+    // Burn-vs-Budget (cluster-wide envelope; cost_center='')
+    try {
+      const r = await fetch('/api/v1/plexus/public/cost/burn-vs-budget?cost_center=&period_kind=monthly');
+      const j = await r.json();
+      const tile = document.getElementById('tile-burn-budget');
+      if (j.budget_usd != null) {
+        tile.querySelector('.tile-val').textContent = `${fmtUSD(j.actual_usd)} / ${fmtUSD(j.budget_usd)}`;
+        const pct = j.pct_consumed || 0;
+        const bar = tile.querySelector('.tile-bar-fill');
+        bar.style.width = Math.min(100, pct).toFixed(1) + '%';
+        tile.className = 'cost-tile threshold-' + j.threshold_state;
+        const runway = j.days_of_runway != null && Number.isFinite(j.days_of_runway)
+          ? `${j.days_of_runway.toFixed(1)}d runway`
+          : 'no runway data';
+        tile.querySelector('.tile-sub').textContent = `${pct.toFixed(1)}% consumed · ${runway} · ${j.threshold_state}`;
+      } else {
+        tile.querySelector('.tile-val').textContent = fmtUSD(j.actual_usd);
+        tile.querySelector('.tile-sub').textContent = 'no budget set · operator can set in Budgets sub-tab';
+      }
+    } catch { /* keep prior */ }
+
+    // Run-rate · projected EOM
+    try {
+      const r = await fetch('/api/v1/plexus/public/cost/projection?period=eom');
+      const j = await r.json();
+      const tile = document.getElementById('tile-runrate');
+      tile.querySelector('.tile-val').textContent = fmtUSD(j.projected_usd);
+      tile.querySelector('.tile-sub').textContent = `${j.basis_label} · ${fmtUSD(j.basis_avg_per_day)}/day`;
+    } catch { /* keep prior */ }
+
+    // Top movers (using 7d cost_daily grouped by agent)
+    try {
+      const sevenDaysAgo = new Date(Date.now() - 6 * 86400_000).toISOString().slice(0, 10);
+      const today = new Date().toISOString().slice(0, 10);
+      const r = await fetch(`/api/v1/plexus/public/cost/daily?from=${sevenDaysAgo}&to=${today}&by=agent_id`);
+      const j = await r.json();
+      const tile = document.getElementById('tile-top-movers');
+      const wrap = tile.querySelector('.tile-movers');
+      clearChildren(wrap);
+      const top3 = (j.rows || []).slice(0, 3);
+      if (top3.length === 0) {
+        wrap.appendChild(el('div', { class: 'mover-row' }, el('span', { class: 'mover-name muted' }, 'no data')));
+      } else {
+        for (const r of top3) {
+          const row = el('div', { class: 'mover-row' });
+          row.appendChild(el('span', { class: 'mover-name', title: r.agent_id || '(unattributed)' }, r.agent_id || '(unattributed)'));
+          row.appendChild(el('span', { class: 'mover-cost' }, fmtUSD(r.cost_usd)));
+          wrap.appendChild(row);
+        }
+      }
+    } catch { /* keep prior */ }
+
+    // MTD
+    try {
+      const r = await fetch('/api/v1/plexus/public/cost/summary?period=mtd');
+      const j = await r.json();
+      const tile = document.getElementById('tile-mtd');
+      tile.querySelector('.tile-val').textContent = fmtUSD(j.value_usd);
+      tile.querySelector('.tile-sub').textContent = `${j.from} → ${j.to} (calendar UTC)`;
+    } catch { /* keep prior */ }
+  }
+
+  // ─── Pace sub-view ───────────────────────────────────────────────────
+  async function renderPace() {
+    const panel = document.getElementById('sub-pace');
+    panel.innerHTML = '<div class="cost-loading">loading pace data…</div>';
+    try {
+      const [bvbR, projR, ccR] = await Promise.all([
+        fetch('/api/v1/plexus/public/cost/burn-vs-budget?cost_center=&period_kind=monthly').then(r => r.json()),
+        fetch('/api/v1/plexus/public/cost/projection?period=eom').then(r => r.json()),
+        fetch('/api/v1/plexus/public/cost/by-cost-center?period=mtd&period_kind=monthly').then(r => r.json()),
+      ]);
+      clearChildren(panel);
+      const grid = el('div', { class: 'pace-grid' });
+
+      // Card 1: Cluster envelope
+      const card1 = el('div', { class: 'pace-card' });
+      card1.appendChild(el('h3', null, 'Cluster envelope (monthly)'));
+      const rows1 = [
+        ['Actual', fmtUSD(bvbR.actual_usd || 0)],
+        ['Budget', bvbR.budget_usd != null ? fmtUSD(bvbR.budget_usd) : '(no budget set)'],
+        ['% consumed', bvbR.pct_consumed != null ? bvbR.pct_consumed.toFixed(1) + '%' : '—'],
+        ['Days of runway', bvbR.days_of_runway != null && Number.isFinite(bvbR.days_of_runway) ? bvbR.days_of_runway.toFixed(1) + 'd' : '—'],
+        ['Daily burn', bvbR.daily_burn_usd != null ? fmtUSD(bvbR.daily_burn_usd) + '/day' : '—'],
+        ['Projected EOP', bvbR.projected_eop_usd != null ? fmtUSD(bvbR.projected_eop_usd) : '—'],
+        ['Threshold state', bvbR.threshold_state],
+      ];
+      for (const [k, v] of rows1) {
+        const row = el('div', { class: 'pace-row' });
+        row.appendChild(el('span', { class: 'pace-lbl' }, k));
+        row.appendChild(el('span', { class: 'pace-val' }, v));
+        card1.appendChild(row);
+      }
+      grid.appendChild(card1);
+
+      // Card 2: Projection
+      const card2 = el('div', { class: 'pace-card' });
+      card2.appendChild(el('h3', null, 'Run-rate · projected EOM'));
+      const rows2 = [
+        ['Current', fmtUSD(projR.current_usd || 0)],
+        ['Projected EOM', fmtUSD(projR.projected_usd || 0)],
+        ['Basis', projR.basis_label || '—'],
+        ['Daily avg', fmtUSD(projR.basis_avg_per_day || 0) + '/day'],
+        ['Days into period', String(projR.basis_days || 0)],
+      ];
+      for (const [k, v] of rows2) {
+        const row = el('div', { class: 'pace-row' });
+        row.appendChild(el('span', { class: 'pace-lbl' }, k));
+        row.appendChild(el('span', { class: 'pace-val' }, v));
+        card2.appendChild(row);
+      }
+      grid.appendChild(card2);
+
+      // Card 3: per-cost-center breakdown
+      const card3 = el('div', { class: 'pace-card' });
+      card3.style.gridColumn = '1 / span 2';
+      card3.appendChild(el('h3', null, 'Per-cost-center MTD (with budget where set)'));
+      if (!ccR.rows || ccR.rows.length === 0) {
+        card3.appendChild(el('div', { class: 'cost-loading' }, 'No cost-center data; operator can tag agents in Budgets sub-tab.'));
+      } else {
+        const tbl = el('table', { class: 'comp-table' });
+        const thead = el('thead');
+        thead.appendChild(el('tr', null,
+          el('th', null, 'Cost center'),
+          el('th', { class: 'num' }, 'Actual'),
+          el('th', { class: 'num' }, 'Budget'),
+          el('th', { class: 'num' }, '% consumed'),
+          el('th', null, 'State'),
+        ));
+        tbl.appendChild(thead);
+        const tbody = el('tbody');
+        for (const r of ccR.rows) {
+          const tr = el('tr');
+          tr.appendChild(el('td', null, r.cost_center || '(unallocated)'));
+          tr.appendChild(el('td', { class: 'num' }, fmtUSD(r.actual_usd)));
+          tr.appendChild(el('td', { class: 'num' }, r.budget_usd != null ? fmtUSD(r.budget_usd) : '—'));
+          tr.appendChild(el('td', { class: 'num' }, r.pct_consumed != null ? r.pct_consumed.toFixed(1) + '%' : '—'));
+          tr.appendChild(el('td', null, r.threshold_state || '—'));
+          tbody.appendChild(tr);
+        }
+        tbl.appendChild(tbody);
+        card3.appendChild(tbl);
+      }
+      grid.appendChild(card3);
+
+      panel.appendChild(grid);
+    } catch (e) {
+      panel.innerHTML = `<div class="cost-loading">Pace render error: ${e.message}</div>`;
+    }
+  }
+
+  // ─── Composition sub-view ────────────────────────────────────────────
+  let _compDim = 'agent_id';
+  let _compPeriod = 'mtd';
+  async function renderComposition() {
+    const panel = document.getElementById('sub-composition');
+    clearChildren(panel);
+    const ctrl = el('div', { class: 'comp-controls' });
+    ctrl.appendChild(el('label', null, 'Period'));
+    const periodSel = el('select');
+    for (const p of ['today', '7d', '30d', '90d', 'mtd', 'ytd', 'last_month', 'lifetime']) {
+      const opt = el('option', { value: p }, p);
+      if (p === _compPeriod) opt.selected = true;
+      periodSel.appendChild(opt);
+    }
+    periodSel.addEventListener('change', () => { _compPeriod = periodSel.value; renderComposition(); });
+    ctrl.appendChild(periodSel);
+    ctrl.appendChild(el('label', null, 'Group by'));
+    const dimSel = el('select');
+    for (const d of ['agent_id', 'cost_center', 'project_tag', 'environment_tier', 'model', 'user_email', 'organization_id']) {
+      const opt = el('option', { value: d }, d);
+      if (d === _compDim) opt.selected = true;
+      dimSel.appendChild(opt);
+    }
+    dimSel.addEventListener('change', () => { _compDim = dimSel.value; renderComposition(); });
+    ctrl.appendChild(dimSel);
+    panel.appendChild(ctrl);
+
+    panel.appendChild(el('div', { class: 'cost-loading' }, 'loading…'));
+    try {
+      // Convert period to from/to first
+      const sumR = await fetch(`/api/v1/plexus/public/cost/summary?period=${_compPeriod}`).then(r => r.json());
+      const r = await fetch(`/api/v1/plexus/public/cost/daily?from=${sumR.from}&to=${sumR.to}&by=${_compDim}`);
+      const j = await r.json();
+      // Remove "loading" placeholder
+      panel.removeChild(panel.lastChild);
+      const tbl = el('table', { class: 'comp-table' });
+      const thead = el('thead');
+      thead.appendChild(el('tr', null,
+        el('th', null, _compDim),
+        el('th', { class: 'num' }, 'Cost (USD)'),
+        el('th', { class: 'num' }, 'In tokens'),
+        el('th', { class: 'num' }, 'Out tokens'),
+        el('th', { class: 'num' }, 'Cache tokens'),
+      ));
+      tbl.appendChild(thead);
+      const tbody = el('tbody');
+      for (const row of (j.rows || []).slice(0, 100)) {
+        const tr = el('tr');
+        tr.appendChild(el('td', null, String(row[_compDim] || '(empty)')));
+        tr.appendChild(el('td', { class: 'num' }, fmtUSD(row.cost_usd || 0)));
+        tr.appendChild(el('td', { class: 'num' }, (row.tokens_input || 0).toLocaleString()));
+        tr.appendChild(el('td', { class: 'num' }, (row.tokens_output || 0).toLocaleString()));
+        tr.appendChild(el('td', { class: 'num' }, ((row.tokens_cache_read || 0) + (row.tokens_cache_creation || 0)).toLocaleString()));
+        tbody.appendChild(tr);
+      }
+      tbl.appendChild(tbody);
+      panel.appendChild(tbl);
+    } catch (e) {
+      panel.appendChild(el('div', { class: 'cost-loading' }, 'error: ' + e.message));
+    }
+  }
+
+  // ─── Anomaly sub-view ────────────────────────────────────────────────
+  async function renderAnomaly() {
+    const panel = document.getElementById('sub-anomaly');
+    panel.innerHTML = '<div class="cost-loading">scanning for anomalies (current > 2× 7d mean)…</div>';
+    try {
+      // Compute anomalies client-side: for each agent, compare today's cost
+      // against the 7d average. Flag agents with ratio >= 2.
+      const sumR = await fetch('/api/v1/plexus/public/cost/summary?period=today').then(r => r.json());
+      const today = sumR.to;
+      const sevenAgo = new Date(new Date(today) - 6 * 86400_000).toISOString().slice(0, 10);
+      const dailyR = await fetch(`/api/v1/plexus/public/cost/daily?from=${sevenAgo}&to=${today}&by=agent_id,date`).then(r => r.json());
+
+      // Group by agent_id; for each, separate today vs the prior 6 days
+      const byAgent = new Map();
+      for (const row of dailyR.rows || []) {
+        const id = row.agent_id || '(unattributed)';
+        let g = byAgent.get(id) || { agent_id: id, today_usd: 0, prior_total_usd: 0, prior_days: 0 };
+        if (row.date_min === today || row.date_max === today) {
+          g.today_usd += row.cost_usd;
+        } else {
+          g.prior_total_usd += row.cost_usd;
+          g.prior_days += 1;
+        }
+        byAgent.set(id, g);
+      }
+
+      const anomalies = [];
+      for (const g of byAgent.values()) {
+        if (g.today_usd <= 0 || g.prior_days === 0) continue;
+        const priorAvg = g.prior_total_usd / g.prior_days;
+        if (priorAvg <= 0) continue;
+        const ratio = g.today_usd / priorAvg;
+        if (ratio >= 2.0) {
+          anomalies.push({ ...g, prior_avg: priorAvg, ratio });
+        }
+      }
+      anomalies.sort((a, b) => b.ratio - a.ratio);
+
+      clearChildren(panel);
+      if (anomalies.length === 0) {
+        panel.appendChild(el('div', { class: 'cost-loading' }, 'No cost anomalies today (no agent ≥ 2× their 6-day prior mean).'));
+        return;
+      }
+      const list = el('div', { class: 'anomaly-list' });
+      for (const a of anomalies) {
+        const row = el('div', { class: 'anomaly-row' });
+        const meta = el('div', { class: 'anomaly-meta' });
+        meta.appendChild(el('div', { class: 'anomaly-headline' }, `${a.agent_id} · ${a.ratio.toFixed(1)}× prior 6d mean`));
+        meta.appendChild(el('div', { class: 'anomaly-sub' }, `today ${fmtUSD(a.today_usd)} · prior 6d avg ${fmtUSD(a.prior_avg)}/day`));
+        row.appendChild(meta);
+        row.appendChild(el('div', { class: 'anomaly-val' }, fmtUSD(a.today_usd)));
+        list.appendChild(row);
+      }
+      panel.appendChild(list);
+    } catch (e) {
+      panel.innerHTML = `<div class="cost-loading">anomaly scan error: ${e.message}</div>`;
+    }
+  }
+
+  // ─── Detail sub-view (legacy CostView relocated) ────────────────────
+  function ensureDetail() {
+    if (_costView) {
+      _costView.refresh().catch(() => {});
+      return;
+    }
+    _costView = new CostView();
+    bindOpts('#cost-dim-opts',    () => _costView.refresh().catch(() => {}));
+    bindOpts('#cost-window-opts', () => _costView.refresh().catch(() => {}));
+    _costView.start();
+  }
+
+  // ─── Reconcile sub-view (ops-key gated) ─────────────────────────────
+  function _opsKey() { try { return localStorage.getItem(_opsKeyStorageKey) || ''; } catch { return ''; } }
+  function _setOpsKey(k) { try { if (k) localStorage.setItem(_opsKeyStorageKey, k); else localStorage.removeItem(_opsKeyStorageKey); } catch {} }
+
+  function renderReconcile() {
+    const panel = document.getElementById('sub-reconcile');
+    clearChildren(panel);
+    panel.appendChild(_renderOpsBanner('Reconcile + Budgets are ops-key gated', 'Enter your ops-key once; stored in browser localStorage only (never sent to bus). Cleared via the "clear" button below.'));
+
+    // Recon form
+    const form = el('div', { class: 'recon-controls' });
+    const fields = [
+      ['period_start', 'Period start (YYYY-MM-DD)', new Date(Date.now() - 30 * 86400_000).toISOString().slice(0, 10)],
+      ['period_end', 'Period end (YYYY-MM-DD)', new Date().toISOString().slice(0, 10)],
+      ['invoice_label', 'Invoice label', ''],
+      ['invoice_total_usd', 'Invoice total USD', ''],
+    ];
+    const inputs = {};
+    for (const [name, label, dft] of fields) {
+      const f = el('div', { class: 'recon-field' });
+      f.appendChild(el('label', null, label));
+      const inp = el('input', { type: name.includes('usd') ? 'number' : 'text', value: dft });
+      inp.step = '0.01';
+      inputs[name] = inp;
+      f.appendChild(inp);
+      form.appendChild(f);
+    }
+    const submitBtn = el('button', null, 'Reconcile');
+    form.appendChild(submitBtn);
+
+    const exportBtn = el('button', { class: 'ghost' }, 'Export period CSV');
+    form.appendChild(exportBtn);
+    exportBtn.addEventListener('click', () => {
+      const url = `/api/v1/plexus/public/cost/export?format=csv&schema=anthropic-invoice&period=mtd`;
+      window.open(url, '_blank');
+    });
+    panel.appendChild(form);
+
+    const result = el('div', { id: 'recon-result' });
+    panel.appendChild(result);
+
+    submitBtn.addEventListener('click', async () => {
+      const opsKey = await _promptOpsKey();
+      if (!opsKey) return;
+      const body = {
+        period_start: inputs.period_start.value,
+        period_end: inputs.period_end.value,
+        invoice_label: inputs.invoice_label.value || null,
+        invoice_total_usd: parseFloat(inputs.invoice_total_usd.value || '0'),
+      };
+      result.innerHTML = '<div class="cost-loading">submitting…</div>';
+      try {
+        const r = await fetch('/api/v1/ops/cost/reconcile', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${opsKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const j = await r.json();
+        if (!r.ok) {
+          result.innerHTML = `<div class="cost-loading">error: ${j.message || r.status}</div>`;
+          return;
+        }
+        result.innerHTML = '';
+        const banner = el('div', { class: 'recon-banner' });
+        banner.appendChild(el('div', null, `Reconciled · invoice ${fmtUSD(body.invoice_total_usd)} vs Plexus ${fmtUSD(j.plexus_total_usd)} · delta ${fmtUSD(j.delta_usd)} (${j.delta_pct.toFixed(1)}%)`));
+        result.appendChild(banner);
+        loadReconHistory();
+      } catch (e) {
+        result.innerHTML = `<div class="cost-loading">network error: ${e.message}</div>`;
+      }
+    });
+
+    panel.appendChild(el('h3', { style: 'margin: 20px 0 10px; font-size: 13px; color: var(--text);' }, 'Reconciliation history'));
+    const histDiv = el('div', { id: 'recon-history', class: 'cost-loading' }, 'loading history (ops-key required)…');
+    panel.appendChild(histDiv);
+    loadReconHistory();
+  }
+
+  async function loadReconHistory() {
+    const div = document.getElementById('recon-history');
+    if (!div) return;
+    const opsKey = _opsKey();
+    if (!opsKey) {
+      div.className = 'cost-loading';
+      div.textContent = 'enter ops-key on first reconcile submit to load history';
+      return;
+    }
+    // No public endpoint for listing reconciliations — re-use authed
+    // /messages-style listing isn't exposed. For now show a note that
+    // history is in cost_reconciliation table; full UI in Phase 6 v2.
+    div.className = 'cost-loading';
+    div.textContent = 'reconciliation history persisted in cost_reconciliation table; listing UI deferred to Phase 6';
+  }
+
+  // ─── Budgets sub-view (ops-key gated) ───────────────────────────────
+  function renderBudgets() {
+    const panel = document.getElementById('sub-budgets');
+    clearChildren(panel);
+    panel.appendChild(_renderOpsBanner('Budget management is ops-key gated',
+      'Set per-cost-center monthly/quarterly envelopes; updates via /api/v1/ops/cost/budget. Tag agents via /api/v1/ops/cost/dimension-tag.'));
+
+    const controls = el('div', { class: 'budget-controls' });
+    const addBtn = el('button', null, '+ Add / update budget');
+    controls.appendChild(addBtn);
+    const tagBtn = el('button', null, 'Tag agent');
+    controls.appendChild(tagBtn);
+    const refreshBtn = el('button', { class: 'ghost' }, 'Refresh');
+    controls.appendChild(refreshBtn);
+    panel.appendChild(controls);
+
+    const addForm = _buildBudgetAddForm();
+    panel.appendChild(addForm);
+    addBtn.addEventListener('click', () => addForm.classList.toggle('open'));
+
+    const tagForm = _buildTagForm();
+    panel.appendChild(tagForm);
+    tagBtn.addEventListener('click', () => tagForm.classList.toggle('open'));
+
+    const list = el('div', { class: 'budget-list', id: 'budget-list' });
+    panel.appendChild(list);
+    refreshBtn.addEventListener('click', () => loadBudgetList());
+    loadBudgetList();
+  }
+
+  async function loadBudgetList() {
+    const list = document.getElementById('budget-list');
+    if (!list) return;
+    list.innerHTML = '<div class="cost-loading">loading…</div>';
+    try {
+      // Use by-cost-center for current period
+      const r = await fetch('/api/v1/plexus/public/cost/by-cost-center?period=mtd&period_kind=monthly');
+      const j = await r.json();
+      clearChildren(list);
+      const withBudget = (j.rows || []).filter(r => r.budget_usd != null);
+      const withoutBudget = (j.rows || []).filter(r => r.budget_usd == null);
+      if (withBudget.length === 0 && withoutBudget.length === 0) {
+        list.appendChild(el('div', { class: 'budget-empty' }, 'No budgets configured + no cost-center data yet. Tag agents + set budgets via the buttons above.'));
+        return;
+      }
+      // Render budget-configured rows first
+      for (const r of withBudget) {
+        const row = el('div', { class: 'budget-row threshold-' + (r.threshold_state || 'green') });
+        row.appendChild(el('div', { class: 'budget-cc' }, r.cost_center || '(unallocated)'));
+        row.appendChild(el('div', { class: 'budget-num' }, fmtUSD(r.actual_usd)));
+        row.appendChild(el('div', { class: 'budget-num' }, fmtUSD(r.budget_usd)));
+        const barWrap = el('div', { class: 'budget-bar' });
+        barWrap.appendChild(el('div', { class: 'budget-bar-fill', style: `width: ${Math.min(100, r.pct_consumed || 0).toFixed(1)}%` }));
+        row.appendChild(barWrap);
+        row.appendChild(el('div', { class: 'budget-pct' }, (r.pct_consumed != null ? r.pct_consumed.toFixed(1) + '%' : '—')));
+        row.appendChild(el('div', { class: 'budget-state' }, r.threshold_state || 'green'));
+        list.appendChild(row);
+      }
+      // Show "no-budget" cost centers as a separate group
+      if (withoutBudget.length > 0) {
+        list.appendChild(el('div', { class: 'budget-empty', style: 'text-align:left; padding: 14px 0 6px' },
+          `${withoutBudget.length} cost-center(s) with cost but no budget set:`));
+        for (const r of withoutBudget) {
+          const row = el('div', { class: 'budget-row threshold-green' });
+          row.appendChild(el('div', { class: 'budget-cc' }, r.cost_center || '(unallocated)'));
+          row.appendChild(el('div', { class: 'budget-num' }, fmtUSD(r.actual_usd)));
+          row.appendChild(el('div', { class: 'budget-num muted' }, '(no budget)'));
+          row.appendChild(el('div'));
+          row.appendChild(el('div'));
+          row.appendChild(el('div'));
+          list.appendChild(row);
+        }
+      }
+    } catch (e) {
+      list.innerHTML = `<div class="cost-loading">error: ${e.message}</div>`;
+    }
+  }
+
+  function _buildBudgetAddForm() {
+    const form = el('div', { class: 'budget-add-form' });
+    const fieldRow = el('div', { class: 'field-row' });
+    const ccI = el('input', { type: 'text', placeholder: 'cost_center (empty = cluster-wide)' });
+    const kindI = el('select');
+    for (const k of ['monthly', 'quarterly']) kindI.appendChild(el('option', { value: k }, k));
+    const anchorI = el('input', { type: 'text', placeholder: 'YYYY-MM or YYYY-Q1' });
+    const budgetI = el('input', { type: 'number', step: '0.01', placeholder: 'budget_usd' });
+    const submit = el('button', null, 'Save');
+    for (const [lbl, inp] of [['Cost center', ccI], ['Period kind', kindI], ['Period anchor', anchorI], ['Budget USD', budgetI]]) {
+      const f = el('div', { class: 'recon-field' });
+      f.appendChild(el('label', null, lbl));
+      f.appendChild(inp);
+      fieldRow.appendChild(f);
+    }
+    fieldRow.appendChild(submit);
+    form.appendChild(fieldRow);
+    submit.addEventListener('click', async () => {
+      const opsKey = await _promptOpsKey();
+      if (!opsKey) return;
+      const r = await fetch('/api/v1/ops/cost/budget', {
+        method: 'PUT',
+        headers: { 'Authorization': `Bearer ${opsKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          cost_center: ccI.value,
+          period_kind: kindI.value,
+          period_anchor: anchorI.value,
+          budget_usd: parseFloat(budgetI.value || '0'),
+        }),
+      });
+      if (r.ok) {
+        form.classList.remove('open');
+        loadBudgetList();
+      } else {
+        const j = await r.json();
+        alert('Error: ' + (j.message || r.status));
+      }
+    });
+    return form;
+  }
+
+  function _buildTagForm() {
+    const form = el('div', { class: 'budget-add-form' });
+    const fieldRow = el('div', { class: 'field-row' });
+    const aI = el('input', { type: 'text', placeholder: 'agent_id' });
+    const ccI = el('input', { type: 'text', placeholder: 'cost_center' });
+    const pI = el('input', { type: 'text', placeholder: 'project_tag' });
+    const eI = el('select');
+    for (const o of ['', 'prod', 'staging', 'dev', 'experimental']) eI.appendChild(el('option', { value: o }, o || '(unset)'));
+    const bI = el('input', { type: 'checkbox' });
+    const submit = el('button', null, 'Tag');
+    for (const [lbl, inp] of [['Agent ID', aI], ['Cost center', ccI], ['Project tag', pI], ['Environment', eI], ['Billable', bI]]) {
+      const f = el('div', { class: 'recon-field' });
+      f.appendChild(el('label', null, lbl));
+      f.appendChild(inp);
+      fieldRow.appendChild(f);
+    }
+    fieldRow.appendChild(submit);
+    form.appendChild(fieldRow);
+    submit.addEventListener('click', async () => {
+      const opsKey = await _promptOpsKey();
+      if (!opsKey) return;
+      const r = await fetch('/api/v1/ops/cost/dimension-tag', {
+        method: 'PUT',
+        headers: { 'Authorization': `Bearer ${opsKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agent_id: aI.value, cost_center: ccI.value, project_tag: pI.value,
+          environment_tier: eI.value, billable_flag: bI.checked,
+        }),
+      });
+      if (r.ok) {
+        form.classList.remove('open');
+        loadBudgetList();
+      } else {
+        const j = await r.json();
+        alert('Error: ' + (j.message || r.status));
+      }
+    });
+    return form;
+  }
+
+  // ─── Ops-key helpers ────────────────────────────────────────────────
+  async function _promptOpsKey() {
+    let key = _opsKey();
+    if (!key) {
+      key = prompt('Enter ops-key (sent only with ops requests; stored in this browser localStorage):');
+      if (key) _setOpsKey(key);
+    }
+    return key;
+  }
+
+  function _renderOpsBanner(title, sub) {
+    const wrap = el('div', { class: 'ops-banner' });
+    wrap.appendChild(el('div', null, el('strong', null, '🔐 ' + title)));
+    wrap.appendChild(el('div', { style: 'margin-top: 4px;' }, sub));
+    const clear = el('button', { class: 'audit-btn audit-btn-ghost', style: 'margin-top: 8px;' }, 'clear stored ops-key');
+    clear.addEventListener('click', () => { _setOpsKey(''); alert('ops-key cleared'); });
+    if (_opsKey()) wrap.appendChild(clear);
+    return wrap;
+  }
+
+  // ─── Tab activation hook ────────────────────────────────────────────
   document.querySelectorAll('.tab-btn').forEach(b => {
     b.addEventListener('click', () => { if (b.dataset.tab === 'cost') ensureCostView(); });
   });
