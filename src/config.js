@@ -66,6 +66,15 @@ module.exports = {
   opsApiKeys: parseApiKeys(process.env.YAKLOG_OPS_API_KEYS),
   tokenBindings: parseTokenBindings(process.env.YAKLOG_TOKEN_BINDINGS),
   daemonBindings: parseTokenBindings(process.env.YAKLOG_DAEMON_BINDINGS),
+  // CP12.5 (2026-06-05): per-host file-access ingester binding per ADR-0030
+  // v1.1 Phase 1.5 + secops #7810 OQ#5 SIGNED OFF. One binding per host
+  // (NOT per agent — file-access is host-scope). Reuses same `host:token`
+  // CSV shape as YAKLOG_DAEMON_BINDINGS. Host identifier is the hostname
+  // string the per-host ingester reports in events (e.g. 'devel',
+  // 'traptop10k'). Token lives in EnvironmentFile per plexus-audit-ingester
+  // service-account. Never reuse an agent's token — confuses substrate
+  // attribution with message-bus identity per secops #7810.
+  hostIngesterBindings: parseTokenBindings(process.env.YAKLOG_HOST_INGESTER_BINDINGS),
   corsOrigin: process.env.CORS_ORIGIN || '*',
   maxBodyBytes: parseNumber(process.env.MAX_BODY_BYTES, 1_000_000),
   specPath: process.env.YAKLOG_SPEC_PATH || '/data/spec.md',

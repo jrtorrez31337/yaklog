@@ -12,6 +12,7 @@ const registerRoutes = require('./registerRoutes');
 const plexusRoutes = require('./plexusRoutes');
 const auditRoutes = require('./auditRoutes');           // CP12.2 (ADR-0030 §5.1)
 const auditOpsRoutes = require('./auditOpsRoutes');     // CP12.2 (ADR-0030 §5.2)
+const auditIngesterRoutes = require('./auditIngesterRoutes'); // CP12.5 (ADR-0030 Phase 1.5.S)
 const auth = require('./middleware/auth');
 const { opsKeyAuditMiddleware } = require('./middleware/opsKeyAudit'); // CP12.2 admin R1 fold
 const { initializeDb, listPresence, getGlobalHwm } = require('./db');
@@ -252,6 +253,9 @@ app.use('/api/v1', auth, routes);
 // under `/api/v1/ops` (matches existing /ops/cost/* pattern in routes.js);
 // each route inside the router applies enforceOpsKey middleware.
 app.use('/api/v1/ops', auditOpsRoutes);
+// CP12.5 (ADR-0030 Phase 1.5.S): per-host file-access ingester intake.
+// Mounts under `/api/v1/ingester` (auth'd; host-binding enforced per-route).
+app.use('/api/v1/ingester', auth, auditIngesterRoutes);
 
 app.get('/', (req, res) => {
   res.json({
