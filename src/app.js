@@ -10,7 +10,10 @@ const config = require('./config');
 const routes = require('./routes');
 const registerRoutes = require('./registerRoutes');
 const plexusRoutes = require('./plexusRoutes');
+const auditRoutes = require('./auditRoutes');           // CP12.2 (ADR-0030 §5.1)
+const auditOpsRoutes = require('./auditOpsRoutes');     // CP12.2 (ADR-0030 §5.2)
 const auth = require('./middleware/auth');
+const { opsKeyAuditMiddleware } = require('./middleware/opsKeyAudit'); // CP12.2 admin R1 fold
 const { initializeDb, listPresence, getGlobalHwm } = require('./db');
 
 initializeDb();
@@ -68,6 +71,12 @@ app.use(compression({
     return compression.filter(req, res);
   }
 }));
+// CP12.2 (ADR-0030 v1.1 admin Refinement 1 — mandatory pre-ship): redact
+// Authorization header value BEFORE morgan / any logger captures headers.
+// Per `feedback_admin_session_otel_secret_leak`: ops-key in Bearer header
+// otherwise crosses OTel-raw-body-logging surface. Middleware sets
+// req.rawBearer + req.opsKeySha256 for downstream auth fallback.
+app.use(opsKeyAuditMiddleware);
 app.use(morgan(config.isProduction ? 'combined' : 'dev'));
 app.use(express.json({ limit: config.maxBodyBytes }));
 
@@ -213,10 +222,18 @@ app.use('/api/v1/register', registerRoutes);
 // surface cannot easily hold a Bearer YAKLOG_TOKEN. Production multi-tenant
 // will swap this for cookie-auth — flagged in PLAN-C-STAGE-2-DESIGN.md §5.
 app.use('/api/v1/plexus/public', plexusRoutes.publicRouter);
+// CP12.2 (ADR-0030 §5.1): audit + governance public-read mirror. Mounts
+// under same `/api/v1/plexus/public` namespace; reads from db.js helpers
+// only (no mutations). Network-isolation trust model — same as cost/.
+app.use('/api/v1/plexus/public', auditRoutes);
 // Plexus query proxy (auth'd): server-to-server callers (other agents,
 // scripts) use this with a Bearer YAKLOG_TOKEN.
 app.use('/api/v1/plexus', auth, plexusRoutes);
 app.use('/api/v1', auth, routes);
+// CP12.2 (ADR-0030 §5.2): ops-key gated audit + policy mutations. Mounts
+// under `/api/v1/ops` (matches existing /ops/cost/* pattern in routes.js);
+// each route inside the router applies enforceOpsKey middleware.
+app.use('/api/v1/ops', auditOpsRoutes);
 
 app.get('/', (req, res) => {
   res.json({

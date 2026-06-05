@@ -15,6 +15,10 @@
 const config = require('../config');
 
 function extractBearerToken(req) {
+  // ADR-0030 v1.1 R1: prefer req.rawBearer stashed by opsKeyAuditMiddleware
+  // so we validate the real token even after the Authorization header has
+  // been masked to `Bearer sha256:<prefix>` for logger/OTel safety.
+  if (req.rawBearer) return req.rawBearer;
   const auth = req.headers['authorization'];
   if (!auth || typeof auth !== 'string') return null;
   const match = auth.match(/^Bearer\s+(.+)$/);
