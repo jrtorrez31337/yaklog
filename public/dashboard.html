@@ -386,6 +386,106 @@
   .divergence-delta.match { background: var(--green-bg); color: var(--green); }
   .divergence-delta.slack { background: rgba(96,165,250,0.14); color: var(--blue); }
   .divergence-delta.overage { background: var(--red-bg); color: var(--red); }
+
+  /* CP12.3 (2026-06-05): three-lens Audit tab per ratified ADR-0030 v1.1 §6.
+     Incident-response / Periodic-review / Attestation as load-bearing screen-
+     organization spine. Hero defaults are GRC-tier per audience-tier-transition
+     default-audit (control_area / policy_rule / control_framework — NOT
+     agent_id / event_type / tool_name). */
+  .audit-hero { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; padding: 16px 18px; background: var(--panel); border-bottom: 1px solid var(--border); }
+  .audit-tile { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; min-height: 100px; }
+  .audit-tile .tile-lbl { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; }
+  .audit-tile .tile-val { color: var(--text); font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.15; }
+  .audit-tile .tile-sub { color: var(--muted); font-size: 11px; line-height: 1.3; }
+  .audit-tile.severity-critical .tile-val { color: var(--red); }
+  .audit-tile.severity-violation .tile-val { color: #fb923c; }
+  .audit-tile.severity-warn .tile-val { color: var(--yellow); }
+  .audit-tile.severity-info .tile-val { color: var(--blue); }
+  .audit-tile.severity-clean .tile-val { color: var(--green); }
+  .audit-tile .tile-events { display: flex; flex-direction: column; gap: 3px; font-size: 11px; }
+  .audit-tile .event-row { display: flex; justify-content: space-between; gap: 8px; color: var(--text); }
+  .audit-tile .event-row .event-agent { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+  .audit-tile .event-row .event-count { color: var(--muted); font-variant-numeric: tabular-nums; flex-shrink: 0; }
+
+  .audit-subnav { display: flex; gap: 0; background: var(--panel); border-bottom: 1px solid var(--border); padding: 0 18px; }
+  .audit-subnav button { background: transparent; color: var(--muted); border: 0; padding: 10px 16px; font: inherit; font-size: 12px; cursor: pointer; border-bottom: 2px solid transparent; transition: color 0.1s; }
+  .audit-subnav button:hover { color: var(--text); }
+  .audit-subnav button.active { color: var(--blue); border-bottom-color: var(--blue); }
+
+  .audit-subpanel { display: none; padding: 18px; }
+  .audit-subpanel.active { display: block; }
+  .audit-loading { color: var(--muted); font-size: 12px; padding: 24px 0; text-align: center; }
+
+  /* Incident sub-view: high-risk-event list + drill-through chain */
+  .incident-list { display: flex; flex-direction: column; gap: 8px; }
+  .incident-row { background: var(--panel); border: 1px solid var(--border); border-left: 3px solid var(--red); border-radius: 4px; padding: 10px 14px; display: grid; grid-template-columns: 140px 80px 1fr 120px 100px; gap: 12px; align-items: center; font-size: 12px; cursor: pointer; }
+  .incident-row:hover { background: rgba(255,255,255,0.02); }
+  .incident-row.severity-critical { border-left-color: var(--red); }
+  .incident-row.severity-violation { border-left-color: #fb923c; }
+  .incident-row.severity-warn { border-left-color: var(--yellow); }
+  .incident-row.severity-info { border-left-color: var(--blue); }
+  .incident-row .inc-ts { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 11px; }
+  .incident-row .inc-sev { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; padding: 2px 6px; border-radius: 3px; text-align: center; }
+  .incident-row.severity-critical .inc-sev { background: var(--red-bg); color: var(--red); }
+  .incident-row.severity-violation .inc-sev { background: rgba(251,146,60,0.18); color: #fb923c; }
+  .incident-row.severity-warn .inc-sev { background: var(--yellow-bg); color: var(--yellow); }
+  .incident-row.severity-info .inc-sev { background: rgba(96,165,250,0.14); color: var(--blue); }
+  .incident-row .inc-headline { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .incident-row .inc-agent { color: var(--muted); font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11px; }
+  .incident-row .inc-event-id { color: var(--blue); font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 10px; text-align: right; }
+  .incident-search { display: flex; gap: 10px; align-items: center; margin-bottom: 14px; padding: 10px 14px; background: var(--panel); border-radius: 4px; }
+  .incident-search input { flex: 1; background: rgba(255,255,255,0.03); border: 1px solid var(--border); color: var(--text); padding: 6px 10px; border-radius: 3px; font: inherit; font-size: 12px; }
+
+  /* Review sub-view: aggregate registers (per-agent / per-rule / per-control) */
+  .review-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .review-card { background: var(--panel); border: 1px solid var(--border); border-radius: 4px; padding: 14px; }
+  .review-card h3 { margin: 0 0 10px; font-size: 13px; color: var(--text); font-weight: 500; display: flex; justify-content: space-between; align-items: baseline; }
+  .review-card h3 .review-card-meta { font-size: 11px; color: var(--muted); font-weight: 400; }
+  .review-card .review-row { display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid rgba(255,255,255,0.04); font-size: 12px; }
+  .review-card .review-row:last-child { border-bottom: 0; }
+  .review-card .review-row .review-lbl { color: var(--text); }
+  .review-card .review-row .review-val { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .review-controls { display: flex; gap: 10px; align-items: baseline; margin-bottom: 14px; }
+  .review-controls label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
+  .review-controls select { background: rgba(255,255,255,0.03); border: 1px solid var(--border); color: var(--text); padding: 5px 8px; border-radius: 3px; font: inherit; font-size: 12px; }
+  /* coverage-gap indicator (bizmodel R-A3 fold) — mirror of /policy/divergence shape */
+  .coverage-gap-banner { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; background: var(--panel); border: 1px solid var(--border); border-radius: 4px; padding: 10px 14px; margin-bottom: 12px; font-size: 12px; }
+  .coverage-gap-banner.has-gap { border-color: var(--yellow); }
+  .coverage-gap-banner .cg-stat { color: var(--text); font-variant-numeric: tabular-nums; font-weight: 500; }
+  .coverage-gap-banner .cg-lbl { color: var(--muted); }
+  .coverage-gap-banner .cg-missing { margin-left: auto; font-size: 11px; color: var(--yellow); }
+
+  /* Attest sub-view: control-area browser per framework */
+  .attest-controls { display: flex; gap: 10px; align-items: center; margin-bottom: 14px; }
+  .attest-controls label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
+  .attest-controls select { background: rgba(255,255,255,0.03); border: 1px solid var(--border); color: var(--text); padding: 5px 8px; border-radius: 3px; font: inherit; font-size: 12px; }
+  .attest-controls button { background: rgba(96,165,250,0.12); border: 1px solid var(--blue); color: var(--text); padding: 6px 12px; border-radius: 3px; font: inherit; font-size: 12px; cursor: pointer; margin-left: auto; }
+  .control-area-list { display: flex; flex-direction: column; gap: 8px; }
+  .control-area-row { background: var(--panel); border: 1px solid var(--border); border-radius: 4px; padding: 10px 14px; display: grid; grid-template-columns: 80px 1fr 1fr 100px; gap: 12px; align-items: center; font-size: 12px; }
+  .control-area-row .ca-id { color: var(--blue); font-weight: 500; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11px; }
+  .control-area-row .ca-name { color: var(--text); }
+  .control-area-row .ca-classes { color: var(--muted); font-size: 11px; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+  .control-area-row .ca-classes .ca-class { display: inline-block; background: rgba(255,255,255,0.05); padding: 1px 5px; border-radius: 3px; margin-right: 4px; }
+  .control-area-row .ca-counts { color: var(--text); font-variant-numeric: tabular-nums; text-align: right; }
+
+  /* Policies sub-view: rule list + add/edit form */
+  .policy-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
+  .policy-row { background: var(--panel); border: 1px solid var(--border); border-left: 3px solid var(--blue); border-radius: 4px; padding: 10px 14px; display: grid; grid-template-columns: 180px 1fr 80px 80px; gap: 12px; align-items: center; font-size: 12px; }
+  .policy-row.status-draft { border-left-color: var(--yellow); }
+  .policy-row.status-active { border-left-color: var(--green); }
+  .policy-row.status-deprecated { border-left-color: var(--muted); opacity: 0.6; }
+  .policy-row .pol-id { color: var(--blue); font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11px; font-weight: 500; }
+  .policy-row .pol-name { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .policy-row .pol-severity { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; padding: 2px 6px; border-radius: 3px; text-align: center; }
+  .policy-row .pol-severity.sev-critical { background: var(--red-bg); color: var(--red); }
+  .policy-row .pol-severity.sev-violation { background: rgba(251,146,60,0.18); color: #fb923c; }
+  .policy-row .pol-severity.sev-warn { background: var(--yellow-bg); color: var(--yellow); }
+  .policy-row .pol-severity.sev-info { background: rgba(96,165,250,0.14); color: var(--blue); }
+  .policy-row .pol-status { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); text-align: center; }
+
+  /* ops-banner shared across Reconcile / Policies / Tombstone sub-views */
+  .ops-banner { padding: 10px 14px; background: rgba(192,132,252,0.06); border: 1px solid #c084fc; border-radius: 4px; color: var(--text); font-size: 12px; margin-bottom: 14px; line-height: 1.5; }
+  .ops-banner strong { color: #c084fc; }
   .budget-add-form { background: var(--panel); border: 1px dashed var(--border); border-radius: 4px; padding: 14px; margin-bottom: 16px; display: none; }
   .budget-add-form.open { display: block; }
   .budget-add-form .field-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
@@ -1001,40 +1101,102 @@
   </div>
 </div>
 
-<!-- CP8.2 (2026-05-27): Audit tab — ops-key DM audit log reader + body reveal.
-     v1 trust posture: network-isolation only (no browser auth; same as the rest
-     of /api/v1/plexus/public/*). Stage 2.5+ adds proper auth. -->
+<!-- CP12.3 (2026-06-05): Audit tab restructured per ratified ADR-0030 v1.1 §6.
+     Three-lens architecture (Incident-response / Periodic-review / Attestation)
+     + Policies / Reconcile / Detail sub-views. Hero strip displaces DM-audit
+     primary position; headline KPIs are GRC-tier per audience-tier-transition
+     default-audit (open-violations + coverage-gaps + recent-high-risk +
+     attestation-status). Legacy DM-audit-log relocated unchanged into Detail. -->
 <section class="tab-panel" data-tab="audit" id="tab-audit">
-  <div class="audit-banner">
-    🔓 <strong>Network-trust auth only (v1).</strong> Anyone with devel-LAN access can read DMs here.
-    Proper browser auth (Stage 2.5+ cookie-auth) will gate this surface later.
-    Every body-reveal click writes a fresh audit entry (<code>via=dashboard</code>).
-  </div>
-  <div class="audit-controls">
-    <div class="audit-control-row">
-      <label class="audit-field">
-        <span class="lbl">sender</span>
-        <input id="audit-f-sender" class="bus-input" placeholder="e.g. alice" />
-      </label>
-      <label class="audit-field">
-        <span class="lbl">recipient</span>
-        <input id="audit-f-recipient" class="bus-input" placeholder="e.g. bob" />
-      </label>
-      <label class="audit-field">
-        <span class="lbl">message #</span>
-        <input id="audit-f-msgid" class="bus-input" placeholder="numeric id" type="number" min="1" />
-      </label>
-      <label class="audit-field">
-        <span class="lbl">ops key id</span>
-        <input id="audit-f-opskey" class="bus-input" placeholder="sha256-first16" />
-      </label>
-      <button id="audit-apply" class="audit-btn">apply</button>
-      <button id="audit-clear" class="audit-btn audit-btn-ghost">clear</button>
-      <span class="bus-status" id="audit-status">—</span>
+  <!-- Hero strip: always-visible 4-tile GRC KPI summary -->
+  <div class="audit-hero" id="audit-hero">
+    <div class="audit-tile" id="tile-open-violations">
+      <div class="tile-lbl">Open policy violations</div>
+      <div class="tile-val">—</div>
+      <div class="tile-sub">—</div>
+    </div>
+    <div class="audit-tile" id="tile-coverage-gaps">
+      <div class="tile-lbl">Coverage gaps</div>
+      <div class="tile-val">—</div>
+      <div class="tile-sub">—</div>
+    </div>
+    <div class="audit-tile" id="tile-recent-risk">
+      <div class="tile-lbl">Recent high-risk events · 24h</div>
+      <div class="tile-events">—</div>
+    </div>
+    <div class="audit-tile" id="tile-attest-status">
+      <div class="tile-lbl">Attestation status</div>
+      <div class="tile-val">—</div>
+      <div class="tile-sub">—</div>
     </div>
   </div>
-  <div id="audit-list" class="audit-list">
-    <div class="bus-empty">loading…</div>
+
+  <!-- Sub-tab strip -->
+  <nav class="audit-subnav" id="audit-subnav">
+    <button data-sub="incident" class="active">Incident</button>
+    <button data-sub="review">Review</button>
+    <button data-sub="attest">Attest</button>
+    <button data-sub="policies">Policies</button>
+    <button data-sub="reconcile">Reconcile</button>
+    <button data-sub="detail">Detail</button>
+  </nav>
+
+  <!-- Sub-view panels -->
+  <div class="audit-subpanel active" data-sub="incident" id="audit-sub-incident">
+    <div class="audit-loading">loading recent high-risk events…</div>
+  </div>
+
+  <div class="audit-subpanel" data-sub="review" id="audit-sub-review">
+    <div class="audit-loading">switch to this sub-view to load.</div>
+  </div>
+
+  <div class="audit-subpanel" data-sub="attest" id="audit-sub-attest">
+    <div class="audit-loading">switch to this sub-view to load.</div>
+  </div>
+
+  <div class="audit-subpanel" data-sub="policies" id="audit-sub-policies">
+    <div class="audit-loading">switch to this sub-view to load.</div>
+  </div>
+
+  <div class="audit-subpanel" data-sub="reconcile" id="audit-sub-reconcile">
+    <div class="audit-loading">switch to this sub-view to load.</div>
+  </div>
+
+  <!-- Detail sub-view: legacy DM-audit-log reader relocated verbatim from
+       pre-CP12.3 audit-tab (CP8.2). Engineering-ops technical event-log
+       surface preserved per ADR-0030 v1.1 §6.2 Detail row. -->
+  <div class="audit-subpanel" data-sub="detail" id="audit-sub-detail">
+    <div class="audit-banner">
+      🔓 <strong>Network-trust auth only (v1).</strong> Anyone with devel-LAN access can read DMs here.
+      Proper browser auth (Stage 2.5+ cookie-auth) will gate this surface later.
+      Every body-reveal click writes a fresh audit entry (<code>via=dashboard</code>).
+    </div>
+    <div class="audit-controls">
+      <div class="audit-control-row">
+        <label class="audit-field">
+          <span class="lbl">sender</span>
+          <input id="audit-f-sender" class="bus-input" placeholder="e.g. alice" />
+        </label>
+        <label class="audit-field">
+          <span class="lbl">recipient</span>
+          <input id="audit-f-recipient" class="bus-input" placeholder="e.g. bob" />
+        </label>
+        <label class="audit-field">
+          <span class="lbl">message #</span>
+          <input id="audit-f-msgid" class="bus-input" placeholder="numeric id" type="number" min="1" />
+        </label>
+        <label class="audit-field">
+          <span class="lbl">ops key id</span>
+          <input id="audit-f-opskey" class="bus-input" placeholder="sha256-first16" />
+        </label>
+        <button id="audit-apply" class="audit-btn">apply</button>
+        <button id="audit-clear" class="audit-btn audit-btn-ghost">clear</button>
+        <span class="bus-status" id="audit-status">—</span>
+      </div>
+    </div>
+    <div id="audit-list" class="audit-list">
+      <div class="bus-empty">loading…</div>
+    </div>
   </div>
 </section>
 

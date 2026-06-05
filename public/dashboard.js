@@ -3061,12 +3061,639 @@
     return wrap;
   }
 
+  // ────────────────────────────────────────────────────────────────────
+  // CP12.3 (2026-06-05): three-lens Audit-tab mount per ratified ADR-0030 v1.1.
+  // Hero strip (4 GRC-tier KPI tiles) + 6 sub-tabs (Incident default / Review /
+  // Attest / Policies / Reconcile / Detail). Detail sub-view retains the legacy
+  // DM-audit-log reader unchanged. Audience-tier-transition default-audit
+  // applied per `feedback_audience_tier_transition_default_check` — hero
+  // defaults are control_area / policy_rule / control_framework, NOT
+  // agent_id / event_type / tool_name.
+  // ────────────────────────────────────────────────────────────────────
+  let _auditMounted = false;
+  let _auditSubActive = 'incident';
+  let _attestFramework = 'soc2';
+  let _reviewDim = 'control_area';
+
+  async function ensureAuditView() {
+    if (_auditMounted) return;
+    _auditMounted = true;
+    refreshAuditHero();
+    setInterval(refreshAuditHero, 60_000);  // 1m hero refresh
+    document.querySelectorAll('#audit-subnav button').forEach((b) => {
+      b.addEventListener('click', () => auditShowSub(b.dataset.sub));
+    });
+    auditShowSub('incident');
+  }
+
+  function auditShowSub(name) {
+    _auditSubActive = name;
+    document.querySelectorAll('#audit-subnav button').forEach((b) => {
+      b.classList.toggle('active', b.dataset.sub === name);
+    });
+    document.querySelectorAll('.audit-subpanel').forEach((p) => {
+      p.classList.toggle('active', p.dataset.sub === name);
+    });
+    switch (name) {
+      case 'incident':   renderIncident(); break;
+      case 'review':     renderReview(); break;
+      case 'attest':     renderAttest(); break;
+      case 'policies':   renderPolicies(); break;
+      case 'reconcile':  renderAuditReconcile(); break;
+      case 'detail':     /* legacy DM-audit reader already wired by existing code */ break;
+    }
+  }
+
+  // ─── Hero strip ──────────────────────────────────────────────────────
+  async function refreshAuditHero() {
+    // Tile 1: Open policy violations (severity-colored)
+    try {
+      const r = await fetch('/api/v1/plexus/public/policy/violations?disposition=pending&limit=100');
+      const j = await r.json();
+      const tile = document.getElementById('tile-open-violations');
+      if (!tile) return;
+      const rows = j.violations || [];
+      const sevCounts = { critical: 0, violation: 0, warn: 0, info: 0 };
+      for (const v of rows) {
+        const s = (v.severity_class || 'info').toLowerCase();
+        if (sevCounts[s] != null) sevCounts[s] += 1;
+      }
+      const total = rows.length;
+      let topSev = 'clean';
+      for (const s of ['critical', 'violation', 'warn', 'info']) {
+        if (sevCounts[s] > 0) { topSev = s; break; }
+      }
+      tile.className = 'audit-tile severity-' + topSev;
+      tile.querySelector('.tile-val').textContent = String(total);
+      tile.querySelector('.tile-sub').textContent = total === 0
+        ? 'no pending violations'
+        : `${sevCounts.critical || 0} crit · ${sevCounts.violation || 0} viol · ${sevCounts.warn || 0} warn · ${sevCounts.info || 0} info`;
+    } catch (e) { /* keep prior */ }
+
+    // Tile 2: Coverage gaps (policies + audit-trail)
+    try {
+      const [polR, gapR] = await Promise.all([
+        fetch('/api/v1/plexus/public/policy/divergence').then(r => r.json()),
+        fetch('/api/v1/plexus/public/audit/coverage-gap').then(r => r.json()),
+      ]);
+      const tile = document.getElementById('tile-coverage-gaps');
+      if (!tile) return;
+      const codified = polR.policies_codified || 0;
+      const missingTrail = gapR.agents_missing_trail_7d || 0;
+      tile.querySelector('.tile-val').textContent = `${codified} / ${missingTrail}`;
+      tile.querySelector('.tile-sub').textContent = `${codified} policies codified · ${missingTrail} agents missing 7d trail`;
+      tile.className = 'audit-tile' + (codified === 0 || missingTrail > 0 ? ' severity-warn' : ' severity-clean');
+    } catch (e) { /* keep prior */ }
+
+    // Tile 3: Recent high-risk events (last 24h)
+    try {
+      const r = await fetch('/api/v1/plexus/public/audit/anomaly-detail');
+      const j = await r.json();
+      const tile = document.getElementById('tile-recent-risk');
+      if (!tile) return;
+      const wrap = tile.querySelector('.tile-events');
+      clearChildren(wrap);
+      const top3 = (j.anomalies || []).slice(0, 3);
+      if (top3.length === 0) {
+        wrap.appendChild(el('div', { class: 'event-row' }, el('span', { class: 'event-agent muted' }, 'no anomalies')));
+        tile.className = 'audit-tile severity-clean';
+      } else {
+        for (const a of top3) {
+          const row = el('div', { class: 'event-row' });
+          row.appendChild(el('span', { class: 'event-agent', title: a.agent_id || '(unattributed)' }, a.agent_id || '(unattributed)'));
+          row.appendChild(el('span', { class: 'event-count' }, `${a.policy_violation_count || 0} viol`));
+          wrap.appendChild(row);
+        }
+        tile.className = 'audit-tile severity-warn';
+      }
+    } catch (e) { /* keep prior */ }
+
+    // Tile 4: Attestation status — per-framework completeness rollup (Phase 1 stub).
+    try {
+      const r = await fetch('/api/v1/plexus/public/audit/by-control-area?control_framework=soc2&period=mtd');
+      const j = await r.json();
+      const tile = document.getElementById('tile-attest-status');
+      if (!tile) return;
+      const areas = j.control_areas || [];
+      const wired = areas.filter(a => (a.audit_object_classes || []).length > 0).length;
+      const total = areas.length || 0;
+      const pct = total > 0 ? ((wired / total) * 100).toFixed(0) : 0;
+      tile.querySelector('.tile-val').textContent = total > 0 ? `${pct}%` : '—';
+      tile.querySelector('.tile-sub').textContent = `SOC 2 · ${wired}/${total} control areas wired (MTD)`;
+      tile.className = 'audit-tile' + (wired === total && total > 0 ? ' severity-clean' : ' severity-info');
+    } catch (e) { /* keep prior */ }
+  }
+
+  // ─── Incident sub-view: high-risk-event list + drill-through ─────────
+  async function renderIncident() {
+    const panel = document.getElementById('audit-sub-incident');
+    clearChildren(panel);
+
+    // Search bar (event_id lookup)
+    const search = el('div', { class: 'incident-search' });
+    const searchInput = el('input', { type: 'text', placeholder: 'event_id lookup (16-char sha256 prefix)' });
+    const searchBtn = el('button', { class: 'audit-btn' }, 'Lookup');
+    search.appendChild(searchInput);
+    search.appendChild(searchBtn);
+    panel.appendChild(search);
+    searchBtn.addEventListener('click', () => {
+      const id = searchInput.value.trim();
+      if (!id) return;
+      lookupEvent(id, panel);
+    });
+    searchInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') searchBtn.click(); });
+
+    const list = el('div', { class: 'incident-list', id: 'incident-list' });
+    panel.appendChild(list);
+    list.appendChild(el('div', { class: 'audit-loading' }, 'loading high-risk events…'));
+
+    try {
+      // Pending violations sorted by severity (server already does R-A2 sort)
+      const r = await fetch('/api/v1/plexus/public/policy/violations?disposition=pending&limit=50');
+      const j = await r.json();
+      clearChildren(list);
+      const rows = j.violations || [];
+      if (rows.length === 0) {
+        list.appendChild(el('div', { class: 'audit-loading' }, 'No pending policy violations. Cluster discipline holding.'));
+        return;
+      }
+      for (const v of rows) {
+        const sev = (v.severity_class || 'info').toLowerCase();
+        const row = el('div', { class: 'incident-row severity-' + sev });
+        row.appendChild(el('div', { class: 'inc-ts' }, fmtAge(v.occurred_at) || v.occurred_at));
+        row.appendChild(el('div', { class: 'inc-sev' }, sev));
+        row.appendChild(el('div', { class: 'inc-headline' }, `${v.rule_id} → ${v.matched_object_class}:${v.matched_object_ref}`));
+        row.appendChild(el('div', { class: 'inc-agent' }, v.agent_id || '(cluster)'));
+        row.appendChild(el('div', { class: 'inc-event-id' }, v.event_id || '—'));
+        row.addEventListener('click', () => lookupEvent(v.event_id, panel));
+        list.appendChild(row);
+      }
+    } catch (e) {
+      list.innerHTML = `<div class="audit-loading">error: ${e.message}</div>`;
+    }
+  }
+
+  async function lookupEvent(eventId, panel) {
+    try {
+      const r = await fetch(`/api/v1/plexus/public/audit/event/${encodeURIComponent(eventId)}`);
+      if (r.status === 404) { alert(`Event ${eventId} not found`); return; }
+      const j = await r.json();
+      const detail = JSON.stringify(j, null, 2);
+      alert(`Event ${eventId}\n\n${detail}`);
+    } catch (e) {
+      alert(`Lookup failed: ${e.message}`);
+    }
+  }
+
+  // ─── Review sub-view: aggregate registers + coverage-gap indicator ───
+  async function renderReview() {
+    const panel = document.getElementById('audit-sub-review');
+    clearChildren(panel);
+
+    // Coverage-gap banner (bizmodel R-A3)
+    const cg = el('div', { class: 'coverage-gap-banner', id: 'cg-banner' }, el('div', null, 'loading coverage gap…'));
+    panel.appendChild(cg);
+
+    // Dim picker (bizmodel R-A1: default control_area, not agent_id)
+    const ctrl = el('div', { class: 'review-controls' });
+    ctrl.appendChild(el('label', null, 'Activity register grouped by'));
+    const dimSel = el('select');
+    for (const d of ['control_area', 'agent_id', 'policy_rule', 'cost_center']) {
+      const opt = el('option', { value: d }, d);
+      if (d === _reviewDim) opt.selected = true;
+      dimSel.appendChild(opt);
+    }
+    dimSel.addEventListener('change', () => { _reviewDim = dimSel.value; renderReview(); });
+    ctrl.appendChild(dimSel);
+    panel.appendChild(ctrl);
+
+    const grid = el('div', { class: 'review-grid' });
+    panel.appendChild(grid);
+
+    // Card 1: per-agent activity register
+    const c1 = el('div', { class: 'review-card' });
+    c1.appendChild(el('h3', null,
+      el('span', null, 'Activity register (last 7d)'),
+      el('span', { class: 'review-card-meta' }, `by ${_reviewDim}`),
+    ));
+    const c1body = el('div', { id: 'review-activity-body' }, el('div', { class: 'audit-loading' }, 'loading…'));
+    c1.appendChild(c1body);
+    grid.appendChild(c1);
+
+    // Card 2: per-policy-rule violation register
+    const c2 = el('div', { class: 'review-card' });
+    c2.appendChild(el('h3', null,
+      el('span', null, 'Policy-violation register (pending first; R-A2 sort)'),
+    ));
+    const c2body = el('div', { id: 'review-violation-body' }, el('div', { class: 'audit-loading' }, 'loading…'));
+    c2.appendChild(c2body);
+    grid.appendChild(c2);
+
+    // Card 3: credential-rotation register
+    const c3 = el('div', { class: 'review-card' });
+    c3.appendChild(el('h3', null, el('span', null, 'Credential-rotation register (last 30d)')));
+    const c3body = el('div', { id: 'review-cred-body' }, el('div', { class: 'audit-loading' }, 'loading…'));
+    c3.appendChild(c3body);
+    grid.appendChild(c3);
+
+    // Card 4: permission-change register
+    const c4 = el('div', { class: 'review-card' });
+    c4.appendChild(el('h3', null, el('span', null, 'Permission-change register (last 30d)')));
+    const c4body = el('div', { id: 'review-perm-body' }, el('div', { class: 'audit-loading' }, 'loading…'));
+    c4.appendChild(c4body);
+    grid.appendChild(c4);
+
+    // Populate coverage gap
+    try {
+      const r = await fetch('/api/v1/plexus/public/audit/coverage-gap');
+      const j = await r.json();
+      clearChildren(cg);
+      const missing = j.agents_missing_trail_7d || 0;
+      if (missing > 0) cg.classList.add('has-gap');
+      cg.appendChild(el('span', { class: 'cg-lbl' }, 'Audit coverage:'));
+      cg.appendChild(el('span', { class: 'cg-stat' }, `${j.agents_audit_wired || 0} agents wired`));
+      cg.appendChild(el('span', { class: 'cg-lbl' }, '·'));
+      cg.appendChild(el('span', { class: 'cg-stat' }, `${missing} agents missing 7d trail`));
+      if (missing > 0 && (j.missing_agent_ids || []).length > 0) {
+        cg.appendChild(el('span', { class: 'cg-missing', title: j.missing_agent_ids.join(', ') }, `(${j.missing_agent_ids.slice(0, 3).join(', ')}${missing > 3 ? '…' : ''})`));
+      }
+    } catch (e) { /* leave loading text */ }
+
+    // Card 1 + 2 + 3 + 4 populate
+    populateReviewCard1(c1body);
+    populateReviewCard2(c2body);
+    populateReviewCard3(c3body);
+    populateReviewCard4(c4body);
+  }
+
+  async function populateReviewCard1(body) {
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const sevenAgo = new Date(Date.now() - 6 * 86400_000).toISOString().slice(0, 10);
+      const r = await fetch(`/api/v1/plexus/public/audit/tool-invocations?from=${sevenAgo}&to=${today}&limit=200`);
+      const j = await r.json();
+      const rows = j.rows || j.tool_invocations || [];
+      const counts = new Map();
+      for (const row of rows) {
+        const key = _reviewDim === 'agent_id' ? (row.agent_id || '(none)') : (row.tool_name || '(unknown)');
+        counts.set(key, (counts.get(key) || 0) + 1);
+      }
+      clearChildren(body);
+      if (counts.size === 0) {
+        body.appendChild(el('div', { class: 'audit-loading' }, 'no tool-invocation events in 7d window'));
+        return;
+      }
+      const sorted = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10);
+      for (const [k, v] of sorted) {
+        const row = el('div', { class: 'review-row' });
+        row.appendChild(el('span', { class: 'review-lbl' }, k));
+        row.appendChild(el('span', { class: 'review-val' }, String(v)));
+        body.appendChild(row);
+      }
+    } catch (e) {
+      body.innerHTML = `<div class="audit-loading">error: ${e.message}</div>`;
+    }
+  }
+
+  async function populateReviewCard2(body) {
+    try {
+      const r = await fetch('/api/v1/plexus/public/policy/violations?limit=100');
+      const j = await r.json();
+      const rows = j.violations || [];
+      clearChildren(body);
+      if (rows.length === 0) {
+        body.appendChild(el('div', { class: 'audit-loading' }, 'no policy violations recorded'));
+        return;
+      }
+      const byRule = new Map();
+      for (const v of rows) {
+        const k = v.rule_id;
+        if (!byRule.has(k)) byRule.set(k, { pending: 0, total: 0 });
+        const g = byRule.get(k);
+        g.total += 1;
+        if (v.disposition === 'pending') g.pending += 1;
+      }
+      const sorted = [...byRule.entries()].sort((a, b) => b[1].pending - a[1].pending);
+      for (const [k, g] of sorted.slice(0, 10)) {
+        const row = el('div', { class: 'review-row' });
+        row.appendChild(el('span', { class: 'review-lbl' }, k));
+        row.appendChild(el('span', { class: 'review-val' }, `${g.pending} pending · ${g.total} total`));
+        body.appendChild(row);
+      }
+    } catch (e) {
+      body.innerHTML = `<div class="audit-loading">error: ${e.message}</div>`;
+    }
+  }
+
+  async function populateReviewCard3(body) {
+    try {
+      const today = new Date().toISOString();
+      const thirtyAgo = new Date(Date.now() - 30 * 86400_000).toISOString();
+      const r = await fetch(`/api/v1/plexus/public/audit/credential-changes?from=${thirtyAgo}&to=${today}&limit=50`);
+      const j = await r.json();
+      const rows = j.rows || j.credential_changes || [];
+      clearChildren(body);
+      if (rows.length === 0) {
+        body.appendChild(el('div', { class: 'audit-loading' }, 'no credential-rotation events in 30d window'));
+        return;
+      }
+      for (const r of rows.slice(0, 10)) {
+        const row = el('div', { class: 'review-row' });
+        row.appendChild(el('span', { class: 'review-lbl' }, `${r.credential_class} ${r.change_type}`));
+        row.appendChild(el('span', { class: 'review-val' }, fmtAge(r.occurred_at) || ''));
+        body.appendChild(row);
+      }
+    } catch (e) {
+      body.innerHTML = `<div class="audit-loading">error: ${e.message}</div>`;
+    }
+  }
+
+  async function populateReviewCard4(body) {
+    try {
+      const today = new Date().toISOString();
+      const thirtyAgo = new Date(Date.now() - 30 * 86400_000).toISOString();
+      const r = await fetch(`/api/v1/plexus/public/audit/permission-changes?from=${thirtyAgo}&to=${today}&limit=50`);
+      const j = await r.json();
+      const rows = j.rows || j.permission_changes || [];
+      clearChildren(body);
+      if (rows.length === 0) {
+        body.appendChild(el('div', { class: 'audit-loading' }, 'no permission-change events in 30d window'));
+        return;
+      }
+      for (const r of rows.slice(0, 10)) {
+        const row = el('div', { class: 'review-row' });
+        row.appendChild(el('span', { class: 'review-lbl' }, `${r.agent_id} ${r.change_type}`));
+        row.appendChild(el('span', { class: 'review-val' }, fmtAge(r.occurred_at) || ''));
+        body.appendChild(row);
+      }
+    } catch (e) {
+      body.innerHTML = `<div class="audit-loading">error: ${e.message}</div>`;
+    }
+  }
+
+  // ─── Attest sub-view: control-area browser per framework ─────────────
+  async function renderAttest() {
+    const panel = document.getElementById('audit-sub-attest');
+    clearChildren(panel);
+
+    const ctrl = el('div', { class: 'attest-controls' });
+    ctrl.appendChild(el('label', null, 'Framework'));
+    const fwSel = el('select');
+    for (const f of ['soc2', 'iso27001', 'gdpr']) {
+      const opt = el('option', { value: f }, f.toUpperCase());
+      if (f === _attestFramework) opt.selected = true;
+      fwSel.appendChild(opt);
+    }
+    fwSel.addEventListener('change', () => { _attestFramework = fwSel.value; renderAttest(); });
+    ctrl.appendChild(fwSel);
+    const exportBtn = el('button', null, 'Export evidence bundle');
+    exportBtn.addEventListener('click', () => {
+      const url = `/api/v1/plexus/public/audit/export?format=csv&schema=${_attestFramework}-bundle&period=mtd`;
+      window.open(url, '_blank');
+    });
+    ctrl.appendChild(exportBtn);
+    panel.appendChild(ctrl);
+
+    const list = el('div', { class: 'control-area-list', id: 'attest-list' });
+    panel.appendChild(list);
+    list.appendChild(el('div', { class: 'audit-loading' }, `loading ${_attestFramework.toUpperCase()} control areas…`));
+
+    try {
+      const r = await fetch(`/api/v1/plexus/public/audit/by-control-area?control_framework=${_attestFramework}&period=mtd`);
+      const j = await r.json();
+      clearChildren(list);
+      const areas = j.control_areas || [];
+      if (areas.length === 0) {
+        list.appendChild(el('div', { class: 'audit-loading' }, 'no control areas defined for this framework'));
+        return;
+      }
+      for (const a of areas) {
+        const row = el('div', { class: 'control-area-row' });
+        row.appendChild(el('div', { class: 'ca-id' }, a.id));
+        row.appendChild(el('div', { class: 'ca-name' }, a.name));
+        const cls = el('div', { class: 'ca-classes' });
+        for (const c of (a.audit_object_classes || [])) {
+          cls.appendChild(el('span', { class: 'ca-class' }, c));
+        }
+        if ((a.audit_object_classes || []).length === 0) {
+          cls.appendChild(el('span', { class: 'muted', style: 'font-style: italic' }, '(no audit-class mapping yet)'));
+        }
+        row.appendChild(cls);
+        const counts = a.counts || {};
+        const total = Object.values(counts).reduce((s, v) => s + (v || 0), 0);
+        row.appendChild(el('div', { class: 'ca-counts' }, `${total} events`));
+        list.appendChild(row);
+      }
+    } catch (e) {
+      list.innerHTML = `<div class="audit-loading">error: ${e.message}</div>`;
+    }
+  }
+
+  // ─── Policies sub-view: rule list + add/edit form ───────────────────
+  async function renderPolicies() {
+    const panel = document.getElementById('audit-sub-policies');
+    clearChildren(panel);
+    panel.appendChild(_renderAuditOpsBanner('Policy-as-code management is ops-key gated',
+      'Add/edit/ratify/deprecate rules; updates via /api/v1/ops/policy/rule. DSL evaluator is sandboxed per secops #7706 (100ms / 1MB / no fs-net-proc / no regex; use contains/startsWith/endsWith/IN/IS NULL).'));
+
+    const ctrl = el('div', { class: 'budget-controls' });
+    const addBtn = el('button', null, '+ Add / edit rule');
+    ctrl.appendChild(addBtn);
+    const refreshBtn = el('button', { class: 'ghost', style: 'background:transparent;border:1px solid var(--border);color:var(--muted);' }, 'Refresh');
+    ctrl.appendChild(refreshBtn);
+    panel.appendChild(ctrl);
+
+    const form = _buildPolicyAddForm();
+    panel.appendChild(form);
+    addBtn.addEventListener('click', () => form.classList.toggle('open'));
+
+    const list = el('div', { class: 'policy-list', id: 'policy-rule-list' });
+    panel.appendChild(list);
+    refreshBtn.addEventListener('click', () => loadPolicyList());
+    loadPolicyList();
+  }
+
+  async function loadPolicyList() {
+    const list = document.getElementById('policy-rule-list');
+    if (!list) return;
+    list.innerHTML = '<div class="audit-loading">loading…</div>';
+    try {
+      const r = await fetch('/api/v1/plexus/public/policy/rules');
+      const j = await r.json();
+      clearChildren(list);
+      const rules = j.rules || [];
+      if (rules.length === 0) {
+        list.appendChild(el('div', { class: 'budget-empty' }, 'No policy rules codified yet. Click "+ Add / edit rule" to author one (ops-key required).'));
+        return;
+      }
+      for (const r of rules) {
+        const row = el('div', { class: 'policy-row status-' + (r.status || 'draft') });
+        row.appendChild(el('div', { class: 'pol-id', title: r.description || '' }, r.rule_id));
+        row.appendChild(el('div', { class: 'pol-name', title: r.name }, r.name));
+        row.appendChild(el('div', { class: 'pol-severity sev-' + (r.severity_class || 'info') }, (r.severity_class || 'info').slice(0, 4)));
+        row.appendChild(el('div', { class: 'pol-status' }, r.status));
+        list.appendChild(row);
+      }
+    } catch (e) {
+      list.innerHTML = `<div class="audit-loading">error: ${e.message}</div>`;
+    }
+  }
+
+  function _buildPolicyAddForm() {
+    const form = el('div', { class: 'budget-add-form' });
+    const fieldRow = el('div', { class: 'field-row', style: 'display:grid;grid-template-columns:1fr 1fr;gap:10px;' });
+    const ridI = el('input', { type: 'text', placeholder: 'e.g. POL-SECRETS-001' });
+    const nameI = el('input', { type: 'text', placeholder: 'human-readable name' });
+    const descI = el('input', { type: 'text', placeholder: 'description' });
+    const applI = el('input', { type: 'text', value: '{"object_classes":["messages"]}', placeholder: 'applicability JSON' });
+    const dslI = el('input', { type: 'text', placeholder: 'predicate DSL (e.g. body contains "sk-")' });
+    const sevI = el('select');
+    for (const s of ['info', 'warn', 'violation', 'critical']) sevI.appendChild(el('option', { value: s }, s));
+    const submit = el('button', null, 'Save (draft)');
+    const ratifyBtn = el('button', { class: 'ghost', style: 'background:transparent;border:1px solid var(--green);color:var(--green);' }, 'Save + ratify');
+    for (const [lbl, inp] of [['Rule ID', ridI], ['Name', nameI], ['Description', descI], ['Applicability JSON', applI], ['Predicate DSL', dslI], ['Severity', sevI]]) {
+      const f = el('div', { class: 'recon-field' });
+      f.appendChild(el('label', null, lbl));
+      f.appendChild(inp);
+      fieldRow.appendChild(f);
+    }
+    fieldRow.appendChild(submit);
+    fieldRow.appendChild(ratifyBtn);
+    form.appendChild(fieldRow);
+
+    async function savePolicy(ratify) {
+      const opsKey = await _promptOpsKey();
+      if (!opsKey) return;
+      let applicability;
+      try { applicability = JSON.parse(applI.value); }
+      catch (e) { alert('Invalid applicability JSON: ' + e.message); return; }
+      const body = {
+        rule_id: ridI.value.trim(),
+        name: nameI.value.trim(),
+        description: descI.value.trim(),
+        applicability_json: applicability,
+        predicate_dsl: dslI.value.trim(),
+        severity_class: sevI.value,
+      };
+      const r = await fetch('/api/v1/ops/policy/rule', {
+        method: 'PUT',
+        headers: { 'Authorization': `Bearer ${opsKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        alert('Error: ' + (j.message || r.status));
+        return;
+      }
+      if (ratify) {
+        const r2 = await fetch(`/api/v1/ops/policy/rule/${encodeURIComponent(body.rule_id)}/ratify`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${opsKey}` },
+        });
+        if (!r2.ok) {
+          const j = await r2.json().catch(() => ({}));
+          alert('Save succeeded but ratify failed: ' + (j.message || r2.status));
+        }
+      }
+      form.classList.remove('open');
+      loadPolicyList();
+      refreshAuditHero();
+    }
+    submit.addEventListener('click', () => savePolicy(false));
+    ratifyBtn.addEventListener('click', () => savePolicy(true));
+    return form;
+  }
+
+  // ─── Reconcile sub-view (ops-key gated) ─────────────────────────────
+  function renderAuditReconcile() {
+    const panel = document.getElementById('audit-sub-reconcile');
+    clearChildren(panel);
+    panel.appendChild(_renderAuditOpsBanner('Audit reconciliation is ops-key gated',
+      'Reconcile against external systems (SIEM / GRC platform / external audit firm bundle). Mirror of cost-reconciliation shape; computes delta + concentration.'));
+
+    const form = el('div', { class: 'recon-controls' });
+    const fields = [
+      ['period_start', 'Period start (YYYY-MM-DD)', new Date(Date.now() - 30 * 86400_000).toISOString().slice(0, 10)],
+      ['period_end', 'Period end (YYYY-MM-DD)', new Date().toISOString().slice(0, 10)],
+      ['external_system_label', 'External system label', 'siem'],
+      ['plexus_count', 'Plexus count', ''],
+      ['external_count', 'External count', ''],
+      ['reconciler_agent_id', 'Reconciler agent_id', SELF_AGENT_ID || ''],
+    ];
+    const inputs = {};
+    for (const [name, label, dft] of fields) {
+      const f = el('div', { class: 'recon-field' });
+      f.appendChild(el('label', null, label));
+      const inp = el('input', { type: name.includes('count') ? 'number' : 'text', value: dft });
+      inputs[name] = inp;
+      f.appendChild(inp);
+      form.appendChild(f);
+    }
+    const submitBtn = el('button', null, 'Reconcile');
+    form.appendChild(submitBtn);
+    panel.appendChild(form);
+
+    const result = el('div', { id: 'audit-recon-result' });
+    panel.appendChild(result);
+
+    submitBtn.addEventListener('click', async () => {
+      const opsKey = await _promptOpsKey();
+      if (!opsKey) return;
+      const body = {
+        period_start: inputs.period_start.value,
+        period_end: inputs.period_end.value,
+        external_system_label: inputs.external_system_label.value,
+        plexus_count: parseInt(inputs.plexus_count.value || '0', 10),
+        external_count: parseInt(inputs.external_count.value || '0', 10),
+        reconciler_agent_id: inputs.reconciler_agent_id.value,
+      };
+      result.innerHTML = '<div class="audit-loading">submitting…</div>';
+      try {
+        const r = await fetch('/api/v1/ops/audit/reconcile', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${opsKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const j = await r.json();
+        if (!r.ok) {
+          result.innerHTML = `<div class="audit-loading">error: ${j.message || r.status}</div>`;
+          return;
+        }
+        result.innerHTML = '';
+        const banner = el('div', { class: 'recon-banner' });
+        banner.appendChild(el('div', null,
+          `Reconciled · external ${body.external_count} vs Plexus ${body.plexus_count} · delta ${j.delta_count >= 0 ? '+' : ''}${j.delta_count} (${(j.delta_pct || 0).toFixed(1)}%)`));
+        result.appendChild(banner);
+      } catch (e) {
+        result.innerHTML = `<div class="audit-loading">network error: ${e.message}</div>`;
+      }
+    });
+  }
+
+  // ─── Audit ops-banner helper (mirrors cost _renderOpsBanner) ─────────
+  function _renderAuditOpsBanner(title, sub) {
+    const wrap = el('div', { class: 'ops-banner' });
+    wrap.appendChild(el('div', null, el('strong', null, '🔐 ' + title)));
+    wrap.appendChild(el('div', { style: 'margin-top: 4px;' }, sub));
+    const clear = el('button', { class: 'audit-btn audit-btn-ghost', style: 'margin-top: 8px;' }, 'clear stored ops-key');
+    clear.addEventListener('click', () => { _setOpsKey(''); alert('ops-key cleared'); });
+    if (_opsKey()) wrap.appendChild(clear);
+    return wrap;
+  }
+
   // ─── Tab activation hook ────────────────────────────────────────────
   document.querySelectorAll('.tab-btn').forEach(b => {
-    b.addEventListener('click', () => { if (b.dataset.tab === 'cost') ensureCostView(); });
+    b.addEventListener('click', () => {
+      if (b.dataset.tab === 'cost') ensureCostView();
+      if (b.dataset.tab === 'audit') ensureAuditView();
+    });
   });
-  window.addEventListener('hashchange', () => { if (location.hash === '#cost') ensureCostView(); });
+  window.addEventListener('hashchange', () => {
+    if (location.hash === '#cost') ensureCostView();
+    if (location.hash === '#audit') ensureAuditView();
+  });
   if (location.hash === '#cost') ensureCostView();
+  if (location.hash === '#audit') ensureAuditView();
 
   // Resize charts on window resize.
   let resizeTimer = null;
