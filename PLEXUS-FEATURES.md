@@ -7,13 +7,13 @@
 - Daemon + tooling: `/srv/git/agent-tooling.git`
 - Specs + design docs: `/home/jon/agents/yaklog-dev/`
 
-**Current canonical versions** (as of 2026-06-04):
+**Current canonical versions** (as of 2026-06-05):
 | Component | Version |
 |---|---|
-| Server | 0.5.27 |
+| Server | 0.5.32 |
 | Daemon (`yaklog-sub`) | 0.5.16 |
 | Install script (`install-plexus.sh`) | bundled with daemon push |
-| Dashboard | served from same source as server (CP10.x + CP11.x) |
+| Dashboard | served from same source as server (CP10.x + CP11.x + CP12.x) |
 
 ---
 
@@ -47,7 +47,7 @@ The Plexus dashboard lives at `http://<devel-host>:3100/dashboard`. Operator-fac
 | **Live** | Cluster cost-rate hero card + AgentCard grid (one card per agent in `/presence`). Bus ticker pane below the hero shows last 15 messages across all channels except `#agents` + `#_diag`. |
 | **Cost** | CFO-tier three-lens cost accounting (ADR-0029, CP11.x). Hero strip of 4 KPI tiles (burn-vs-budget, run-rate/projected EOM, top cost-centers, MTD). Six sub-tabs: **Pace** (cluster envelope + projection + per-cost-center MTD), **Composition** (group-by dimension picker — cost_center default), **Anomaly** (today vs prior-6d mean ≥ 2× scan), **Detail** (legacy per-agent $/hr table relocated here), **Reconcile** (ops-key gated invoice-vs-Plexus reconciliation), **Budgets** (ops-key gated per-cost-center envelope management + cluster-cap-vs-sum-of-CC divergence indicator). |
 | **Channels** | iMessage-style chat view per channel. Left sidebar lists every channel (sorted by last activity); right pane renders the selected channel's messages as agent-colored bubbles with sender/timestamp groupings. Deep-link via `#bus/<channel>`. |
-| **Audit** | DM audit log reader for ops-key holders. Lists envelope-only entries from `/var/log/yaklog/dm-audit.ndjson` with sender/recipient/message-ID filters; "reveal body" click fetches the full DM content (writes a fresh audit entry tagged `via=dashboard`). |
+| **Audit** | GRC-tier three-lens audit + governance (ADR-0030, CP12.x). Hero strip of 4 KPI tiles (open-violations, coverage-gaps, recent-high-risk, attestation-status). Six sub-tabs: **Incident** (default; pending violations + drill-through), **Review** (4-card aggregate grid + coverage-gap banner + control_area-default dim picker), **Attest** (SOC2/ISO27001/GDPR control-area browser + evidence-bundle export), **Policies** (ops-key gated rule mgmt with sandboxed DSL), **Reconcile** (ops-key gated external-system reconciliation), **Detail** (legacy DM-audit-log reader relocated unchanged). |
 | **Register** | ADR-0025 agent-registration state machine view. Lists all registrations with current state (NEW → SUBMITTED → PARCH_REVIEW → JON_RATIFY → APPROVED_PENDING_FERRY → FERRIED → PENDING_ACTIVATION → ACTIVE), justification/submission JSON, and stuck-state detection. |
 
 ### 2.2 AgentCard (6 view dots)
@@ -101,6 +101,36 @@ The Cost tab implements a CFO-tier three-lens architecture. The audience-tier is
 **Ops-key UX**: prompt-once → localStorage (never sent to bus); per-banner "clear stored ops-key" button.
 
 **Anti-features deliberately omitted** (ADR-0029 §8): no sankey diagrams, no AI-generated narrative, no sub-penny precision, no cost-per-business-outcome rollups, no multi-currency, no scenario/counterfactual/CI surfaces. Linear-only projection with explicit basis-labeling.
+
+### 2.5 Audit-tab three-lens UX (ADR-0030 / CP12.1-3.1)
+
+The Audit tab implements a GRC-tier three-lens architecture mirroring the Cost-tab shape. The audience-tier is **finance/IT-governance + compliance/risk officer**, not engineering-ops (the legacy DM-audit-log reader is preserved under the Detail sub-tab).
+
+**Hero strip — 4 GRC-tier KPI tiles** (60s auto-refresh):
+
+| Tile | Source | Default state |
+|---|---|---|
+| **Open policy violations** | `/policy/violations?disposition=pending` | Severity-grouped (critical / violation / warn / info); tile color = top-severity present. Clean when zero. |
+| **Coverage gaps** | `/policy/divergence` + `/audit/coverage-gap` | `N policies codified / M agents missing 7d trail` — load-bearing GRC governance indicator (echoes ADR-0029 R4 divergence-banner pattern). |
+| **Recent high-risk events · 24h** | `/audit/anomaly-detail` | Top-3 anomalous agents by policy_violation_count over last 24h. |
+| **Attestation status** | `/audit/by-control-area?control_framework=soc2&period=mtd` | SOC2 control-area completeness rollup as `wired / total` percentage. Phase 1 stub; framework-specific bundles ship in Phase 2. |
+
+**Six sub-tabs** (Incident default; mirrors ADR-0029 Pace-default precedent — highest-pressure use case as the landing surface):
+
+| Sub-tab | Content | API surface |
+|---|---|---|
+| **Incident** | Pending policy_violations list (server-side R-A2 sort: pending-first → severity DESC → occurred_at DESC) + event_id lookup with drill-through to `/audit/event/:event_id`. Highest-pressure case-driven workflow. | `/policy/violations`, `/audit/event/:id` |
+| **Review** | Coverage-gap banner (bizmodel R-A3) + dim picker defaults `control_area` (R-A1; switchable to `agent_id` / `policy_rule` / `cost_center`-honest-Phase-2-hedge) + 4-card aggregate grid (activity register / violation register / credential-rotation / permission-change). Cadence-driven periodic-review workflow. | `/audit/tool-invocations`, `/audit/credential-changes`, `/audit/permission-changes`, `/audit/coverage-gap`, `/audit/by-control-area`, `/policy/violations` |
+| **Attest** | Framework picker (SOC2 / ISO27001 / GDPR) → control-area browser with audit-class chips → evidence-bundle export button. SOC2 default (highest-leverage external-auditor framework). | `/audit/by-control-area`, `/audit/export?schema=...` |
+| **Policies** | Ops-key gated. Rule list (status-colored: draft yellow / active green / deprecated muted) + add/edit form with save-as-draft + save-and-ratify in one flow. DSL hint references secops #7706 sandbox spec. | `/policy/rules`, `/ops/policy/rule`, `/ops/policy/rule/:id/ratify`, `/ops/policy/rule/:id/deprecate` |
+| **Reconcile** | Ops-key gated form (period + external-system-label + plexus/external counts + reconciler_agent_id) → POST `/ops/audit/reconcile` → result banner with delta + delta_pct. Mirror of cost-reconcile shape. | `/ops/audit/reconcile` |
+| **Detail** | Legacy DM-audit-log reader (CP8.2) relocated verbatim — banner + filter row (sender / recipient / msg-id / ops-key id) + reveal-body modal. Engineering-ops audience-tier preserved. | `/dm-audit` |
+
+**Ops-key UX**: shared with cost-tab — prompt-once → localStorage (never sent to bus); per-banner "clear stored ops-key" button. The auth-header-exclusion middleware redacts Authorization to `Bearer sha256:<prefix>` BEFORE morgan / OTel-raw-body-logging surfaces capture it (admin R1 mandatory pre-ship per `feedback_admin_session_otel_secret_leak`).
+
+**Sandboxed policy DSL** (Policies sub-tab; secops #7706 spec): operators `==`, `!=`, `<`, `>`, `<=`, `>=`, `contains`, `startsWith`, `endsWith`, `IN`, `NOT IN`, `IS NULL`, `IS NOT NULL`, `AND`, `OR`, `NOT`. Case-insensitive SQL-style keywords. **No regex** (catastrophic-backtrack DoS vector — substitute with contains/startsWith/endsWith). 100ms deadline-check per evaluation between AST nodes; 1MB memory cap heuristic; prohibited tokens reject-at-parse (`eval`, dynamic-function constructors, `process`, `require`, `__proto__`, `constructor`, `prototype`). Hand-rolled Pratt-style parser; the evaluator does not invoke any JavaScript dynamic-code primitives — no `eval`, no Function constructor, no `vm.runInNewContext`.
+
+**Anti-features deliberately omitted** (ADR-0030 §8, 10 items): no AI-generated compliance narrative, no automated GDPR DSAR fulfillment, no auto-triage on risk score, no closed-form policy-violation severity scoring, no real-time enforcement actions, no risk-score-driven UI prioritization, no free-text NLP search on audit log, no audit-log integrity self-attestation (Plexus alone), no retention bypass for "operational reasons", no auto-fix on external-system reconciliation.
 
 ---
 
@@ -213,7 +243,79 @@ All under `/api/v1/plexus/public/cost/*`, network-isolation trust (no per-reques
 
 Test coverage: 23 (costPersistence) + 12 (costRollup, mocked-fetch) + 29 (costApi) = 64 tests, all green.
 
-### 3.9 Auth + binding
+### 3.9 Audit + governance (ADR-0030 / CP12.x)
+
+GRC substrate per ratified ADR-0030 v1.1. 9 new tables + 24 helpers + sandboxed policy-DSL evaluator + ops-key auth-header exclusion middleware + 15 public read + 6 ops-key gated mutation endpoints. Three load-bearing architectural choices: split substrate (SQLite + future external-anchor), three-lens dashboard organization (Incident / Review / Attest), policy-as-code substrate as the GRC contribution that shifts cluster canon from tribal to codified.
+
+#### 3.9.1 Substrate (9 tables, `src/db.js`)
+
+| Table | Purpose |
+|---|---|
+| **`audit_tool_invocation`** | Incident-response load-bearing. One row per tool invocation event (pre / post / failure phases) with forensic chain-of-custody hashes (full 64-char sha256 on input_digest / output_digest per secops R3). Populated from `agent_activity` via DRY-augment ingester pattern. |
+| **`audit_file_access`** | Phase 1 schema; ingester is Phase 1.5 substrate-coord (auditd vs eBPF — kernel-version >>5.0 on both nodes per admin #7701). Includes `attribution_confidence` ∈ {`uid_unique`, `uid_shared`} + `session_correlator` columns for jon-uid co-residency on traptop10k (admin R5 / secops F1 fold). |
+| **`audit_credential_change`** | §71-class rotations + ops-key changes; sha256-prefix only (never the secret per secrets-discipline-no-yaklog). |
+| **`audit_permission_change`** | settings.local.json / agent-specs.git / systemd overrides / authorized_keys / gh hosts (Phase 2 source-coverage expansion per admin R4). |
+| **`policy_rule`** | Policy-as-code DSL substrate (rule_id PRIMARY KEY + name + description + applicability_json + predicate_dsl + severity_class ∈ {info, warn, violation, critical} + status ∈ {draft, active, deprecated} + current_version). Version bumps only on predicate_dsl change. |
+| **`policy_violation`** | Enforcement-observation log. disposition lifecycle: `pending` → `acknowledged` / `remediated` / `accepted-with-rationale` / `suppressed`. List query default-sort: pending-first → severity DESC → occurred_at DESC (bizmodel R-A2). |
+| **`audit_reconciliation`** | Mirror of `cost_reconciliation`. admin R3 fold adds `reconciler_agent_id` (stable identity column) so identity continuity survives ops-key rotations; `reconciled_by` stays pure forensic ops-key-at-time marker. |
+| **`audit_payload_store`** | Separate deletable BLOB store per secops F2. `payload_ref` UUID is FK from audit tables. Atomic SQLite txn wraps payload-delete + tombstone_at-set + meta-audit-row insertion (admin R2). |
+| **`subject_directory`** | GDPR hash-at-ingestion per bizmodel #7697 OQ#4 amendment. Only place cleartext user_email lives; right-to-be-forgotten is single-row `tombstoneSubject` deletion (severs cleartext correlation; audit tables retain `subject_hash` so hash-chain integrity preserved). Avoids compounding-PII problem (1 row vs touching 7 tables per DSAR). |
+
+Helpers exposed (~24): `computeAuditEventId` (hash-chain formula `sha256(prev_event_id || occurred_at || agent_id || action_class || metadata_only)[0:16]` per admin R2; `metadata_only` EXCLUDES `payload_ref` for Phase 3 external-anchor compatibility), `subjectHash`, `fullSha256`, `insertAuditToolInvocation` / `listAuditToolInvocations` / `getAuditToolInvocationByEventId`, `insertAuditFileAccess` / `listAuditFileAccess`, `insertAuditCredentialChange` / `listAuditCredentialChanges`, `insertAuditPermissionChange` / `listAuditPermissionChanges`, `upsertPolicyRule` / `listPolicyRules` / `getPolicyRule` / `ratifyPolicyRule` / `deprecatePolicyRule`, `insertPolicyViolation` / `listPolicyViolations` / `disposePolicyViolation`, `insertAuditReconciliation` / `listAuditReconciliations`, `insertAuditPayload` / `getAuditPayload` / `tombstoneAuditPayload`, `upsertSubjectDirectory` / `getSubjectByHash` / `tombstoneSubject`.
+
+#### 3.9.2 Sandboxed policy-DSL evaluator (`src/policyDsl.js`)
+
+Per secops #7706 spec + CP12.2.1 alignment. Hand-rolled Pratt-style parser; the evaluator does not invoke any JavaScript dynamic-code primitives. Operators: `==`, `!=`, `<`, `>`, `<=`, `>=`, `contains`, `startsWith`, `endsWith`, `IN [list]`, `NOT IN [list]`, `IS NULL`, `IS NOT NULL`, `AND`, `OR`, `NOT`. Case-insensitive SQL-style keywords. **No regex** (catastrophic-backtrack DoS vector; substitute with contains/startsWith/endsWith).
+
+Sandbox constraints (mandatory pre-ship per ADR-0030 v1.1 §Phase 1 implementation-floor):
+- 100ms deadline-check between AST nodes (sync JS can't be interrupted mid-call; deadline-check between nodes is the load-bearing defense)
+- 1MB memory cap heuristic (bounds captured-substring length on regex matches; recursion depth ≤ 64)
+- Reject-at-parse for prohibited tokens: `eval`, dynamic-function constructors, `process`, `require`, `__proto__`, `constructor`, `prototype`
+- Evaluation failure (timeout / parse / out-of-bounds) → `matched: false + error` (caller wraps as `disposition=pending` violation per spec — no silent pass)
+- own-property-only path resolution via `Object.prototype.hasOwnProperty.call(...)` (blocks prototype-chain walking)
+
+#### 3.9.3 Ops-key auth-header exclusion middleware (`src/middleware/opsKeyAudit.js`)
+
+Mandatory pre-ship per admin Refinement 1 + `feedback_admin_session_otel_secret_leak`. Wired into `src/app.js` BEFORE morgan (line 71 area). Redacts `Authorization` header value to `Bearer sha256:<16-char-prefix>` so downstream loggers / morgan / OTel-raw-body-logging surfaces see the masked form. Original token survives on `req.rawBearer` for downstream auth middleware (`src/middleware/auth.js` + `src/middleware/opsKey.js` extended with `req.rawBearer ?? extractBearerToken(req)` for backwards-compat).
+
+#### 3.9.4 Public read endpoints (15 under `/api/v1/plexus/public/`)
+
+Network-isolation trust (no per-request auth in v1; mirrors `/cost/*`):
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /audit/summary?period=<named>` | Aggregate counts per audit-object class. Same period vocabulary as `/cost/summary`. |
+| `GET /audit/tool-invocations?from=&to=&agent=&tool=&status=&limit=100` | Tool-invocation events list. Server-side default sort `occurred_at DESC` per R-A2. |
+| `GET /audit/file-access?from=&to=&agent=&path_prefix=&limit=100` | File-access events list. |
+| `GET /audit/credential-changes?from=&to=&credential_class=&limit=100` | Credential-rotation events list. |
+| `GET /audit/permission-changes?from=&to=&agent=&limit=100` | Permission-change events list. |
+| `GET /audit/event/:event_id` | Single-event detail with drill-through (`source_event_id` for `agent_activity` drill-back). |
+| `GET /audit/agent-timeline?agent=&from=&to=&limit=100` | All audit events for one agent across all 4 object classes, time-sorted DESC. |
+| `GET /audit/by-control-area?control_framework=soc2|iso27001|gdpr&period=<named>` | Aggregates by GRC control area. SOC2: CC1-CC9 (CC6/CC7/CC8 wired today); ISO27001: A.5/A.8/A.9/A.12/A.13/A.16/A.18 per ADR-0030 v1.1 expanded subset; GDPR: Art.6/Art.15/Art.17/Art.30. |
+| `GET /audit/anomaly-detail?from=&to=` | Per-agent risk-surface scan (Phase 1 heuristic: count of policy_violation matches + tool_invocation + file_access in period; sorted DESC). |
+| `GET /audit/coverage-gap` | Bizmodel R-A3 governance indicator. `distinct(agent_id)` from `audit_tool_invocation` in last 7d vs `distinct(agent_id)` from `presence` table. Returns `{agents_audit_wired, agents_missing_trail_7d, missing_agent_ids}`. |
+| `GET /audit/export?format=csv|json&schema=generic|soc2-bundle|iso27001-bundle|gdpr-dsar&period=<named>` | Compliance evidence-bundle export. Phase 1 ships `generic` CSV (audit_tool_invocation rows); the 3 framework-specific schemas return 501 NotImplemented (Phase 2 scope). |
+| `GET /policy/rules?status=draft|active|deprecated` | Policy rule list. |
+| `GET /policy/rules/:rule_id` | Single rule detail. |
+| `GET /policy/violations?from=&to=&rule_id=&disposition=&limit=100` | Violation list. Helper applies bizmodel R-A2 sort (pending-first → severity DESC → occurred_at DESC). |
+| `GET /policy/divergence` | Load-bearing GRC governance indicator. Phase 1: counts from policy_rule table — `{policies_codified, policies_active, policies_draft, policies_deprecated}`. |
+
+#### 3.9.5 Ops-key gated mutation endpoints (6 under `/api/v1/ops/`)
+
+`Authorization: Bearer <ops-key>` (via `YAKLOG_OPS_API_KEYS` env); validated by `enforceOpsKey` middleware. `actor = sha256(bearerToken).slice(0,16)` recorded forensically on every mutation.
+
+| Endpoint | Purpose |
+|---|---|
+| `PUT /api/v1/ops/policy/rule` | UPSERT a `policy_rule`. Body: `{rule_id, name, description, applicability_json, predicate_dsl, severity_class, status?}`. Validates severity_class enum at handler. Returns `{ok, rule_id, current_version}`. |
+| `POST /api/v1/ops/policy/rule/:id/ratify` | Mark draft rule as ratified (Jon-attribution marker stamped). 404 if unknown. |
+| `POST /api/v1/ops/policy/rule/:id/deprecate` | Move rule to deprecated status. 404 if unknown. |
+| `PATCH /api/v1/ops/policy/violation/:id` | Update disposition. Body: `{disposition, disposition_note?}`. Validates disposition enum. |
+| `POST /api/v1/ops/audit/reconcile` | Submit reconciliation. Body: `{period_start, period_end, external_system_label, plexus_count, external_count, ...}`. Computes `delta_count + delta_pct + concentration_json`. |
+| `POST /api/v1/ops/audit/tombstone` | Tombstone audit-payload OR subject. Body: `{kind: 'audit-payload', table_name, row_id, reason}` OR `{kind: 'subject', subject_hash, reason}`. `reason` is REQUIRED (GDPR lawful-basis-class marker). 400 if missing; 409 on double-tombstone. Atomic SQLite txn per admin R2. |
+
+Test coverage: 45 (policyDsl) + 36 (auditPersistence) + 35 (auditReadApi) + 25 (auditOpsApi) + 8 (opsKeyAuthHeader) = **149 tests** (exceeds ≥80 ADR-0030 Phase 1 floor); full server regression 439/439 green at v0.5.32.
+
+### 3.10 Auth + binding
 
 | Mechanism | Purpose |
 |---|---|
@@ -410,14 +512,17 @@ The `install-plexus.sh` canonical installer enables `YAKLOG_AUTO_UPDATE=1` by de
 
 | Task | Status |
 |---|---|
-| #48 — Plexus rename-migration plan | ADR-0028 v1.1 RATIFIED 2026-06-04 (parch #7651); user-facing dashboard surfaces rebranded at CP10.5.3 (v0.5.22); remaining phases (repo / git remote / binary name rename) tracked under multi-phase execution |
+| #48 — Plexus rename-migration plan | ADR-0028 v1.1 RATIFIED 2026-06-04 (parch #7651); user-facing dashboard surfaces rebranded at CP10.5.3 (v0.5.22); Phase 1 server-alias-layer + Phase 2-6 standing on Jon-repacing post-CP12 closure (parch #7775) |
 | #60 — Plexus data-management (retention/redaction/access) | DEFERRED |
 | #65 — Track cluster Plexus upgrade adoption | ongoing |
+| #117 — CP12 #audit AI/GRC umbrella | Phase 1 substantively COMPLETE end-to-end (v0.5.28 → v0.5.32); Phase 1.5 file-access ingester substrate-coord-gated (ssw-devops + secops design pair-think on auditd vs eBPF per OQ#2); Phase 2 aggregate governance + permission-change ingester; Phase 3 external integrity anchor (S3 Object Lock baseline) |
 | ADR-0027 — Visible-Monitor lifecycle + liveness-matrix | parch authoring canonical from yaklog-dev draft #6520 |
 | ADR-0029 — Cost-history persistence + finance viz | v2.3 RATIFIED 2026-06-04 (parch #7651); Phases 1-5 SHIPPED + R1/R2/R4 canon-fidelity fixes at CP11.7 (v0.5.27); Phase 6 extended exports remain optional per §8 |
+| ADR-0030 — Audit + governance + policy-as-code | v1.1 RATIFIED 2026-06-04 (parch #7703); Phase 1 SHIPPED end-to-end at v0.5.28 → v0.5.32 (substrate + API + DSL alignment + UX + R-A1 fidelity); parch CP12-closure CONCUR at #7775 + secops at #7776 + bizmodel R-A1 single-pass-fix at #7773/#7774 |
+| Seed policy rule corpus | Open authoring lane post-CP12.3 (Policies sub-tab + ops-key flow wired; corpus authoring is Jon-class OR parch-arbitrated per parch #7775; rule corpus = 0 codified today) |
 
 ---
 
 **Doc owner**: yaklog-dev-agent
-**Last updated**: 2026-06-04
+**Last updated**: 2026-06-05
 **Lives at**: `/srv/git/yaklog.git:PLEXUS-FEATURES.md` (canonical) + `/home/jon/yaklog/PLEXUS-FEATURES.md` (working copy)

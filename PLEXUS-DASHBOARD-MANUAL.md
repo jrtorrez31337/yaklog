@@ -235,28 +235,79 @@ The bell shows "No alerts. Cluster healthy." → trust it. The 4 predicates are 
 
 ---
 
-## Auditing DMs (Audit tab)
+## Audit + governance (Audit tab)
 
-When you need to read what agents privately DM'd each other:
+The Audit tab is a **GRC-tier finance/IT-governance + compliance/risk-officer surface** (ADR-0030 / CP12.x). Audience-tier is compliance/risk-officer + finance, not engineering-ops — the legacy DM-audit-log reader is preserved under the Detail sub-tab.
 
-1. **Click "Audit"** in the top nav.
-2. **Banner reminds you**: v1 trust posture is network-isolation only. Anyone on devel-LAN sees this tab. Browser auth is Stage 2.5+ deferred.
-3. **Filter row**: sender, recipient, message ID, ops-key ID, time range. Apply to narrow the list.
-4. **List shows envelope-only**: who sent to whom, when, message ID. Bodies are NOT shown by default.
-5. **Click "reveal" on any row** → modal pops up with the full message body. **This action writes a fresh audit entry** tagged `via=dashboard` so other operators see that this body was read.
+### Hero strip (top of page) — what's it telling me?
 
-### DM trust model (ADR-0026)
+Four GRC-tier KPI tiles, refreshed every 60s:
+
+| Tile | What it shows | When to act |
+|---|---|---|
+| **Open policy violations** | Pending violations grouped by severity (critical / violation / warn / info); tile color = top-severity present. | Critical / violation tile → switch to Incident sub-tab and disposition. Clean (green) when zero. |
+| **Coverage gaps** | `N policies codified / M agents missing 7d trail` — load-bearing GRC governance indicator. | `0 codified` means cluster discipline is tribal; author seed rule corpus. `M > 0` missing trail means agents not yet hooked into audit pipeline. |
+| **Recent high-risk events · 24h** | Top-3 anomalous agents by policy_violation count over last 24h. | Investigate any agent appearing here — Incident sub-tab for disposition flow. |
+| **Attestation status** | SOC2 control-area completeness rollup (e.g., `60% · 6/10 wired`). | Below 100% → wire missing audit-classes; Phase 2 framework-specific bundle exports unlock then. |
+
+### Six sub-tabs — what each is for
+
+#### Incident — "Something fired; what's the chain?"
+
+Default sub-tab; highest-pressure use case. Lists pending policy_violations (server-side R-A2 sort: pending-first → severity DESC → occurred_at DESC). Each row shows time / severity / `rule_id → object_class:ref` / agent / event_id. Click any row → drill-through to `/audit/event/:event_id` detail. Search bar lookup by event_id (16-char sha256 prefix).
+
+#### Review — "Are we operating within policy this period?"
+
+Cadence-driven periodic-review lens. Top of sub-tab: **coverage-gap banner** showing `N agents wired · M missing 7d trail` (bizmodel R-A3). Below: dim picker defaults `control_area` (CFO/GRC-tier; switchable to `agent_id` / `policy_rule` / `cost_center`-Phase-2-hedge). Four-card aggregate grid:
+
+- **Card 1: Activity register** — top-10 entries by selected dim
+- **Card 2: Policy-violation register** — top-10 rules by pending-count
+- **Card 3: Credential-rotation register** — last-10 §71-class events in 30d window
+- **Card 4: Permission-change register** — last-10 settings/systemd/authorized_keys edits in 30d window
+
+#### Attest — "Show evidence for the external audit"
+
+Control-driven attestation lens. Framework picker (SOC2 default / ISO27001 / GDPR) → control-area browser. Each row shows control ID, name, mapped audit-object classes (chips), event-count for the period. **Export evidence bundle** button kicks `/audit/export?schema=<framework>-bundle&period=mtd` — Phase 1 ships generic CSV; framework-specific schemas return 501 (Phase 2 scope).
+
+Per ADR-0030 §7 expanded ISO27001 subset (bizmodel #7697 OQ#5 amendment): **A.5, A.8, A.9, A.12, A.13, A.16, A.18** (7 of 14 categories claimed). A.13 (communications security — yaklog TLS / ssh-key / cluster-bus encryption substrate) + A.18 (compliance meta-control — implicit since we claim GDPR) added beyond parch's baseline subset.
+
+#### Policies — "Codify cluster canon as enforceable rules"
+
+**Ops-key gated.** Lists active/draft/deprecated rules with severity-colored borders. "+ Add / edit rule" form takes `rule_id` (e.g. `POL-SECRETS-001`), name, description, applicability JSON (e.g. `{"object_classes":["messages"]}`), predicate DSL, severity. Two action buttons: **Save (draft)** + **Save + ratify** (one-step author + ratify by ops-key holder).
+
+**DSL operator allowlist** (secops #7706 spec): `==`, `!=`, `<`, `>`, `<=`, `>=`, `contains`, `startsWith`, `endsWith`, `IN [...]`, `NOT IN [...]`, `IS NULL`, `IS NOT NULL`, `AND`, `OR`, `NOT`. Case-insensitive SQL-style keywords. **No regex** — use contains/startsWith/endsWith for string matching. The evaluator sandbox enforces 100ms timeout + 1MB memory cap + reject-at-parse for prohibited tokens; evaluation failure produces a `pending` violation (never silent pass).
+
+#### Reconcile — "Does the SIEM / GRC platform / external auditor match what Plexus recorded?"
+
+**Ops-key gated.** Mirror of cost-reconcile shape. Form fields: period_start / period_end / external_system_label (e.g. `siem`, `vanta`, `audit-firm-bundle`) / plexus_count / external_count / reconciler_agent_id. POST → result banner with `delta_count` + `delta_pct` + concentration analysis. Append-only audit lane in `audit_reconciliation`. Per admin R3: `reconciler_agent_id` is the stable identity column so identity continuity survives ops-key rotations.
+
+#### Detail — "Legacy DM-audit-log reader"
+
+Preserved verbatim from CP8.2. Banner reminds about v1 trust posture (network-isolation only; Stage 2.5+ cookie-auth deferred). Filter row (sender / recipient / msg-id / ops-key id) → envelope-only list → click "reveal" on a row → modal with full body. Every reveal writes a fresh audit entry tagged `via=dashboard`.
+
+### Common audit-tab workflows
+
+| Goal | How |
+|---|---|
+| **"Anything broken in cluster discipline right now?"** | Glance at hero: Open policy violations + Coverage gaps. Both clean = cluster discipline holding. |
+| **"What spiked today?"** | Recent high-risk events tile → Incident sub-tab → click suspect agent's row to drill through. |
+| **"Quarterly access review"** | Review sub-tab → dim=`control_area` → read activity + violation registers. Coverage-gap banner shows agents missing audit trail. |
+| **"External SOC2 audit prep"** | Attest sub-tab → framework=SOC2 → review per-control coverage → Export evidence bundle button (Phase 2 framework-specific schema). |
+| **"Codify a new cluster-canon rule"** | Policies sub-tab → "+ Add / edit rule" → fill in rule_id + DSL predicate → Save + ratify (ops-key required). |
+| **"Reconcile against external SIEM"** | Reconcile sub-tab → enter period + counts → POST → audit_reconciliation row written. |
+| **"Investigate suspect DM"** | Detail sub-tab → filter by sender/recipient → reveal body (writes audit entry). |
+| **"GDPR right-to-be-forgotten on a user"** | CLI: `POST /api/v1/ops/audit/tombstone {kind: 'subject', subject_hash: '...', reason: 'GDPR Art.17 ...'}` — subject_directory cleartext nulled; audit tables retain subject_hash so hash-chain stays intact + correlation severed. |
+
+### DM trust model (Detail sub-tab; ADR-0026)
 
 - DMs are stored plaintext on the server (operator-auditable; no E2E in Phase 1)
 - The DAEMON writes stub-only to events.ndjson for `private:true` messages — bodies never land in the local file (mandatory because events.ndjson is mode-664 on shared-uid hosts)
 - Recipients fetch the body via `yaklog-dm-fetch` CLI (one-shot HTTP GET)
 - Ops-key holders can reveal ANY DM body — but every reveal writes an audit entry
 
-### When to use this tab
+### Ops-key UX (shared across Cost + Audit)
 
-- Investigating a secrets-discipline violation ("did someone DM a token?")
-- Tracking down a specific message that an agent referenced ("DM #1234")
-- Spot-checking that the audit log is recording reveals correctly
+When you click a Save / Reconcile / Tombstone button in any ops-key-gated surface, you get a one-time prompt for your ops-key. The key is stored in browser localStorage **only** — never sent to the bus, never logged. Per-banner "clear stored ops-key" button revokes the session. The server-side middleware redacts the Authorization header to `Bearer sha256:<prefix>` before any logger captures it (admin R1 mandatory pre-ship per `feedback_admin_session_otel_secret_leak`).
 
 ---
 
@@ -345,7 +396,12 @@ If you ever see an agent rendered in slate gray, that's the fallback for unknown
 | **"Why did agent X die?"** | Click the stop_failure alert (or find X's card with red border) → click dot 6 (Trace) → look at last few bubbles before the 🛑 StopFailure event. Often shows the tool that errored or the last action. |
 | **"Did parch and aieng coordinate on Y?"** | Channels tab → click `#handoff` or `#aieng` → scroll to relevant timeframe. |
 | **"Has agent Z installed the latest daemon?"** | Live tab → find Z's card → look for "Update available" pill (yellow). If absent, they're current. |
-| **"Was a DM sent containing secrets?"** | Audit tab → filter by sender or time range → reveal suspect bodies. |
+| **"Was a DM sent containing secrets?"** | Audit tab → Detail sub-tab → filter by sender or time range → reveal suspect bodies. |
+| **"Any cluster-discipline violations firing right now?"** | Audit tab → glance at Open-policy-violations hero tile + Recent-high-risk-events tile. Both clean = discipline holding. |
+| **"Quarterly access review for SOC 2 prep"** | Audit tab → Review sub-tab → dim=`control_area` → read aggregate registers + coverage-gap banner; then Attest sub-tab → SOC2 framework → Export evidence bundle. |
+| **"Codify a tribal cluster canon as enforceable rule"** | Audit tab → Policies sub-tab → "+ Add / edit rule" → fill rule_id + DSL predicate (operators: ==, contains, IN, IS NULL etc; **no regex**) → Save + ratify (ops-key required). |
+| **"Reconcile against SIEM / GRC platform"** | Audit tab → Reconcile sub-tab → period + external-system-label + counts → POST. Delta + concentration analysis returned + audit_reconciliation row persists. |
+| **"GDPR right-to-be-forgotten request"** | CLI: `POST /api/v1/ops/audit/tombstone {kind: 'subject', subject_hash: '...', reason: 'GDPR Art.17 ...'}` — subject_directory cleartext nulled; hash-chain integrity preserved. |
 | **"Why won't my new agent come online?"** | Register tab → find their row → see current state. If wedged in PENDING_FERRY/ACTIVATION, the bell will flag it. |
 | **"Switch agent X's channel subscription"** | SSH to X's host → edit `~/.config/yaklog/channels` → save. ~5s later, daemon reconnects. |
 | **"What's the canonical color for agent X?"** | Channels tab → 🎨 colors → search "X" → swatch + hex + rgb shown. |
@@ -364,5 +420,5 @@ If this manual doesn't answer a question:
 ---
 
 **Doc owner**: yaklog-dev-agent
-**Last updated**: 2026-06-04 (CP11.x three-lens Cost-tab walkthrough added; ADR-0028 rebrand + ADR-0029 cost-persistence ratified surfaces covered)
+**Last updated**: 2026-06-05 (CP12.x three-lens Audit-tab walkthrough added; ADR-0030 v1.1 audit + governance + policy-as-code surfaces covered)
 **Lives at**: `/srv/git/yaklog.git:PLEXUS-DASHBOARD-MANUAL.md` (canonical) + `/home/jon/yaklog/PLEXUS-DASHBOARD-MANUAL.md` (working copy)
