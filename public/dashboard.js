@@ -3141,7 +3141,18 @@
       const codified = polR.policies_codified || 0;
       const missingTrail = gapR.agents_missing_trail_7d || 0;
       tile.querySelector('.tile-val').textContent = `${codified} / ${missingTrail}`;
-      tile.querySelector('.tile-sub').textContent = `${codified} policies codified · ${missingTrail} agents missing 7d trail`;
+      // CP12.4.1 (C-honesty per parch #7817 arbitration): qualifier that audit
+      // trail is wired for PRESENCE but forensic-content (tool_name + digests)
+      // is gated on Phase 1.5.D substrate-tier capture per the A+D+C composite.
+      // No implied audit-coverage that empirically doesn't hold (ADR-0030 §8 #1+#8).
+      tile.querySelector('.tile-sub').textContent =
+        `${codified} policies codified · ${missingTrail} agents missing 7d trail · ` +
+        `presence-tier wired; forensic-content (tool_name+digests) gated on Phase 1.5.D`;
+      tile.title =
+        'Coverage gaps = policies codified + agents with audit-trail in last 7d. ' +
+        'Per CP12.4.1 cross-lane arbitration: presence-tier capture is wired (CP12.4); ' +
+        'forensic-content tier (tool_name + input/output digests) lands at Phase 1.5.D ' +
+        'eBPF substrate ship (process-tree cmdline + content-digest in-kernel).';
       tile.className = 'audit-tile' + (codified === 0 || missingTrail > 0 ? ' severity-warn' : ' severity-clean');
     } catch (e) { /* keep prior */ }
 
