@@ -3327,31 +3327,78 @@
   }
 
   async function populateReviewCard1(body) {
+    // CP12.3.1 (bizmodel #7773 R-A1 fix): route all 4 picker options properly.
+    // Picker shows {control_area, agent_id, policy_rule, cost_center}; original
+    // populator only branched on agent_id vs fallback to tool_name — same shape
+    // as CP11.7 R1/R2 gap. Each dim now uses the source-of-truth endpoint.
     try {
       const today = new Date().toISOString().slice(0, 10);
       const sevenAgo = new Date(Date.now() - 6 * 86400_000).toISOString().slice(0, 10);
-      const r = await fetch(`/api/v1/plexus/public/audit/tool-invocations?from=${sevenAgo}&to=${today}&limit=200`);
+      clearChildren(body);
+
+      // control_area: aggregate from /audit/by-control-area (same source-of-truth
+      // as the Attest sub-tab; class-level counts surface directly per area).
+      if (_reviewDim === 'control_area') {
+        const r = await fetch(`/api/v1/plexus/public/audit/by-control-area?control_framework=soc2&period=7d`);
+        const j = await r.json();
+        const counts = new Map();
+        for (const a of (j.control_areas || [])) {
+          const total = Object.values(a.counts || {}).reduce((s, v) => s + (v || 0), 0);
+          counts.set(`${a.id} · ${a.name}`, total);
+        }
+        renderCard1Counts(body, counts, 'control areas (SOC2)');
+        return;
+      }
+
+      // policy_rule: aggregate from /policy/violations grouped by rule_id.
+      if (_reviewDim === 'policy_rule') {
+        const r = await fetch(`/api/v1/plexus/public/policy/violations?from=${sevenAgo}&to=${today}&limit=500`);
+        const j = await r.json();
+        const counts = new Map();
+        for (const v of (j.violations || [])) {
+          const k = v.rule_id || '(unknown)';
+          counts.set(k, (counts.get(k) || 0) + 1);
+        }
+        renderCard1Counts(body, counts, 'policy rules with violations in 7d');
+        return;
+      }
+
+      // cost_center: honest Phase 2 hedge. agent_id → cost_center mapping lives
+      // in cost_dimension_tags (no public endpoint in Phase 1); ingester-side
+      // enrichment of audit_tool_invocation rows is Phase 2 scope per ADR-0030
+      // §Phase 2 source-coverage expansion (admin R4 fold).
+      if (_reviewDim === 'cost_center') {
+        body.appendChild(el('div', { class: 'audit-loading' },
+          'cost_center enrichment ships in Phase 2 (admin R4 ingester source-coverage). Switch to control_area / agent_id / policy_rule for Phase 1 data.'));
+        return;
+      }
+
+      // agent_id (and any other fallthrough): aggregate from /audit/tool-invocations.
+      const r = await fetch(`/api/v1/plexus/public/audit/tool-invocations?from=${sevenAgo}&to=${today}&limit=500`);
       const j = await r.json();
       const rows = j.rows || j.tool_invocations || [];
       const counts = new Map();
       for (const row of rows) {
-        const key = _reviewDim === 'agent_id' ? (row.agent_id || '(none)') : (row.tool_name || '(unknown)');
+        const key = row.agent_id || '(unattributed)';
         counts.set(key, (counts.get(key) || 0) + 1);
       }
-      clearChildren(body);
-      if (counts.size === 0) {
-        body.appendChild(el('div', { class: 'audit-loading' }, 'no tool-invocation events in 7d window'));
-        return;
-      }
-      const sorted = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10);
-      for (const [k, v] of sorted) {
-        const row = el('div', { class: 'review-row' });
-        row.appendChild(el('span', { class: 'review-lbl' }, k));
-        row.appendChild(el('span', { class: 'review-val' }, String(v)));
-        body.appendChild(row);
-      }
+      renderCard1Counts(body, counts, 'agents emitting tool-invocations in 7d');
     } catch (e) {
       body.innerHTML = `<div class="audit-loading">error: ${e.message}</div>`;
+    }
+  }
+
+  function renderCard1Counts(body, counts, emptyLabel) {
+    if (counts.size === 0) {
+      body.appendChild(el('div', { class: 'audit-loading' }, `no ${emptyLabel}`));
+      return;
+    }
+    const sorted = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10);
+    for (const [k, v] of sorted) {
+      const row = el('div', { class: 'review-row' });
+      row.appendChild(el('span', { class: 'review-lbl' }, k));
+      row.appendChild(el('span', { class: 'review-val' }, String(v)));
+      body.appendChild(row);
     }
   }
 
