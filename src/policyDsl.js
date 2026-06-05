@@ -40,8 +40,12 @@ const PROHIBITED_TOKENS = new Set([
   'import', 'this',
 ]);
 
-const KEYWORDS = new Set(['and', 'or', 'not', 'true', 'false']);
-const WORD_OPERATORS = new Set(['matches', 'contains', 'startsWith', 'endsWith']);
+// Secops spec #7706 explicitly DENIES regex (catastrophic-backtracking DoS
+// vector); `matches` operator + regex literal support REMOVED in CP12.2.1.
+// Substitute with contains / startsWith / endsWith for all string-matching.
+// Keywords are case-insensitive: `AND` / `and` / `And` all tokenize the same.
+const KEYWORDS = new Set(['and', 'or', 'not', 'true', 'false', 'in', 'is', 'null']);
+const WORD_OPERATORS = new Set(['contains', 'startswith', 'endswith']);
 
 // ─── tokenizer ──────────────────────────────────────────────────────────────
 
@@ -60,6 +64,16 @@ function tokenize(src) {
 
     if (c === '(' || c === ')') {
       tokens.push({ type: c === '(' ? 'lparen' : 'rparen', value: c, pos: i });
+      i += 1;
+      continue;
+    }
+    if (c === '[' || c === ']') {
+      tokens.push({ type: c === '[' ? 'lbracket' : 'rbracket', value: c, pos: i });
+      i += 1;
+      continue;
+    }
+    if (c === ',') {
+      tokens.push({ type: 'comma', value: ',', pos: i });
       i += 1;
       continue;
     }
@@ -117,29 +131,11 @@ function tokenize(src) {
       continue;
     }
 
-    // regex literal: /pattern/flags
+    // regex literals REMOVED per secops #7706 (CP12.2.1). The `/` character
+    // now triggers an explicit reject so operators don't accidentally write
+    // /pattern/ and have it silently interpreted as a path-segment-divide.
     if (c === '/') {
-      let j = i + 1;
-      let pattern = '';
-      while (j < n && src[j] !== '/') {
-        if (src[j] === '\\' && j + 1 < n) {
-          pattern += src[j] + src[j + 1];
-          j += 2;
-        } else {
-          pattern += src[j];
-          j += 1;
-        }
-      }
-      if (j >= n) throw new Error(`unterminated regex literal at pos ${i}`);
-      let k = j + 1;
-      let flags = '';
-      while (k < n && /[gimsuy]/.test(src[k])) {
-        flags += src[k];
-        k += 1;
-      }
-      tokens.push({ type: 'regex', value: { pattern, flags }, pos: i });
-      i = k;
-      continue;
+      throw new Error(`regex literals not supported (secops #7706); use contains / startsWith / endsWith for string matching`);
     }
 
     // number literal: int, float, negative
@@ -158,18 +154,28 @@ function tokenize(src) {
     }
 
     // identifier / keyword / word-operator
+    // Keywords + word-operators are case-insensitive per secops #7706
+    // (SQL-style uppercase AND / OR / NOT / IN / IS NULL accepted alongside
+    // lowercase). Path identifiers stay case-sensitive.
     if (/[a-zA-Z_]/.test(c)) {
       let j = i;
       while (j < n && /[a-zA-Z0-9_.]/.test(src[j])) {
         j += 1;
       }
       const word = src.slice(i, j);
-      if (word === 'and' || word === 'or' || word === 'not') {
-        tokens.push({ type: 'logical', value: word, pos: i });
-      } else if (word === 'true' || word === 'false') {
-        tokens.push({ type: 'boolean', value: word === 'true', pos: i });
-      } else if (WORD_OPERATORS.has(word)) {
-        tokens.push({ type: 'op', value: word, pos: i });
+      const lower = word.toLowerCase();
+      if (lower === 'and' || lower === 'or' || lower === 'not') {
+        tokens.push({ type: 'logical', value: lower, pos: i });
+      } else if (lower === 'true' || lower === 'false') {
+        tokens.push({ type: 'boolean', value: lower === 'true', pos: i });
+      } else if (lower === 'in') {
+        tokens.push({ type: 'op_in', value: 'in', pos: i });
+      } else if (lower === 'is') {
+        tokens.push({ type: 'op_is', value: 'is', pos: i });
+      } else if (lower === 'null') {
+        tokens.push({ type: 'null', value: null, pos: i });
+      } else if (WORD_OPERATORS.has(lower)) {
+        tokens.push({ type: 'op', value: lower, pos: i });
       } else {
         tokens.push({ type: 'ident', value: word, pos: i });
       }
@@ -273,52 +279,52 @@ function parse(src) {
       }
     }
 
-    const opTok = peek();
-    if (opTok.type !== 'op') {
-      throw new Error(`expected operator after path '${pathTok.value}' at pos ${opTok.pos}`);
+    const nextTok = peek();
+
+    // IS NULL / IS NOT NULL (secops #7706 null-check operators)
+    if (nextTok.type === 'op_is') {
+      consume();
+      let negated = false;
+      if (peek().type === 'logical' && peek().value === 'not') {
+        consume();
+        negated = true;
+      }
+      if (peek().type !== 'null') {
+        throw new Error(`expected NULL after IS${negated ? ' NOT' : ''} at pos ${peek().pos}`);
+      }
+      consume();
+      return { kind: 'is_null', path: segments, negated };
     }
-    consume();
+
+    // path NOT IN [...] (NOT modifier before IN)
+    if (nextTok.type === 'logical' && nextTok.value === 'not') {
+      consume();
+      if (peek().type !== 'op_in') {
+        throw new Error(`expected IN after NOT at pos ${peek().pos}`);
+      }
+      consume();
+      const list = parseListLiteral();
+      return { kind: 'in_list', path: segments, list, negated: true };
+    }
+
+    // path IN [...]
+    if (nextTok.type === 'op_in') {
+      consume();
+      const list = parseListLiteral();
+      return { kind: 'in_list', path: segments, list, negated: false };
+    }
+
+    if (nextTok.type !== 'op') {
+      throw new Error(`expected operator after path '${pathTok.value}' at pos ${nextTok.pos}`);
+    }
+    const opTok = consume();
 
     const litTok = peek();
-    let literal;
-    if (litTok.type === 'string' || litTok.type === 'number' || litTok.type === 'boolean') {
-      literal = { kind: 'literal', valueType: litTok.type, value: litTok.value };
-      consume();
-    } else if (litTok.type === 'regex') {
-      const { pattern, flags } = litTok.value;
-      if (pattern.length > MAX_REGEX_LEN) {
-        throw new Error(`regex pattern too long (${pattern.length} > ${MAX_REGEX_LEN})`);
-      }
-      // reject nested-quantifier catastrophic-backtrack vectors
-      if (/\([^)]*[+*][^)]*\)[+*]/.test(pattern)) {
-        throw new Error(`regex contains nested quantifier (catastrophic-backtrack risk)`);
-      }
-      // reject sequential-overlapping quantifiers like /a*a*a*/ (3+ consecutive
-      // single-char-quantifier pairs) — exponential-backtrack ReDoS vector
-      // that single sync regex.test() can't be interrupted from. JS regex
-      // engine is non-interruptible mid-call, so reject-at-parse is the only
-      // reliable defense.
-      if (/(?:[A-Za-z0-9_][*+]){3,}/.test(pattern)) {
-        throw new Error(`regex contains sequential-overlapping quantifiers (catastrophic-backtrack risk)`);
-      }
-      let compiled;
-      try {
-        compiled = new RegExp(pattern, flags || '');
-      } catch (e) {
-        throw new Error(`invalid regex /${pattern}/${flags}: ${e.message}`);
-      }
-      literal = { kind: 'literal', valueType: 'regex', value: compiled, pattern };
-      consume();
-    } else {
+    if (litTok.type !== 'string' && litTok.type !== 'number' && litTok.type !== 'boolean') {
       throw new Error(`expected literal after operator at pos ${litTok.pos}`);
     }
-
-    if (literal.valueType === 'regex' && opTok.value !== 'matches') {
-      throw new Error(`regex literal only valid with 'matches' operator`);
-    }
-    if (opTok.value === 'matches' && literal.valueType !== 'regex') {
-      throw new Error(`'matches' requires a regex literal`);
-    }
+    const literal = { kind: 'literal', valueType: litTok.type, value: litTok.value };
+    consume();
 
     return {
       kind: 'comparison',
@@ -326,6 +332,38 @@ function parse(src) {
       op: opTok.value,
       literal,
     };
+  }
+
+  function parseListLiteral() {
+    if (peek().type !== 'lbracket') {
+      throw new Error(`expected '[' after IN at pos ${peek().pos}`);
+    }
+    consume();
+    const items = [];
+    if (peek().type === 'rbracket') {
+      consume();
+      return items;
+    }
+    while (true) {
+      const tok = peek();
+      if (tok.type !== 'string' && tok.type !== 'number' && tok.type !== 'boolean') {
+        throw new Error(`expected literal in list at pos ${tok.pos}`);
+      }
+      items.push({ valueType: tok.type, value: tok.value });
+      consume();
+      if (items.length > 256) {
+        throw new Error(`list literal exceeds 256 items`);
+      }
+      if (peek().type === 'comma') {
+        consume();
+        continue;
+      }
+      if (peek().type === 'rbracket') {
+        consume();
+        return items;
+      }
+      throw new Error(`expected ',' or ']' in list at pos ${peek().pos}`);
+    }
   }
 
   const root = parseExpression();
@@ -429,6 +467,16 @@ function evalNode(node, obj, deadline) {
   if (node.kind === 'comparison') {
     return evalComparison(node, obj, deadline);
   }
+  if (node.kind === 'is_null') {
+    const lhs = resolvePath(obj, node.path);
+    const isNull = lhs === null || lhs === undefined;
+    return node.negated ? !isNull : isNull;
+  }
+  if (node.kind === 'in_list') {
+    const lhs = resolvePath(obj, node.path);
+    const matched = node.list.some((item) => item.value === lhs);
+    return node.negated ? !matched : matched;
+  }
   throw new Error(`unknown node kind ${node.kind}`);
 }
 
@@ -454,19 +502,10 @@ function evalComparison(node, obj, deadline) {
       if (typeof lhs === 'string') return lhs.includes(String(lit.value));
       if (Array.isArray(lhs)) return lhs.includes(lit.value);
       return false;
-    case 'startsWith':
+    case 'startswith':
       return typeof lhs === 'string' && lhs.startsWith(String(lit.value));
-    case 'endsWith':
+    case 'endswith':
       return typeof lhs === 'string' && lhs.endsWith(String(lit.value));
-    case 'matches': {
-      if (typeof lhs !== 'string') return false;
-      // bound captured-string length for memory safety
-      const subject = lhs.length > MAX_CAPTURE_LEN ? lhs.slice(0, MAX_CAPTURE_LEN) : lhs;
-      checkDeadline(deadline);
-      const result = lit.value.test(subject);
-      checkDeadline(deadline);
-      return result;
-    }
     default:
       throw new Error(`unknown operator ${op}`);
   }

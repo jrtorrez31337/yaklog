@@ -31,9 +31,18 @@ test('operator !=', () => {
   assert.equal(evaluate('status != "ok"', { status: 'ok' }).matched, false);
 });
 
-test('operator matches (regex)', () => {
-  assert.equal(evaluate('body matches /sk-[a-zA-Z0-9]{40}/', { body: 'leak: sk-' + 'a'.repeat(40) }).matched, true);
-  assert.equal(evaluate('body matches /sk-[a-zA-Z0-9]{40}/', { body: 'nothing here' }).matched, false);
+test('secops #7706: regex literal REJECTED at parse (no MATCHES operator)', () => {
+  // Per secops spec: regex is a catastrophic-backtrack DoS vector; substitute
+  // with contains / startsWith / endsWith. The `/` char triggers parse error.
+  const r = validate('tool_name matches /Bash.*/');
+  assert.equal(r.ok, false);
+});
+
+test('secops #7706: regex literal /pattern/ triggers parse rejection at tokenizer', () => {
+  // Even with a valid-looking operator, the / character is rejected.
+  const r = evaluate('body contains /test/', { body: '/test/' });
+  assert.equal(r.matched, false);
+  assert.ok(r.error);
 });
 
 test('operator contains (string + array)', () => {
@@ -101,7 +110,7 @@ test('path: missing path resolves to undefined (false)', () => {
 // ─── validate() catches ────────────────────────────────────────────────────
 
 test('validate: ok for well-formed predicate', () => {
-  const r = validate('body matches /test/');
+  const r = validate('body contains "test"');
   assert.equal(r.ok, true);
   assert.deepEqual(r.errors, []);
 });
@@ -117,16 +126,17 @@ test('validate: rejects unbalanced parens', () => {
   assert.equal(r.ok, false);
 });
 
-test('validate: rejects regex too long', () => {
-  const longPattern = '/' + 'a'.repeat(201) + '/';
-  const r = validate(`body matches ${longPattern}`);
-  assert.equal(r.ok, false);
-  assert.ok(r.errors.some(e => /regex/i.test(e)));
-});
-
-test('validate: rejects nested-quantifier regex', () => {
-  const r = validate('body matches /(a+)+/');
-  assert.equal(r.ok, false);
+test('secops #7706 acceptance: regex blocked at parse', () => {
+  // Test #5 from secops #7706: "Regex blocked: tool_name MATCHES /Bash.*/
+  // → parse-time rejection"
+  for (const dsl of [
+    'tool_name matches /Bash.*/',
+    'body matches /sk-[a-zA-Z0-9]{40}/',
+    'path matches /^\\//',
+  ]) {
+    const r = validate(dsl);
+    assert.equal(r.ok, false, `expected parse rejection for: ${dsl}`);
+  }
 });
 
 test('validate: rejects prohibited tokens', () => {
@@ -173,16 +183,13 @@ test('sandbox: resolvePath blocks __proto__ even if validate bypassed', () => {
 
 // ─── timeout enforcement ───────────────────────────────────────────────────
 
-test('timeout: catastrophic-backtrack regex REJECTED at parse (substrate defense)', () => {
-  // JS regex engine is non-interruptible mid-call; deadline checks happen
-  // between AST nodes, not inside a single regex.test(). For sequential-
-  // overlapping quantifiers (`a*a*a*...*b` style ReDoS), reject-at-parse is
-  // the only reliable defense. This test verifies that defense.
+test('regex catastrophic-backtrack subsumed by total regex-ban (secops #7706)', () => {
+  // CP12.2.1 removes regex entirely per secops #7706. Any /pattern/ in DSL
+  // input is parse-rejected; no need for separate catastrophic-backtrack
+  // detector since the substrate-tier defense is absolute.
   const dsl = 'body matches /a*a*a*a*a*a*a*a*a*a*a*a*a*a*a*a*a*a*a*a*b/';
   const r = validate(dsl);
   assert.equal(r.ok, false);
-  assert.ok(r.errors.some(e => /sequential|backtrack|nested|catastrophic/i.test(e)),
-    `expected sequential-quantifier rejection; got: ${r.errors.join('; ')}`);
 });
 
 test('timeout: explicit deadline trip via custom 1ms timeout', () => {
@@ -230,12 +237,15 @@ test('eval failure: never silently passes', () => {
   const cases = [
     'invalid syntax @#$',
     '(unbalanced',
-    'body matches "not a regex"', // matches requires regex literal
+    'body matches "x"',                  // CP12.2.1: matches operator removed
+    'tool_name in []',                   // empty IN list is valid (always false)
   ];
-  for (const dsl of cases) {
+  for (let i = 0; i < cases.length; i++) {
+    const dsl = cases[i];
     const r = evaluate(dsl, {});
     assert.equal(r.matched, false, `expected matched:false for: ${dsl}`);
-    assert.ok(r.error, `expected error for: ${dsl}`);
+    // Last case (empty IN list) is a valid eval — no error. First three are parse errors.
+    if (i < 3) assert.ok(r.error, `expected error for: ${dsl}`);
   }
 });
 
@@ -247,10 +257,10 @@ test('boolean literal evaluation', () => {
   assert.equal(evaluate('private == true', { private: false }).matched, false);
 });
 
-test('integration: ADR-0030 example policies', () => {
-  // secret detection
+test('integration: ADR-0030 example policies (CP12.2.1 regex-free)', () => {
+  // secret detection — substitute regex with contains per secops #7706
   assert.equal(
-    evaluate('body matches /sk-[a-zA-Z0-9]{40}/', { body: 'oops sk-' + '0'.repeat(40) }).matched,
+    evaluate('body contains "sk-"', { body: 'oops sk-' + '0'.repeat(40) }).matched,
     true,
   );
   // Bash error tracker
@@ -268,4 +278,113 @@ test('integration: ADR-0030 example policies', () => {
     evaluate('not (private == true) and severity == "critical"', { private: false, severity: 'critical' }).matched,
     true,
   );
+});
+
+// ─── CP12.2.1: secops #7706 new operators (IN / NOT IN / IS NULL / IS NOT NULL) ───
+
+test('operator IN: matches element in literal list', () => {
+  assert.equal(
+    evaluate('tool_name in ["Bash", "Edit", "Read"]', { tool_name: 'Bash' }).matched,
+    true,
+  );
+  assert.equal(
+    evaluate('tool_name in ["Bash", "Edit", "Read"]', { tool_name: 'Glob' }).matched,
+    false,
+  );
+});
+
+test('operator IN: works with numeric list', () => {
+  assert.equal(
+    evaluate('status_code in [200, 201, 204]', { status_code: 200 }).matched,
+    true,
+  );
+  assert.equal(
+    evaluate('status_code in [200, 201, 204]', { status_code: 500 }).matched,
+    false,
+  );
+});
+
+test('operator NOT IN: negated set membership', () => {
+  assert.equal(
+    evaluate('severity not in ["info", "warn"]', { severity: 'critical' }).matched,
+    true,
+  );
+  assert.equal(
+    evaluate('severity not in ["info", "warn"]', { severity: 'info' }).matched,
+    false,
+  );
+});
+
+test('operator IN: empty list always false', () => {
+  assert.equal(evaluate('tool_name in []', { tool_name: 'Bash' }).matched, false);
+});
+
+test('operator IN: list size cap (>256 items rejected at parse)', () => {
+  const huge = '[' + Array(300).fill('"x"').join(',') + ']';
+  const r = validate(`tool_name in ${huge}`);
+  assert.equal(r.ok, false);
+});
+
+test('operator IS NULL: matches null + undefined (missing field)', () => {
+  assert.equal(evaluate('blocked_until is null', { blocked_until: null }).matched, true);
+  assert.equal(evaluate('blocked_until is null', {}).matched, true);  // missing = undefined → is null
+  assert.equal(evaluate('blocked_until is null', { blocked_until: 'now' }).matched, false);
+});
+
+test('operator IS NOT NULL: inverse of IS NULL', () => {
+  assert.equal(evaluate('blocked_until is not null', { blocked_until: '2026-06-05' }).matched, true);
+  assert.equal(evaluate('blocked_until is not null', { blocked_until: null }).matched, false);
+  assert.equal(evaluate('blocked_until is not null', {}).matched, false);
+});
+
+test('case-insensitive keywords: AND / OR / NOT / IN / IS NULL (secops SQL-style)', () => {
+  // secops spec #7706 uses uppercase SQL-style; our tokenizer normalizes
+  // word tokens to lowercase so AND/and/And all work.
+  assert.equal(
+    evaluate('tool_name == "Bash" AND status == "ok"', { tool_name: 'Bash', status: 'ok' }).matched,
+    true,
+  );
+  assert.equal(
+    evaluate('severity IN ["critical"] OR private == true', { severity: 'critical', private: false }).matched,
+    true,
+  );
+  assert.equal(
+    evaluate('NOT (private == true)', { private: false }).matched,
+    true,
+  );
+  assert.equal(
+    evaluate('blocked_until IS NULL', {}).matched,
+    true,
+  );
+  assert.equal(
+    evaluate('agent_id IS NOT NULL', { agent_id: 'parch' }).matched,
+    true,
+  );
+});
+
+// ─── secops #7706 acceptance tests (canonical contract) ─────────────────────
+
+test('secops acceptance #1: happy path on matching object', () => {
+  const r = evaluate('tool_name == "Bash" AND status == "ok"', { tool_name: 'Bash', status: 'ok' });
+  assert.equal(r.matched, true);
+});
+
+test('secops acceptance #6: undefined field → matched:false (no violation row); not an error', () => {
+  const r = evaluate('nonexistent_field == "foo"', { tool_name: 'Bash' });
+  assert.equal(r.matched, false);
+  assert.equal(r.error, undefined);  // explicitly NOT an error
+});
+
+test('secops acceptance #7: type mismatch → matched:false (no coercion)', () => {
+  // id is INTEGER on the audit object; string literal must not coerce.
+  const r = evaluate('id == "string"', { id: 42 });
+  assert.equal(r.matched, false);
+  assert.equal(r.error, undefined);
+});
+
+test('secops acceptance #8: unknown operator → parse-time rejection (no implicit fallthrough)', () => {
+  for (const dsl of ['body ~~ "x"', 'body LIKE "x"', 'body BETWEEN 1 AND 10']) {
+    const r = validate(dsl);
+    assert.equal(r.ok, false, `expected rejection for: ${dsl}`);
+  }
 });
