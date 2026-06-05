@@ -592,6 +592,19 @@ function initializeDb() {
   `).run();
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_subject_directory_tombstone ON subject_directory(tombstone_at)`).run();
 
+  // CP12.4 (2026-06-05): audit_ingester_cursor — last-processed cursor per
+  // ingester. Lets the agent_activity → audit_tool_invocation DRY-augment
+  // ingester (per ADR-0030 OQ#8 CONCUR) resume across server restarts
+  // without reprocessing the same source rows. Key = ingester name.
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS audit_ingester_cursor (
+      ingester_name    TEXT PRIMARY KEY,
+      last_source_id   INTEGER NOT NULL,
+      last_run_at      TEXT NOT NULL,
+      rows_ingested    INTEGER NOT NULL DEFAULT 0
+    )
+  `).run();
+
   return db;
 }
 
@@ -1566,6 +1579,48 @@ function tombstoneSubject({ subject_hash, ops_key_sha256, reason }) {
   return { tombstone_at, subject_hash };
 }
 
+// ─── audit_ingester_cursor (CP12.4) ─────────────────────────────────────────
+
+function getIngesterCursor(ingester_name) {
+  const database = getDb();
+  return database.prepare('SELECT * FROM audit_ingester_cursor WHERE ingester_name = ?').get(ingester_name) || null;
+}
+
+function upsertIngesterCursor({ ingester_name, last_source_id, rows_ingested }) {
+  const database = getDb();
+  const last_run_at = new Date().toISOString();
+  database.prepare(`
+    INSERT INTO audit_ingester_cursor (ingester_name, last_source_id, last_run_at, rows_ingested)
+    VALUES (@ingester_name, @last_source_id, @last_run_at, @rows_ingested)
+    ON CONFLICT (ingester_name) DO UPDATE SET
+      last_source_id = excluded.last_source_id,
+      last_run_at    = excluded.last_run_at,
+      rows_ingested  = audit_ingester_cursor.rows_ingested + excluded.rows_ingested
+  `).run({
+    ingester_name,
+    last_source_id,
+    last_run_at,
+    rows_ingested: rows_ingested || 0,
+  });
+}
+
+// Source-side scan for the agent_activity → audit_tool_invocation ingester.
+// Returns rows newer than after_id, capped at limit. Tool-invocation events
+// only (PreToolUse / PostToolUse / PostToolUseFailure / SubagentStart /
+// SubagentStop) — non-tool events (SessionStart, Stop, etc.) are NOT
+// audit-tool-invocation class per ADR-0030 §audit_tool_invocation table.
+function scanAgentActivityForAudit(after_id = 0, limit = 500) {
+  const database = getDb();
+  return database.prepare(`
+    SELECT id, agent_id, ts, event, payload_json
+    FROM agent_activity
+    WHERE id > @after_id
+      AND event IN ('PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'SubagentStart', 'SubagentStop')
+    ORDER BY id ASC
+    LIMIT @limit
+  `).all({ after_id, limit });
+}
+
 function closeDb() {
   if (db) {
     db.close();
@@ -2143,6 +2198,10 @@ module.exports = {
   upsertSubjectDirectory,
   getSubjectByHash,
   tombstoneSubject,
+  // CP12.4 (2026-06-05): audit_ingester_cursor + scan helper
+  getIngesterCursor,
+  upsertIngesterCursor,
+  scanAgentActivityForAudit,
   closeDb,
   messageBus
 };

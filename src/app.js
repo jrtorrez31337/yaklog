@@ -34,6 +34,24 @@ if (process.env.NODE_ENV !== 'test' && process.env.YAKLOG_COST_ROLLUP_DISABLED !
   console.log('[costRollup] backfill+schedulers armed (nightly 00:30 UTC; intraday 1h)');
 }
 
+// CP12.4 (2026-06-05): agent_activity → audit_tool_invocation DRY-augment
+// ingester per ADR-0030 OQ#8 CONCUR. Boot drain catches up backlog from
+// existing agent_activity rows; periodic ticker keeps coverage-gap indicator
+// fresh as new rows land. Skipped in test env (timer-noise + tests seed their
+// own audit rows directly).
+if (process.env.NODE_ENV !== 'test' && process.env.YAKLOG_AUDIT_INGESTER_DISABLED !== '1') {
+  const auditFromActivity = require('./auditFromActivity');
+  setTimeout(() => {
+    auditFromActivity.drain().then((r) => {
+      console.log(`[auditFromActivity] boot drain: ${r.totalProcessed} processed + ${r.totalSkipped} skipped over ${r.iterations} iters`);
+    }).catch((e) => {
+      console.error(`[auditFromActivity] boot drain failed: ${e.message}`);
+    });
+  }, 7_000);  // 2s after costRollup backfill so they don't both fire at server-warm-up
+  auditFromActivity.scheduleTicker(60_000);  // every 60s
+  console.log('[auditFromActivity] boot drain + ticker armed (60s interval)');
+}
+
 const app = express();
 
 // helmet's default CSP includes `upgrade-insecure-requests` which forces the
