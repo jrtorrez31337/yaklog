@@ -21,6 +21,13 @@ const config = require('../config');
 const { getRegistration } = require('../db');
 
 function extractBearerToken(req) {
+  // ADR-0030 v1.1 R1: opsKeyAuditMiddleware (mounted before morgan) stashes
+  // the original Bearer on req.rawBearer and masks req.headers.authorization
+  // to `Bearer sha256:<prefix>`. Prefer the stashed original so the
+  // registrant-token comparison validates the real token; fall through to
+  // header parsing for requests that bypassed the audit middleware (tests,
+  // direct mounts). Mirrors src/middleware/auth.js extractToken pattern.
+  if (req.rawBearer) return req.rawBearer;
   const auth = req.headers['authorization'];
   if (!auth || typeof auth !== 'string') return null;
   const match = auth.match(/^Bearer\s+(.+)$/);

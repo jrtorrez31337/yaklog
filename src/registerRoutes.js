@@ -342,6 +342,10 @@ router.post('/:id/jon-ratify', auth, (req, res) => {
 // it itself against minted_token_hash with status=PENDING_ACTIVATION.
 const { getActiveRegistrationByMintedTokenHash } = require('./db');
 function extractBearer(req) {
+  // Prefer the original Bearer stashed by opsKeyAuditMiddleware (CP12.2
+  // R1 fold) before req.headers.authorization was masked to
+  // `Bearer sha256:<prefix>`. Mirrors src/middleware/auth.js extractToken.
+  if (req.rawBearer) return req.rawBearer;
   const a = req.headers.authorization;
   if (!a || !a.startsWith('Bearer ')) return null;
   return a.slice('Bearer '.length).trim();
@@ -451,7 +455,10 @@ const { sha256Hex: _sha256Hex } = (() => {
 })();
 function authForCiphertext(req, reg) {
   // Try registrant-token first (PRIMARY path expected; cheaper success).
-  const bearer = (req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+  // Prefer req.rawBearer stashed by opsKeyAuditMiddleware (CP12.2 R1 fold)
+  // before req.headers.authorization was masked. Mirrors auth.js pattern.
+  const bearer = req.rawBearer ||
+    (req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
   if (bearer) {
     if (reg.registrant_token_hash && sha256Hex(bearer) === reg.registrant_token_hash) {
       return { ok: true, actor: reg.agent_id, source: 'registrant_token' };
