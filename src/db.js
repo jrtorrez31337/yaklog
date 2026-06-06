@@ -479,6 +479,21 @@ function initializeDb() {
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_audit_cc_time ON audit_credential_change(occurred_at)`).run();
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_audit_cc_class_time ON audit_credential_change(credential_class, occurred_at)`).run();
 
+  // CP12.7 Phase B: credential_state_snapshot persists the last-seen
+  // fingerprint set of YAKLOG_API_KEYS + YAKLOG_TOKEN_BINDINGS +
+  // YAKLOG_HOST_INGESTER_BINDINGS across boots. At app startup, the
+  // env-diff detector compares current env to this snapshot + emits
+  // audit_credential_change rows for each diff (mint/revoke/bind/unbind).
+  // Single-row table (id=1); snapshot_json holds the JSON-serialized
+  // {api_keys:[sha[:16]], token_bindings:[agent:sha[:16]], host_bindings:[host:sha[:16]]} shape.
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS credential_state_snapshot (
+      id            INTEGER PRIMARY KEY CHECK (id = 1),
+      snapshot_json TEXT NOT NULL,
+      updated_at    TEXT NOT NULL
+    )
+  `).run();
+
   // audit_permission_change — settings.local.json + agent-specs.git +
   // systemd overrides + ~/.ssh/authorized_keys + gh hosts (Phase 2 source-
   // coverage per admin R4 fold).
@@ -2130,6 +2145,206 @@ function deletePresenceRow(agentId, { reason = 'decommissioned', actor = null } 
   return existing;
 }
 
+// ─── CP12.7 Phase B: env-diff boot detector ────────────────────────────────
+//
+// At app startup, parse the current YAKLOG_API_KEYS + YAKLOG_TOKEN_BINDINGS +
+// YAKLOG_HOST_INGESTER_BINDINGS env state into a canonical sha256[:16]
+// fingerprint set; compare to credential_state_snapshot; emit
+// audit_credential_change rows for each diff; persist the new snapshot.
+//
+// Per CP12 Attestation status tile: this is the retroactive backfill of
+// CC6 credential-change events that the ad-hoc operator-tooling rotation
+// pattern (Python .env rewrite + container env-recreate) doesn't otherwise
+// emit. Future operator rotations also surface here on next boot.
+//
+// Returns { mints, revokes, binds, unbinds, total_emitted } for caller
+// logging / observability. Safe to call from app boot OR from a manual
+// /api/v1/ops endpoint if needed (future Phase 2 scope).
+
+function computeCredentialFingerprintSet({ apiKeysString, tokenBindingsString, hostIngesterBindingsString }) {
+  // Parse the env-strings into normalized fingerprint sets.
+  // sha256[:16] is the cluster-canonical fingerprint (per
+  // feedback_token_fingerprint_hash_method_canon).
+  const crypto = require('crypto');
+  function shaPrefix(token) {
+    return crypto.createHash('sha256').update(token, 'utf-8').digest('hex').slice(0, 16);
+  }
+  // api_keys: comma-separated bearer tokens
+  const apiKeys = (apiKeysString || '')
+    .split(',')
+    .map(k => k.trim())
+    .filter(Boolean)
+    .map(shaPrefix);
+  // token_bindings: comma-separated agent_id:token pairs
+  function parseBindings(s) {
+    return (s || '')
+      .split(',')
+      .map(e => e.trim())
+      .filter(Boolean)
+      .map(entry => {
+        const idx = entry.indexOf(':');
+        if (idx <= 0 || idx === entry.length - 1) return null;
+        const key = entry.slice(0, idx).trim();
+        const tok = entry.slice(idx + 1).trim();
+        if (!key || !tok) return null;
+        return `${key}:${shaPrefix(tok)}`;
+      })
+      .filter(Boolean);
+  }
+  return {
+    api_keys: apiKeys.sort(),
+    token_bindings: parseBindings(tokenBindingsString).sort(),
+    host_bindings: parseBindings(hostIngesterBindingsString).sort(),
+  };
+}
+
+function diffCredentialFingerprintSets(prior, current) {
+  // Set-difference per category. Returns {mints, revokes, binds, unbinds}
+  // as arrays of fingerprint strings to emit.
+  function setDiff(a, b) {
+    const bSet = new Set(b);
+    return a.filter(x => !bSet.has(x));
+  }
+  const p = prior || { api_keys: [], token_bindings: [], host_bindings: [] };
+  return {
+    // api-key adds → mint events
+    mints: setDiff(current.api_keys, p.api_keys),
+    // api-key removes → revoke events
+    revokes: setDiff(p.api_keys, current.api_keys),
+    // binding adds (both token_bindings + host_bindings) → bind events
+    binds: [
+      ...setDiff(current.token_bindings, p.token_bindings).map(s => ({ kind: 'token', entry: s })),
+      ...setDiff(current.host_bindings, p.host_bindings).map(s => ({ kind: 'host', entry: s })),
+    ],
+    // binding removes → unbind events
+    unbinds: [
+      ...setDiff(p.token_bindings, current.token_bindings).map(s => ({ kind: 'token', entry: s })),
+      ...setDiff(p.host_bindings, current.host_bindings).map(s => ({ kind: 'host', entry: s })),
+    ],
+  };
+}
+
+function envDiffBootDetector({ apiKeysString, tokenBindingsString, hostIngesterBindingsString, actor = 'env-diff-boot-detector', now } = {}) {
+  const database = getDb();
+  const occurred_at = now || new Date().toISOString();
+  const current = computeCredentialFingerprintSet({
+    apiKeysString: apiKeysString != null ? apiKeysString : process.env.YAKLOG_API_KEYS,
+    tokenBindingsString: tokenBindingsString != null ? tokenBindingsString : process.env.YAKLOG_TOKEN_BINDINGS,
+    hostIngesterBindingsString: hostIngesterBindingsString != null ? hostIngesterBindingsString : process.env.YAKLOG_HOST_INGESTER_BINDINGS,
+  });
+  const priorRow = database.prepare('SELECT snapshot_json FROM credential_state_snapshot WHERE id = 1').get();
+  let prior = null;
+  if (priorRow) {
+    try { prior = JSON.parse(priorRow.snapshot_json); } catch (e) { prior = null; }
+  }
+  const isFirstBoot = !prior;
+  const diff = diffCredentialFingerprintSets(prior, current);
+
+  // On first boot, do NOT emit "mint" events for every existing token —
+  // that's a false-positive (those tokens were minted historically, not
+  // at this boot). Just persist the snapshot + return zero-count.
+  if (isFirstBoot) {
+    database.prepare(`
+      INSERT INTO credential_state_snapshot (id, snapshot_json, updated_at)
+      VALUES (1, @snapshot_json, @updated_at)
+    `).run({ snapshot_json: JSON.stringify(current), updated_at: occurred_at });
+    return {
+      first_boot: true,
+      api_keys_count: current.api_keys.length,
+      token_bindings_count: current.token_bindings.length,
+      host_bindings_count: current.host_bindings.length,
+      mints: 0, revokes: 0, binds: 0, unbinds: 0, total_emitted: 0,
+    };
+  }
+
+  let emitted = 0;
+  // Emit mint events
+  for (const fp of diff.mints) {
+    try {
+      insertAuditCredentialChange({
+        occurred_at,
+        credential_class: 'api-key',
+        agent_id: null,
+        change_type: 'mint',
+        actor,
+        prior_digest: null,
+        new_digest: fp,
+        reason: 'env-diff boot detector: api-key added since prior snapshot'
+      });
+      emitted++;
+    } catch (e) { /* never block boot */ }
+  }
+  // Emit revoke events
+  for (const fp of diff.revokes) {
+    try {
+      insertAuditCredentialChange({
+        occurred_at,
+        credential_class: 'api-key',
+        agent_id: null,
+        change_type: 'revoke',
+        actor,
+        prior_digest: fp,
+        new_digest: null,
+        reason: 'env-diff boot detector: api-key removed since prior snapshot'
+      });
+      emitted++;
+    } catch (e) { /* never block boot */ }
+  }
+  // Emit bind events
+  for (const b of diff.binds) {
+    const [agent_id, fp] = b.entry.split(':');
+    try {
+      insertAuditCredentialChange({
+        occurred_at,
+        credential_class: b.kind === 'host' ? 'host-ingester-binding' : 'sender-binding',
+        agent_id: b.kind === 'host' ? null : agent_id,
+        change_type: 'bind',
+        actor,
+        prior_digest: null,
+        new_digest: fp,
+        reason: b.kind === 'host'
+          ? `env-diff boot detector: host-ingester binding added (host=${agent_id})`
+          : `env-diff boot detector: sender binding added (agent_id=${agent_id})`
+      });
+      emitted++;
+    } catch (e) { /* never block boot */ }
+  }
+  // Emit unbind events
+  for (const b of diff.unbinds) {
+    const [agent_id, fp] = b.entry.split(':');
+    try {
+      insertAuditCredentialChange({
+        occurred_at,
+        credential_class: b.kind === 'host' ? 'host-ingester-binding' : 'sender-binding',
+        agent_id: b.kind === 'host' ? null : agent_id,
+        change_type: 'unbind',
+        actor,
+        prior_digest: fp,
+        new_digest: null,
+        reason: b.kind === 'host'
+          ? `env-diff boot detector: host-ingester binding removed (host=${agent_id})`
+          : `env-diff boot detector: sender binding removed (agent_id=${agent_id})`
+      });
+      emitted++;
+    } catch (e) { /* never block boot */ }
+  }
+
+  // Persist the new snapshot.
+  database.prepare(`
+    INSERT OR REPLACE INTO credential_state_snapshot (id, snapshot_json, updated_at)
+    VALUES (1, @snapshot_json, @updated_at)
+  `).run({ snapshot_json: JSON.stringify(current), updated_at: occurred_at });
+
+  return {
+    first_boot: false,
+    mints: diff.mints.length,
+    revokes: diff.revokes.length,
+    binds: diff.binds.length,
+    unbinds: diff.unbinds.length,
+    total_emitted: emitted,
+  };
+}
+
 module.exports = {
   initializeDb,
   insertMessage,
@@ -2179,6 +2394,10 @@ module.exports = {
   insertAuditFileAccess,
   listAuditFileAccess,
   insertAuditCredentialChange,
+  // CP12.7 Phase B: env-diff boot detector + supporting pure functions for tests
+  envDiffBootDetector,
+  computeCredentialFingerprintSet,
+  diffCredentialFingerprintSets,
   listAuditCredentialChanges,
   insertAuditPermissionChange,
   listAuditPermissionChanges,

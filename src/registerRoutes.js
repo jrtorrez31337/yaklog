@@ -28,7 +28,8 @@ const {
   getRegistration,
   getRegistrationByAgent,
   insertRegistrationEvent,
-  updateRegistration
+  updateRegistration,
+  insertAuditCredentialChange
 } = require('./db');
 const { enforceRegistrantToken } = require('./middleware/registrantToken');
 const { enforceOpsKey } = require('./middleware/opsKey');
@@ -326,6 +327,20 @@ router.post('/:id/jon-ratify', auth, (req, res) => {
     registrant_pubkey_sha256_prefix: shaPrefix(reg.registrant_pubkey),
     metadata: { jon_direct_quote }
   });
+  // CP12.7 Phase A: emit audit_credential_change for the mint event.
+  // Feeds CC6 (Logical & Physical Access Controls) Attestation status.
+  try {
+    insertAuditCredentialChange({
+      occurred_at: now,
+      credential_class: 'agent-bearer',
+      agent_id: reg.agent_id,
+      change_type: 'mint',
+      actor: req.authedSender,
+      prior_digest: null,
+      new_digest: mintedTokenHash.slice(0, 16),
+      reason: `jon-ratify mint via /register/${req.params.id}`
+    });
+  } catch (e) { /* audit emit must never block the state-transition */ }
   return res.status(200).json({ registration: publicRegistrationView(updated) });
 });
 
@@ -389,6 +404,20 @@ router.post('/:id/activate', (req, res) => {
     token_sha256_prefix: reg.minted_token_hash.slice(0, 16),
     metadata: { from_ip: req.ip }
   });
+  // CP12.7 Phase A: emit audit_credential_change for the activate transition.
+  // Token transitions from latent-ciphertext to actively-bound; CC6 signal.
+  try {
+    insertAuditCredentialChange({
+      occurred_at: now,
+      credential_class: 'agent-bearer',
+      agent_id: reg.agent_id,
+      change_type: 'activate',
+      actor: reg.agent_id,
+      prior_digest: null,
+      new_digest: reg.minted_token_hash.slice(0, 16),
+      reason: `activate via /register/${req.params.id} (PENDING_ACTIVATION → ACTIVE)`
+    });
+  } catch (e) { /* audit emit must never block the state-transition */ }
   return res.status(200).json({
     registration: publicRegistrationView(updated),
     note: 'Registration ACTIVE. Your minted token is now usable for normal yaklog API calls (no env config needed; server validates via dual-source DB-lookup).'
@@ -432,6 +461,21 @@ router.post('/:id/revoke', auth, (req, res) => {
     actor: req.authedSender,
     metadata: { reason }
   });
+  // CP12.7 Phase A: emit audit_credential_change for the revoke event.
+  // prior_digest = the now-revoked minted_token_hash (captured before update
+  // cleared it). CC6 signal.
+  try {
+    insertAuditCredentialChange({
+      occurred_at: now,
+      credential_class: 'agent-bearer',
+      agent_id: reg.agent_id,
+      change_type: 'revoke',
+      actor: req.authedSender,
+      prior_digest: reg.minted_token_hash ? reg.minted_token_hash.slice(0, 16) : null,
+      new_digest: null,
+      reason: `revoke via /register/${req.params.id}: ${reason}`.slice(0, 200)
+    });
+  } catch (e) { /* audit emit must never block the state-transition */ }
   return res.status(200).json({ registration: publicRegistrationView(updated) });
 });
 

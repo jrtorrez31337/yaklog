@@ -15,9 +15,31 @@ const auditOpsRoutes = require('./auditOpsRoutes');     // CP12.2 (ADR-0030 §5.
 const auditIngesterRoutes = require('./auditIngesterRoutes'); // CP12.5 (ADR-0030 Phase 1.5.S)
 const auth = require('./middleware/auth');
 const { opsKeyAuditMiddleware } = require('./middleware/opsKeyAudit'); // CP12.2 admin R1 fold
-const { initializeDb, listPresence, getGlobalHwm } = require('./db');
+const { initializeDb, listPresence, getGlobalHwm, envDiffBootDetector } = require('./db');
 
 initializeDb();
+
+// CP12.7 Phase B: env-diff boot detector. Compares current env state
+// (YAKLOG_API_KEYS + YAKLOG_TOKEN_BINDINGS + YAKLOG_HOST_INGESTER_BINDINGS
+// sha256[:16] fingerprints) to the persisted credential_state_snapshot.
+// Emits audit_credential_change rows for each diff (mint/revoke/bind/unbind)
+// so retroactive operator-rotations land in CC6 Attestation status.
+// First boot post-migration: persists baseline; emits zero (no false-positive
+// "mint" events for tokens that pre-existed the detector).
+if (process.env.NODE_ENV !== 'test' && process.env.YAKLOG_ENV_DIFF_DETECTOR_DISABLED !== '1') {
+  try {
+    const result = envDiffBootDetector();
+    if (result.first_boot) {
+      console.log('[env-diff-detector] first-boot baseline persisted: ' +
+        `api_keys=${result.api_keys_count} token_bindings=${result.token_bindings_count} host_bindings=${result.host_bindings_count}`);
+    } else {
+      console.log(`[env-diff-detector] diff vs prior snapshot: mints=${result.mints} revokes=${result.revokes} ` +
+        `binds=${result.binds} unbinds=${result.unbinds} total_emitted=${result.total_emitted}`);
+    }
+  } catch (e) {
+    console.error('[env-diff-detector] failed:', e.message);
+  }
+}
 
 // CP11.2 (2026-06-04): cost-history rollup scheduling per ratified ADR-0029.
 // Skipped in test env (tests mock Prom; don't want timer-noise interfering).
