@@ -34,6 +34,7 @@ const {
   insertAuditReconciliation,
   tombstoneAuditPayload,
   tombstoneSubject,
+  processPermissionScan,
 } = require('./db');
 
 const router = express.Router();
@@ -272,6 +273,36 @@ router.post('/audit/tombstone', (req, res) => {
     // and "not found" is a 4xx either way.
     if (/not found or already tombstoned/i.test(msg)) return conflict(res, msg);
     return internal(res, msg);
+  }
+});
+
+// CP12.8 Phase 2 admin-R4 source-coverage: permission-change scan endpoint.
+//
+// Scanner script (scripts/permission-change-scanner.sh) runs on the host
+// with filesystem visibility the container lacks; POSTs the discovered
+// source-fingerprint set here. Server-side diff + emit + snapshot-persist
+// is in processPermissionScan().
+//
+// Body: { sources: [{ source_class, source_path, agent_id, fingerprint }] }
+// Response: { ok, first_scan, adds, modifies, removes, total_emitted }
+router.post('/audit/permission-change/scan', (req, res) => {
+  const actor = computeActor(req);
+  const body = req.body || {};
+  if (!Array.isArray(body.sources)) {
+    return badRequest(res, 'sources array required');
+  }
+  if (body.sources.length > 10000) {
+    return badRequest(res, 'sources array too large (max 10000 per scan)');
+  }
+  try {
+    const result = processPermissionScan({
+      sources: body.sources,
+      actor,
+      scan_at: body.scan_at || undefined,
+    });
+    return res.json({ ok: true, ...result });
+  } catch (e) {
+    return internal(res, e.message || 'permission-change scan failed');
   }
 });
 

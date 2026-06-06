@@ -494,6 +494,23 @@ function initializeDb() {
     )
   `).run();
 
+  // CP12.8 Phase 2 admin-R4 source-coverage: permission_state_snapshot
+  // persists the last-seen fingerprint set of filesystem-resident
+  // permission sources (settings.local.json per agent, agent-specs.git
+  // HEAD, systemd overrides, ~/.ssh/authorized_keys, ~/.config/gh/hosts.yml).
+  // The scanner script (scripts/permission-change-scanner.sh) runs on the
+  // host (has filesystem visibility the container lacks), computes sha256[:16]
+  // per source path, POSTs to /api/v1/ops/audit/permission-change/scan;
+  // server does the diff + emit + snapshot-persist logic.
+  // snapshot_json shape: { sources: [{ source_class, source_path, agent_id, fingerprint }] }
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS permission_state_snapshot (
+      id            INTEGER PRIMARY KEY CHECK (id = 1),
+      snapshot_json TEXT NOT NULL,
+      updated_at    TEXT NOT NULL
+    )
+  `).run();
+
   // audit_permission_change — settings.local.json + agent-specs.git +
   // systemd overrides + ~/.ssh/authorized_keys + gh hosts (Phase 2 source-
   // coverage per admin R4 fold).
@@ -2345,6 +2362,137 @@ function envDiffBootDetector({ apiKeysString, tokenBindingsString, hostIngesterB
   };
 }
 
+// ─── CP12.8 Phase 2: permission-change scan processor ──────────────────────
+//
+// Accepts a scanner-provided list of {source_class, source_path, agent_id,
+// fingerprint} entries (sha256[:16] computed on the host); diffs against
+// permission_state_snapshot; emits audit_permission_change rows for adds /
+// modifies / removes; persists new snapshot.
+//
+// First-scan discipline mirrors CP12.7 Phase B envDiffBootDetector: persist
+// baseline silently (don't false-positive "add" every existing file).
+//
+// Each source row's identity is (source_class, source_path, agent_id).
+// Modify detection: same identity, different fingerprint.
+
+function diffPermissionSources(prior, current) {
+  function keyOf(s) { return `${s.source_class}|${s.source_path}|${s.agent_id}`; }
+  const priorMap = new Map((prior || []).map(s => [keyOf(s), s]));
+  const currMap = new Map(current.map(s => [keyOf(s), s]));
+  const adds = [];
+  const modifies = [];
+  const removes = [];
+  for (const [k, s] of currMap.entries()) {
+    if (!priorMap.has(k)) {
+      adds.push(s);
+    } else if (priorMap.get(k).fingerprint !== s.fingerprint) {
+      const prev = priorMap.get(k);
+      modifies.push({ ...s, prior_fingerprint: prev.fingerprint });
+    }
+  }
+  for (const [k, s] of priorMap.entries()) {
+    if (!currMap.has(k)) removes.push(s);
+  }
+  return { adds, modifies, removes };
+}
+
+function processPermissionScan({ sources, actor, scan_at } = {}) {
+  if (!Array.isArray(sources)) {
+    throw new Error('processPermissionScan: sources array required');
+  }
+  if (!actor || typeof actor !== 'string') {
+    throw new Error('processPermissionScan: actor (ops-key sha256[:16] OR script-id) required');
+  }
+  // Validate source-row shape; reject malformed entries to keep the
+  // snapshot table clean. Tolerate but log unknown source_classes.
+  const validClasses = new Set([
+    'settings.local.json',
+    'agent-specs.git-head',
+    'systemd-override',
+    'authorized_keys',
+    'gh-hosts.yml',
+  ]);
+  const validated = sources.filter(s =>
+    s && typeof s.source_class === 'string' && validClasses.has(s.source_class)
+    && typeof s.source_path === 'string' && s.source_path.length > 0
+    && typeof s.agent_id === 'string' && s.agent_id.length > 0
+    && typeof s.fingerprint === 'string' && /^[0-9a-f]{16}$/.test(s.fingerprint)
+  );
+  if (validated.length !== sources.length) {
+    console.warn(`[permission-scan] dropped ${sources.length - validated.length} malformed source rows`);
+  }
+
+  const database = getDb();
+  const occurred_at = scan_at || new Date().toISOString();
+  const priorRow = database.prepare('SELECT snapshot_json FROM permission_state_snapshot WHERE id = 1').get();
+  let prior = null;
+  if (priorRow) {
+    try { prior = JSON.parse(priorRow.snapshot_json).sources; } catch (e) { prior = null; }
+  }
+  const isFirstScan = !prior;
+
+  if (isFirstScan) {
+    database.prepare(`
+      INSERT INTO permission_state_snapshot (id, snapshot_json, updated_at)
+      VALUES (1, @snapshot_json, @updated_at)
+    `).run({
+      snapshot_json: JSON.stringify({ sources: validated }),
+      updated_at: occurred_at
+    });
+    return {
+      first_scan: true,
+      sources_count: validated.length,
+      adds: 0, modifies: 0, removes: 0, total_emitted: 0,
+    };
+  }
+
+  const diff = diffPermissionSources(prior, validated);
+  let emitted = 0;
+  function safeEmit(row) {
+    try { insertAuditPermissionChange(row); emitted++; } catch (e) { /* never block scan */ }
+  }
+  for (const s of diff.adds) {
+    safeEmit({
+      occurred_at, agent_id: s.agent_id, change_type: 'add', actor,
+      rule_text: `${s.source_class}:${s.fingerprint}`,
+      source_path: s.source_path,
+      reason: `permission-scan: ${s.source_class} added`
+    });
+  }
+  for (const s of diff.modifies) {
+    safeEmit({
+      occurred_at, agent_id: s.agent_id, change_type: 'modify', actor,
+      rule_text: `${s.source_class}:${s.fingerprint}`,
+      source_path: s.source_path,
+      reason: `permission-scan: ${s.source_class} modified (prior ${s.prior_fingerprint} → ${s.fingerprint})`
+    });
+  }
+  for (const s of diff.removes) {
+    safeEmit({
+      occurred_at, agent_id: s.agent_id, change_type: 'remove', actor,
+      rule_text: `${s.source_class}:${s.fingerprint}`,
+      source_path: s.source_path,
+      reason: `permission-scan: ${s.source_class} removed`
+    });
+  }
+
+  database.prepare(`
+    INSERT OR REPLACE INTO permission_state_snapshot (id, snapshot_json, updated_at)
+    VALUES (1, @snapshot_json, @updated_at)
+  `).run({
+    snapshot_json: JSON.stringify({ sources: validated }),
+    updated_at: occurred_at
+  });
+
+  return {
+    first_scan: false,
+    adds: diff.adds.length,
+    modifies: diff.modifies.length,
+    removes: diff.removes.length,
+    total_emitted: emitted,
+  };
+}
+
 module.exports = {
   initializeDb,
   insertMessage,
@@ -2398,6 +2546,9 @@ module.exports = {
   envDiffBootDetector,
   computeCredentialFingerprintSet,
   diffCredentialFingerprintSets,
+  // CP12.8 Phase 2 admin-R4: permission-change scan processor + pure diff
+  processPermissionScan,
+  diffPermissionSources,
   listAuditCredentialChanges,
   insertAuditPermissionChange,
   listAuditPermissionChanges,
