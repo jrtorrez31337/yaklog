@@ -36,6 +36,11 @@ const {
   RECONCILE_CLASS_VOCAB,
   // CP12.17 Phase 2 ADR change-history bus-message-ID cross-reference
   findMessageIdsReferencingAdr,
+  // CP12.12 Phase 3 (A) external integrity anchor
+  ANCHOR_SUBSTRATE_VOCAB,
+  listAuditAnchors,
+  getAuditAnchorByDay,
+  verifyAuditAnchor,
 } = require('./db');
 
 const costQuery = require('./costQuery');
@@ -846,6 +851,70 @@ router.get('/audit/adr-change-history', (req, res) => {
     }
 
     return res.json({ repo, limit, count: adrCommits.length, commits: adrCommits });
+  } catch (e) {
+    return safeError(res, e);
+  }
+});
+
+// ──────────────────────────────────────────────────────────────────────────
+// CP12.12 Phase 3 (A) external integrity anchor — public read endpoints
+// per parch #7984 OQ-3.3 (public access). Auditors verify without ops-key
+// issuance, matching the existing /audit/by-control-area pattern.
+// ──────────────────────────────────────────────────────────────────────────
+
+// 15. GET /audit/anchors — list anchors (paginated by anchor_day DESC)
+router.get('/audit/anchors', (req, res) => {
+  try {
+    const from = req.query.from ? String(req.query.from) : undefined;
+    const to = req.query.to ? String(req.query.to) : undefined;
+    const anchor_substrate = req.query.anchor_substrate ? String(req.query.anchor_substrate) : undefined;
+    if (anchor_substrate && !ANCHOR_SUBSTRATE_VOCAB.has(anchor_substrate)) {
+      return badRequest(res, `anchor_substrate must be one of ${[...ANCHOR_SUBSTRATE_VOCAB].join('|')}`);
+    }
+    const rows = listAuditAnchors({
+      from, to, anchor_substrate,
+      limit: clampLimit(req.query.limit, 100, 365),
+    });
+    return res.json({ rows, count: rows.length });
+  } catch (e) {
+    return safeError(res, e);
+  }
+});
+
+// 16. GET /audit/anchor/:day — fetch single-day anchor record(s)
+router.get('/audit/anchor/:day', (req, res) => {
+  try {
+    const day = String(req.params.day);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+      return badRequest(res, 'day must be YYYY-MM-DD');
+    }
+    const anchor_substrate = req.query.anchor_substrate ? String(req.query.anchor_substrate) : undefined;
+    const result = getAuditAnchorByDay(day, anchor_substrate);
+    if (!result || (Array.isArray(result) && result.length === 0)) {
+      return notFound(res, `no anchor found for day ${day}`);
+    }
+    if (Array.isArray(result)) {
+      return res.json({ day, anchors: result, count: result.length });
+    }
+    return res.json(result);
+  } catch (e) {
+    return safeError(res, e);
+  }
+});
+
+// 17. GET /audit/anchor-verify?day=YYYY-MM-DD[&anchor_substrate=...]
+router.get('/audit/anchor-verify', (req, res) => {
+  try {
+    const day = req.query.day ? String(req.query.day) : null;
+    if (!day || !/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+      return badRequest(res, 'day query parameter required (YYYY-MM-DD)');
+    }
+    const anchor_substrate = req.query.anchor_substrate ? String(req.query.anchor_substrate) : undefined;
+    if (anchor_substrate && !ANCHOR_SUBSTRATE_VOCAB.has(anchor_substrate)) {
+      return badRequest(res, `anchor_substrate must be one of ${[...ANCHOR_SUBSTRATE_VOCAB].join('|')}`);
+    }
+    const result = verifyAuditAnchor(day, anchor_substrate);
+    return res.json(result);
   } catch (e) {
     return safeError(res, e);
   }

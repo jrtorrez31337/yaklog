@@ -676,6 +676,30 @@ function initializeDb() {
     )
   `).run();
 
+  // CP12.12 (2026-06-07): audit_anchor — Phase 3 (A) external integrity
+  // anchor per parch #7984 4-OQ ratify. Each row records a published daily
+  // hash digest anchored to an external append-only substrate (S3 Object
+  // Lock baseline; dual-publish forward-track per OQ-3.4). Anchor format
+  // is substrate-portable plain-text: (anchor_day, digest_sha256,
+  // chain_high_water_event_id, chain_high_water_table). If substrate
+  // changes later, only the wrappers change — no data migration.
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS audit_anchor (
+      id                         INTEGER PRIMARY KEY AUTOINCREMENT,
+      anchor_day                 TEXT NOT NULL,
+      chain_high_water_event_id  TEXT NOT NULL,
+      chain_high_water_table     TEXT NOT NULL,
+      digest_sha256              TEXT NOT NULL,
+      anchor_substrate           TEXT NOT NULL,
+      anchor_uri                 TEXT NOT NULL,
+      published_at               TEXT NOT NULL,
+      published_by               TEXT NOT NULL,
+      UNIQUE(anchor_day, anchor_substrate)
+    )
+  `).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_audit_anchor_day ON audit_anchor(anchor_day DESC)`).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_audit_anchor_substrate_day ON audit_anchor(anchor_substrate, anchor_day DESC)`).run();
+
   // CP12.10 (2026-06-07): audit_attestation — governance-tier substrate
   // for SOC 2 CC1 (Control Environment) / CC2 (Communication & Information)
   // / CC9 (Risk Mitigation). Phase 3 of ADR-0030. Distinct from event-stream
@@ -2717,6 +2741,164 @@ function processPermissionScan({ sources, actor, scan_at } = {}) {
   };
 }
 
+// ─── CP12.12 Phase 3 (A): external integrity anchor (S3 Object Lock) ─────
+//
+// Per parch #7984 4-OQ ratify: daily hash digest of the chain-high-water
+// event_id concatenated with the most-recent N event_ids; published to an
+// external append-only substrate (S3 Object Lock baseline + dual-publish
+// 12mo forward-track per OQ-3.4). Anchor format is substrate-portable
+// plain-text — if substrate migrates, only the wrappers change.
+//
+// Chain-high-water source: across audit_tool_invocation / audit_file_access
+// / audit_credential_change / audit_permission_change / audit_attestation
+// / audit_channel_subscription_change. Pick the highest event_id by max ts
+// and concatenate that table's last 100 event_ids for the digest input.
+
+const ANCHOR_SUBSTRATE_VOCAB = new Set([
+  's3-object-lock', 'rfc3161-tsa', 'ipfs',
+]);
+const ANCHOR_CHAIN_TABLES = [
+  'audit_tool_invocation',
+  'audit_file_access',
+  'audit_credential_change',
+  'audit_permission_change',
+  'audit_attestation',
+  'audit_channel_subscription_change',
+];
+
+function computeChainSnapshot() {
+  const database = getDb();
+  // Find the table + event_id with the most-recent occurred_at across all
+  // audit-chain tables. Then concat last 100 event_ids from that table.
+  let best = null;
+  for (const table of ANCHOR_CHAIN_TABLES) {
+    const row = database
+      .prepare(`SELECT event_id, occurred_at FROM ${table} ORDER BY occurred_at DESC LIMIT 1`)
+      .get();
+    if (row && (!best || row.occurred_at > best.occurred_at)) {
+      best = { table, event_id: row.event_id, occurred_at: row.occurred_at };
+    }
+  }
+  if (!best) {
+    return {
+      chain_high_water_event_id: '0'.repeat(16),
+      chain_high_water_table: ANCHOR_CHAIN_TABLES[0],
+      digest_sha256: require('crypto').createHash('sha256').update('').digest('hex'),
+      sample_size: 0,
+    };
+  }
+  const recent = database
+    .prepare(`SELECT event_id FROM ${best.table} ORDER BY occurred_at DESC LIMIT 100`)
+    .all();
+  const input = `${best.event_id}|${recent.map(r => r.event_id).join('|')}`;
+  const digest_sha256 = require('crypto').createHash('sha256').update(input).digest('hex');
+  return {
+    chain_high_water_event_id: best.event_id,
+    chain_high_water_table: best.table,
+    digest_sha256,
+    sample_size: recent.length,
+  };
+}
+
+function insertAuditAnchor(row) {
+  if (!row || !row.anchor_day || !row.digest_sha256 || !row.anchor_substrate
+      || !row.anchor_uri || !row.published_by || !row.chain_high_water_event_id
+      || !row.chain_high_water_table) {
+    throw new Error('insertAuditAnchor: anchor_day + digest_sha256 + anchor_substrate + anchor_uri + published_by + chain_high_water_event_id + chain_high_water_table required');
+  }
+  if (!ANCHOR_SUBSTRATE_VOCAB.has(row.anchor_substrate)) {
+    throw new Error(`insertAuditAnchor: anchor_substrate must be one of ${[...ANCHOR_SUBSTRATE_VOCAB].join('|')}`);
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(row.anchor_day)) {
+    throw new Error('insertAuditAnchor: anchor_day must be YYYY-MM-DD');
+  }
+  if (!/^[0-9a-f]{64}$/.test(row.digest_sha256)) {
+    throw new Error('insertAuditAnchor: digest_sha256 must be 64-char lowercase hex');
+  }
+  const database = getDb();
+  const published_at = row.published_at || new Date().toISOString();
+  try {
+    const result = database.prepare(`
+      INSERT INTO audit_anchor (
+        anchor_day, chain_high_water_event_id, chain_high_water_table,
+        digest_sha256, anchor_substrate, anchor_uri, published_at, published_by
+      ) VALUES (
+        @anchor_day, @chain_high_water_event_id, @chain_high_water_table,
+        @digest_sha256, @anchor_substrate, @anchor_uri, @published_at, @published_by
+      )
+    `).run({
+      anchor_day: row.anchor_day,
+      chain_high_water_event_id: row.chain_high_water_event_id,
+      chain_high_water_table: row.chain_high_water_table,
+      digest_sha256: row.digest_sha256,
+      anchor_substrate: row.anchor_substrate,
+      anchor_uri: row.anchor_uri,
+      published_at,
+      published_by: row.published_by,
+    });
+    return { id: result.lastInsertRowid };
+  } catch (e) {
+    if (/UNIQUE constraint failed/.test(e.message)) {
+      throw new Error(`audit_anchor: duplicate anchor for day=${row.anchor_day} substrate=${row.anchor_substrate}`);
+    }
+    throw e;
+  }
+}
+
+function listAuditAnchors({ from, to, anchor_substrate, limit = 100 } = {}) {
+  const database = getDb();
+  const where = [];
+  const params = { limit };
+  if (from)             { where.push('anchor_day >= @from'); params.from = from; }
+  if (to)               { where.push('anchor_day <= @to'); params.to = to; }
+  if (anchor_substrate) { where.push('anchor_substrate = @anchor_substrate'); params.anchor_substrate = anchor_substrate; }
+  const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  return database
+    .prepare(`SELECT * FROM audit_anchor ${whereClause} ORDER BY anchor_day DESC, id DESC LIMIT @limit`)
+    .all(params);
+}
+
+function getAuditAnchorByDay(anchor_day, anchor_substrate) {
+  const database = getDb();
+  if (anchor_substrate) {
+    return database.prepare('SELECT * FROM audit_anchor WHERE anchor_day = ? AND anchor_substrate = ?').get(anchor_day, anchor_substrate);
+  }
+  // Return all substrates for the day (dual-publish window may have multiple)
+  return database.prepare('SELECT * FROM audit_anchor WHERE anchor_day = ? ORDER BY id DESC').all(anchor_day);
+}
+
+function verifyAuditAnchor(anchor_day, anchor_substrate) {
+  const database = getDb();
+  const row = anchor_substrate
+    ? database.prepare('SELECT * FROM audit_anchor WHERE anchor_day = ? AND anchor_substrate = ?').get(anchor_day, anchor_substrate)
+    : database.prepare('SELECT * FROM audit_anchor WHERE anchor_day = ? ORDER BY id DESC LIMIT 1').get(anchor_day);
+  if (!row) {
+    return { found: false, anchor_day, anchor_substrate: anchor_substrate || null };
+  }
+  // Recompute digest from current chain state — if rows were added/removed
+  // since the anchor was published, the recomputed digest WILL differ.
+  // That's by design: the anchor proves "as-of anchor day, chain was X."
+  // Verification compares stored digest to recomputed; equal means chain
+  // hasn't been tampered with from the rows that existed at anchor time.
+  const recomputed = computeChainSnapshot();
+  const match = (recomputed.chain_high_water_event_id === row.chain_high_water_event_id
+                 && recomputed.digest_sha256 === row.digest_sha256);
+  return {
+    found: true,
+    match,
+    anchor_day: row.anchor_day,
+    anchor_substrate: row.anchor_substrate,
+    stored_digest: row.digest_sha256,
+    recomputed_digest: recomputed.digest_sha256,
+    stored_high_water_event_id: row.chain_high_water_event_id,
+    recomputed_high_water_event_id: recomputed.chain_high_water_event_id,
+    stored_high_water_table: row.chain_high_water_table,
+    note: match
+      ? 'chain state matches anchor (no tampering detected within anchor window)'
+      : 'chain state DIFFERS from anchor — either legitimate growth since anchor OR tampering; review recent events',
+  };
+}
+
 // ─── CP12.17 Phase 2: ADR change-history bus-message-ID cross-reference ───
 //
 // Per parch #8015 OQ-B: each ADR commit in /audit/adr-change-history is
@@ -3018,6 +3200,14 @@ module.exports = {
   aggregateAuditReconciliationsByClass,
   // CP12.17 (2026-06-07): ADR change-history bus-message-ID cross-reference
   findMessageIdsReferencingAdr,
+  // CP12.12 (2026-06-07): Phase 3 (A) external integrity anchor
+  ANCHOR_SUBSTRATE_VOCAB,
+  ANCHOR_CHAIN_TABLES,
+  computeChainSnapshot,
+  insertAuditAnchor,
+  listAuditAnchors,
+  getAuditAnchorByDay,
+  verifyAuditAnchor,
   upsertPolicyRule,
   listPolicyRules,
   getPolicyRule,

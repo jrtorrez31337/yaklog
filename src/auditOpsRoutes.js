@@ -39,6 +39,10 @@ const {
   ATTESTATION_CONTROL_AREAS,
   processChannelSubscriptionScan,
   RECONCILE_CLASS_VOCAB,
+  // CP12.12 Phase 3 (A) external integrity anchor
+  computeChainSnapshot,
+  insertAuditAnchor,
+  ANCHOR_SUBSTRATE_VOCAB,
 } = require('./db');
 
 const router = express.Router();
@@ -388,6 +392,60 @@ router.post('/audit/channel-subscription/scan', (req, res) => {
     return res.json({ ok: true, ...result });
   } catch (e) {
     return internal(res, e.message || 'channel-subscription scan failed');
+  }
+});
+
+// ─── CP12.12 Phase 3 (A) external integrity anchor: 2 ops endpoints ────────
+//
+// Cron-driver flow:
+//   1. GET /api/v1/ops/audit/anchor-snapshot
+//      → returns current chain-high-water digest + event_id + table
+//   2. (driver publishes digest to S3 Object Lock; receives anchor_uri)
+//   3. POST /api/v1/ops/audit/anchor-record with {anchor_day, anchor_uri,
+//      anchor_substrate, snapshot_fields...}
+//      → server persists audit_anchor row
+//
+// Verify uses public read endpoints (per parch #7984 OQ-3.3 public access).
+
+router.post('/audit/anchor-snapshot', (req, res) => {
+  try {
+    const snapshot = computeChainSnapshot();
+    return res.json({ ok: true, ...snapshot });
+  } catch (e) {
+    return internal(res, e.message || 'chain snapshot computation failed');
+  }
+});
+
+router.post('/audit/anchor-record', (req, res) => {
+  const b = req.body || {};
+  if (!b.anchor_day || !b.anchor_uri || !b.anchor_substrate
+      || !b.chain_high_water_event_id || !b.chain_high_water_table || !b.digest_sha256) {
+    return badRequest(res, 'anchor_day + anchor_uri + anchor_substrate + chain_high_water_event_id + chain_high_water_table + digest_sha256 required');
+  }
+  if (!ANCHOR_SUBSTRATE_VOCAB.has(b.anchor_substrate)) {
+    return badRequest(res, `anchor_substrate must be one of ${[...ANCHOR_SUBSTRATE_VOCAB].join('|')}`);
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(b.anchor_day)) {
+    return badRequest(res, 'anchor_day must be YYYY-MM-DD');
+  }
+  const actor = computeActor(req);
+  try {
+    const result = insertAuditAnchor({
+      anchor_day: b.anchor_day,
+      chain_high_water_event_id: b.chain_high_water_event_id,
+      chain_high_water_table: b.chain_high_water_table,
+      digest_sha256: b.digest_sha256,
+      anchor_substrate: b.anchor_substrate,
+      anchor_uri: b.anchor_uri,
+      published_at: b.published_at,
+      published_by: actor,
+    });
+    return res.json({ ok: true, ...result });
+  } catch (e) {
+    const msg = e.message || 'audit anchor insert failed';
+    if (/duplicate anchor/.test(msg)) return conflict(res, msg);
+    if (/must be|required/.test(msg)) return badRequest(res, msg);
+    return internal(res, msg);
   }
 });
 
