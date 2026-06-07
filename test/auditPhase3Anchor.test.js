@@ -214,6 +214,73 @@ test('verifyAuditAnchor: returns found:true with match/mismatch boolean', () => 
   assert.ok(r.recomputed_digest);
 });
 
+// CP12.12.1 (bizmodel #8029 + secops #8030): substrate-semantic Reading-2.
+// match must remain TRUE indefinitely even as new events land — verify
+// recomputes against events ≤ stored_high_water_event_id, not current tip.
+
+test('CP12.12.1 verifyAuditAnchor: match:true is reproducible after new events land', () => {
+  // Insert anchor against current state, then add new events, then verify.
+  const snap = computeChainSnapshot();
+  insertAuditAnchor({
+    anchor_day: '2026-04-25',
+    chain_high_water_event_id: snap.chain_high_water_event_id,
+    chain_high_water_table: snap.chain_high_water_table,
+    digest_sha256: snap.digest_sha256,
+    anchor_substrate: 's3-object-lock',
+    anchor_uri: 's3://test/2026/04/25/digest.txt',
+    published_by: 'a'.repeat(16),
+  });
+  // Add several new events (simulating cluster activity post-anchor)
+  for (let i = 0; i < 5; i++) {
+    insertAuditToolInvocation({
+      agent_id: 'cp12121-agent', tool_name: `Tool${i}`, tool_phase: 'pre', actor: 'cp12121-test',
+    });
+  }
+  const v = verifyAuditAnchor('2026-04-25', 's3-object-lock');
+  assert.equal(v.found, true);
+  assert.equal(v.match, true, 'verify MUST be reproducible after new events (Reading 2 substrate-semantic)');
+  assert.equal(v.tamper_detected, false);
+  assert.match(v.note, /no tampering/);
+});
+
+test('CP12.12.1 verifyAuditAnchor: tamper_detected:true when high-water event vanishes', () => {
+  // Construct anchor against a fake high-water that doesn't exist in chain
+  insertAuditAnchor({
+    anchor_day: '2026-04-26',
+    chain_high_water_event_id: 'deadbeef00000001',  // non-existent event_id
+    chain_high_water_table: 'audit_tool_invocation',
+    digest_sha256: 'a'.repeat(64),
+    anchor_substrate: 's3-object-lock',
+    anchor_uri: 's3://test/2026/04/26/digest.txt',
+    published_by: 'a'.repeat(16),
+  });
+  const v = verifyAuditAnchor('2026-04-26', 's3-object-lock');
+  assert.equal(v.found, true);
+  assert.equal(v.match, false);
+  assert.equal(v.tamper_detected, true);
+  assert.match(v.note, /TAMPER ALERT.*no longer present/);
+});
+
+test('CP12.12.1 verifyAuditAnchor: tamper_detected:true when digest mismatches at-anchor recompute', () => {
+  // Anchor with valid high-water but corrupted digest → recompute correctly
+  // surfaces digest mismatch (tamper signal).
+  const snap = computeChainSnapshot();
+  insertAuditAnchor({
+    anchor_day: '2026-04-27',
+    chain_high_water_event_id: snap.chain_high_water_event_id,
+    chain_high_water_table: snap.chain_high_water_table,
+    digest_sha256: 'b'.repeat(64),  // wrong digest
+    anchor_substrate: 's3-object-lock',
+    anchor_uri: 's3://test/2026/04/27/digest.txt',
+    published_by: 'a'.repeat(16),
+  });
+  const v = verifyAuditAnchor('2026-04-27', 's3-object-lock');
+  assert.equal(v.found, true);
+  assert.equal(v.match, false);
+  assert.equal(v.tamper_detected, true);
+  assert.match(v.note, /TAMPER ALERT.*DIFFERS/);
+});
+
 // ── HTTP endpoints — public read ────────────────────────────────────────────
 
 test('GET /audit/anchors: returns rows', async () => {

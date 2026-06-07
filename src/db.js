@@ -2867,6 +2867,42 @@ function getAuditAnchorByDay(anchor_day, anchor_substrate) {
   return database.prepare('SELECT * FROM audit_anchor WHERE anchor_day = ? ORDER BY id DESC').all(anchor_day);
 }
 
+// CP12.12.1 (2026-06-07): substrate-semantic fix per bizmodel #8029 + secops
+// #8030. Reading-1 (compare against current tip) always returned match:false
+// in live clusters after any new event lands — chain-tamper-detection was
+// non-operational. Fixed to Reading-2: recompute over events UP TO the
+// stored high-water mark, so a match:false unambiguously signals tamper.
+//
+// Audit tables are append-only per substrate canon, so the same bounded
+// event-set produces identical digest indefinitely. match:true is
+// reproducible at any future point; match:false means either:
+//   (a) high-water event_id no longer present (deletion / tamper), OR
+//   (b) digest over events≤high-water differs (event payload tamper)
+
+function computeChainSnapshotAt({ high_water_event_id, high_water_table }) {
+  if (!ANCHOR_CHAIN_TABLES.includes(high_water_table)) {
+    throw new Error(`computeChainSnapshotAt: high_water_table must be one of ${ANCHOR_CHAIN_TABLES.join('|')}`);
+  }
+  const database = getDb();
+  const hwRow = database
+    .prepare(`SELECT occurred_at FROM ${high_water_table} WHERE event_id = ?`)
+    .get(high_water_event_id);
+  if (!hwRow) {
+    return null;  // high-water event vanished → tamper signal
+  }
+  const recent = database
+    .prepare(`SELECT event_id FROM ${high_water_table} WHERE occurred_at <= ? ORDER BY occurred_at DESC LIMIT 100`)
+    .all(hwRow.occurred_at);
+  const input = `${high_water_event_id}|${recent.map(r => r.event_id).join('|')}`;
+  const digest_sha256 = require('crypto').createHash('sha256').update(input).digest('hex');
+  return {
+    chain_high_water_event_id: high_water_event_id,
+    chain_high_water_table: high_water_table,
+    digest_sha256,
+    sample_size: recent.length,
+  };
+}
+
 function verifyAuditAnchor(anchor_day, anchor_substrate) {
   const database = getDb();
   const row = anchor_substrate
@@ -2875,27 +2911,38 @@ function verifyAuditAnchor(anchor_day, anchor_substrate) {
   if (!row) {
     return { found: false, anchor_day, anchor_substrate: anchor_substrate || null };
   }
-  // Recompute digest from current chain state — if rows were added/removed
-  // since the anchor was published, the recomputed digest WILL differ.
-  // That's by design: the anchor proves "as-of anchor day, chain was X."
-  // Verification compares stored digest to recomputed; equal means chain
-  // hasn't been tampered with from the rows that existed at anchor time.
-  const recomputed = computeChainSnapshot();
-  const match = (recomputed.chain_high_water_event_id === row.chain_high_water_event_id
-                 && recomputed.digest_sha256 === row.digest_sha256);
+  const recomputed = computeChainSnapshotAt({
+    high_water_event_id: row.chain_high_water_event_id,
+    high_water_table: row.chain_high_water_table,
+  });
+  if (!recomputed) {
+    return {
+      found: true,
+      match: false,
+      tamper_detected: true,
+      anchor_day: row.anchor_day,
+      anchor_substrate: row.anchor_substrate,
+      stored_digest: row.digest_sha256,
+      stored_high_water_event_id: row.chain_high_water_event_id,
+      stored_high_water_table: row.chain_high_water_table,
+      note: 'TAMPER ALERT: stored high-water event_id no longer present in chain. Event may have been deleted post-anchor.',
+    };
+  }
+  const match = recomputed.digest_sha256 === row.digest_sha256;
   return {
     found: true,
     match,
+    tamper_detected: !match,
     anchor_day: row.anchor_day,
     anchor_substrate: row.anchor_substrate,
     stored_digest: row.digest_sha256,
     recomputed_digest: recomputed.digest_sha256,
     stored_high_water_event_id: row.chain_high_water_event_id,
-    recomputed_high_water_event_id: recomputed.chain_high_water_event_id,
     stored_high_water_table: row.chain_high_water_table,
+    sample_size: recomputed.sample_size,
     note: match
-      ? 'chain state matches anchor (no tampering detected within anchor window)'
-      : 'chain state DIFFERS from anchor — either legitimate growth since anchor OR tampering; review recent events',
+      ? 'chain state up to stored anchor matches anchor digest — no tampering detected'
+      : 'TAMPER ALERT: chain state up to stored anchor DIFFERS from anchor digest. Investigate immediately (event payload may have been modified post-anchor).',
   };
 }
 
@@ -3204,6 +3251,8 @@ module.exports = {
   ANCHOR_SUBSTRATE_VOCAB,
   ANCHOR_CHAIN_TABLES,
   computeChainSnapshot,
+  // CP12.12.1: substrate-semantic verify (Reading 2 per bizmodel #8029)
+  computeChainSnapshotAt,
   insertAuditAnchor,
   listAuditAnchors,
   getAuditAnchorByDay,
