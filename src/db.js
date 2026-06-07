@@ -1868,6 +1868,61 @@ function listRegistrationEvents(registration_id) {
   ).all(registration_id);
 }
 
+// CP12.13 Phase 2 aggregate views over existing substrate.
+
+function listRegistrationEventsByAgent(agent_id, { from, to, limit = 200 } = {}) {
+  const database = getDb();
+  const where = ['agent_id = @agent_id'];
+  const params = { agent_id, limit };
+  if (from) { where.push('ts >= @from'); params.from = from; }
+  if (to)   { where.push('ts <= @to'); params.to = to; }
+  return database.prepare(`
+    SELECT event_id, registration_id, agent_id, ts, event_type, actor,
+           ciphertext_sha256_prefix, token_sha256_prefix, registrant_pubkey_sha256_prefix
+    FROM registration_events
+    WHERE ${where.join(' AND ')}
+    ORDER BY ts DESC, rowid DESC
+    LIMIT @limit
+  `).all(params);
+}
+
+function aggregateRegistrationEventsByAgent({ from, to } = {}) {
+  const database = getDb();
+  const where = [];
+  const params = {};
+  if (from) { where.push('ts >= @from'); params.from = from; }
+  if (to)   { where.push('ts <= @to'); params.to = to; }
+  const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  return database.prepare(`
+    SELECT agent_id, event_type, COUNT(*) as count
+    FROM registration_events
+    ${whereClause}
+    GROUP BY agent_id, event_type
+    ORDER BY agent_id, event_type
+  `).all(params);
+}
+
+const CREDENTIAL_AGG_GROUP_BY = new Set(['credential_class', 'change_type', 'actor']);
+
+function aggregateCredentialChanges({ from, to, group_by = 'credential_class' } = {}) {
+  if (!CREDENTIAL_AGG_GROUP_BY.has(group_by)) {
+    throw new Error(`aggregateCredentialChanges: group_by must be one of ${[...CREDENTIAL_AGG_GROUP_BY].join('|')}`);
+  }
+  const database = getDb();
+  const where = [];
+  const params = {};
+  if (from) { where.push('occurred_at >= @from'); params.from = from; }
+  if (to)   { where.push('occurred_at <= @to'); params.to = to; }
+  const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  return database.prepare(`
+    SELECT ${group_by} AS bucket, COUNT(*) AS count
+    FROM audit_credential_change
+    ${whereClause}
+    GROUP BY ${group_by}
+    ORDER BY count DESC
+  `).all(params);
+}
+
 const PRESENCE_LABELS = {
   up: {
     active: 'online',
@@ -2600,6 +2655,10 @@ module.exports = {
   updateRegistration,
   insertRegistrationEvent,
   listRegistrationEvents,
+  // CP12.13 Phase 2 aggregate views
+  listRegistrationEventsByAgent,
+  aggregateRegistrationEventsByAgent,
+  aggregateCredentialChanges,
   expireStalePresence,
   deletePresenceRow,
   deriveLabel,

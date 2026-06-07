@@ -24,6 +24,10 @@ const {
   getPolicyRule,
   listPolicyViolations,
   listPresence,
+  // CP12.13 Phase 2 aggregate views
+  listRegistrationEventsByAgent,
+  aggregateRegistrationEventsByAgent,
+  aggregateCredentialChanges,
 } = require('./db');
 
 const costQuery = require('./costQuery');
@@ -598,6 +602,145 @@ router.get('/audit/export', (req, res) => {
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', `attachment; filename="audit-export-${period}.csv"`);
     return res.send([header.join(','), ...lines].join('\n') + '\n');
+  } catch (e) {
+    return safeError(res, e);
+  }
+});
+
+// ──────────────────────────────────────────────────────────────────────────
+// CP12.13 Phase 2 aggregate views — leverage existing substrate without new
+// table additions. Channel-subscription change history deferred to a
+// separate sub-cycle (substrate doesn't exist; needs Phase 2 substrate-
+// addition decision before aggregating).
+// ──────────────────────────────────────────────────────────────────────────
+
+// 11. GET /audit/registration-timeline?agent_id=<id>&from=&to=&limit=&period=
+router.get('/audit/registration-timeline', (req, res) => {
+  try {
+    const agent_id = req.query.agent_id ? String(req.query.agent_id) : null;
+    if (!agent_id) return badRequest(res, 'agent_id query parameter required');
+    const { from, to } = parseRange(req, { defaultPeriod: '30d' });
+    const limit = clampLimit(req.query.limit, 200, 1000);
+    // Substrate uses ISO `ts` column (not occurred_at) — same shape works since
+    // parseRange returns ISO bounds usable for lex-compare on ISO timestamps.
+    const events = listRegistrationEventsByAgent(agent_id, { from, to, limit });
+    // Derive state transitions (ascending order — events list is DESC by ts).
+    const asc = events.slice().reverse();
+    const transitions = asc.map((e, i) => ({
+      from: i > 0 ? asc[i - 1].event_type : null,
+      to: e.event_type,
+      ts: e.ts,
+      actor: e.actor,
+    }));
+    return res.json({ agent_id, from, to, count: events.length, events, transitions });
+  } catch (e) {
+    if (/unknown period/.test(e.message)) return badRequest(res, e.message);
+    return safeError(res, e);
+  }
+});
+
+// 12. GET /audit/registration-timeline-summary?from=&to=&period=
+router.get('/audit/registration-timeline-summary', (req, res) => {
+  try {
+    const { from, to } = parseRange(req, { defaultPeriod: '30d' });
+    const rows = aggregateRegistrationEventsByAgent({ from, to });
+    const byAgent = new Map();
+    for (const r of rows) {
+      let entry = byAgent.get(r.agent_id);
+      if (!entry) {
+        entry = { agent_id: r.agent_id, by_event_type: {}, total: 0 };
+        byAgent.set(r.agent_id, entry);
+      }
+      entry.by_event_type[r.event_type] = r.count;
+      entry.total += r.count;
+    }
+    const agents = [...byAgent.values()].sort((a, b) => b.total - a.total);
+    return res.json({ from, to, agent_count: agents.length, agents });
+  } catch (e) {
+    if (/unknown period/.test(e.message)) return badRequest(res, e.message);
+    return safeError(res, e);
+  }
+});
+
+// 13. GET /audit/credential-rotation-aggregate?from=&to=&group_by=&period=
+router.get('/audit/credential-rotation-aggregate', (req, res) => {
+  try {
+    const { from, to } = parseRange(req, { defaultPeriod: '30d' });
+    const group_by = req.query.group_by ? String(req.query.group_by) : 'credential_class';
+    const ALLOWED = ['credential_class', 'change_type', 'actor'];
+    if (!ALLOWED.includes(group_by)) {
+      return badRequest(res, `group_by must be one of ${ALLOWED.join('|')}`);
+    }
+    const buckets = aggregateCredentialChanges({ from, to, group_by });
+    const total = buckets.reduce((s, b) => s + b.count, 0);
+    return res.json({ from, to, group_by, total, buckets });
+  } catch (e) {
+    if (/unknown period/.test(e.message)) return badRequest(res, e.message);
+    return safeError(res, e);
+  }
+});
+
+// 14. GET /audit/adr-change-history?repo=agent-specs|agent-globals&limit=
+//
+// Aggregate over bare-repo git-log. Filters commits that touched ADR
+// markdown files. Heuristic match: filename contains 'adr' (case-insensitive)
+// AND ends in .md.
+const ADR_REPO_ALLOWLIST = new Set(['agent-specs', 'agent-globals']);
+
+router.get('/audit/adr-change-history', (req, res) => {
+  try {
+    const repo = req.query.repo ? String(req.query.repo) : 'agent-specs';
+    if (!ADR_REPO_ALLOWLIST.has(repo)) {
+      return badRequest(res, `repo must be one of ${[...ADR_REPO_ALLOWLIST].join('|')}`);
+    }
+    const limit = clampLimit(req.query.limit, 100, 500);
+    const repoPath = `/srv/git/${repo}.git`;
+    const { execFileSync } = require('child_process');
+    let out = '';
+    try {
+      out = execFileSync('git', [
+        '-C', repoPath,
+        'log', '--all',
+        '--diff-filter=AM',
+        `-n`, String(limit * 3), // overscan: many commits won't touch ADRs
+        `--pretty=format:%H|%aI|%an|%s`,
+        '--name-only',
+      ], { encoding: 'utf8', maxBuffer: 4 * 1024 * 1024 });
+    } catch (gitErr) {
+      // Repo missing / not readable — return empty array with operator hint
+      return res.status(503).json({
+        error: 'GitUnavailable',
+        message: `bare repo ${repoPath} not accessible: ${gitErr.code || gitErr.message}`,
+        repo, commits: [], count: 0,
+      });
+    }
+    // Parse: header line "sha|iso|author|subject" followed by file paths until blank line.
+    const commits = [];
+    let current = null;
+    for (const raw of out.split('\n')) {
+      const line = raw.replace(/\r$/, '');
+      if (/^[0-9a-f]{40}\|/.test(line)) {
+        if (current && current.files.length > 0) commits.push(current);
+        const idx1 = line.indexOf('|');
+        const idx2 = line.indexOf('|', idx1 + 1);
+        const idx3 = line.indexOf('|', idx2 + 1);
+        current = {
+          sha: line.slice(0, idx1),
+          ts: line.slice(idx1 + 1, idx2),
+          author: line.slice(idx2 + 1, idx3),
+          subject: line.slice(idx3 + 1),
+          files: [],
+        };
+      } else if (line.trim() && current) {
+        const path = line.trim();
+        if (/\.md$/i.test(path) && /adr/i.test(path)) {
+          current.files.push(path);
+        }
+      }
+    }
+    if (current && current.files.length > 0) commits.push(current);
+    const adrCommits = commits.slice(0, limit);
+    return res.json({ repo, limit, count: adrCommits.length, commits: adrCommits });
   } catch (e) {
     return safeError(res, e);
   }
