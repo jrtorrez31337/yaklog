@@ -35,6 +35,8 @@ const {
   tombstoneAuditPayload,
   tombstoneSubject,
   processPermissionScan,
+  insertAuditAttestation,
+  ATTESTATION_CONTROL_AREAS,
 } = require('./db');
 
 const router = express.Router();
@@ -303,6 +305,52 @@ router.post('/audit/permission-change/scan', (req, res) => {
     return res.json({ ok: true, ...result });
   } catch (e) {
     return internal(res, e.message || 'permission-change scan failed');
+  }
+});
+
+// CP12.10 Phase 3 governance-tier substrate (ADR-0030):
+// Operator-authored attestation for SOC 2 CC1 / CC2 / CC9 areas. Each row
+// represents a human review event (org-chart, comm-policy, risk-register).
+// Lifts Attestation status tile from 3/6 substrate-wired → 6/6 once any row
+// per area lands.
+//
+// Body: { control_area, attestation_class, attestation_text,
+//         period_start?, period_end?, reference_url? }
+// Response: { ok, event_id, id }
+router.post('/audit/attestation', (req, res) => {
+  const b = req.body || {};
+  if (!b.control_area || typeof b.control_area !== 'string') {
+    return badRequest(res, 'control_area required (string)');
+  }
+  if (!ATTESTATION_CONTROL_AREAS.has(b.control_area)) {
+    return badRequest(res, `control_area must be one of ${[...ATTESTATION_CONTROL_AREAS].join('|')}`);
+  }
+  if (!b.attestation_class || typeof b.attestation_class !== 'string' || b.attestation_class.length > 80) {
+    return badRequest(res, 'attestation_class required (string, max 80 chars)');
+  }
+  if (!b.attestation_text || typeof b.attestation_text !== 'string' || !b.attestation_text.trim()) {
+    return badRequest(res, 'attestation_text required (non-empty string)');
+  }
+  if (b.attestation_text.length > 16384) {
+    return badRequest(res, 'attestation_text too large (max 16384 chars)');
+  }
+  if (b.reference_url && (typeof b.reference_url !== 'string' || b.reference_url.length > 500)) {
+    return badRequest(res, 'reference_url must be string ≤500 chars');
+  }
+  const actor = computeActor(req);
+  try {
+    const result = insertAuditAttestation({
+      control_area: b.control_area,
+      attestation_class: b.attestation_class,
+      attestation_text: b.attestation_text,
+      actor,
+      period_start: b.period_start || null,
+      period_end: b.period_end || null,
+      reference_url: b.reference_url || null,
+    });
+    return res.json({ ok: true, ...result });
+  } catch (e) {
+    return internal(res, e.message || 'audit attestation insert failed');
   }
 });
 

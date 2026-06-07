@@ -3203,7 +3203,11 @@
       }
     } catch (e) { /* keep prior */ }
 
-    // Tile 4: Attestation status — per-framework completeness rollup (Phase 1 stub).
+    // Tile 4: Attestation status — per-framework completeness rollup.
+    // CP12.10: ratio measures substrate-wired vs total (6/6 once Phase 3
+    // governance substrate is wired). Producing-ratio = areas with non-zero
+    // counts; surfaced as a secondary signal so operators see attestation-
+    // cadence health alongside substrate-coverage.
     try {
       const r = await fetch('/api/v1/plexus/public/audit/by-control-area?control_framework=soc2&period=mtd');
       const j = await r.json();
@@ -3211,11 +3215,15 @@
       if (!tile) return;
       const areas = j.control_areas || [];
       const wired = areas.filter(a => (a.audit_object_classes || []).length > 0).length;
+      const producing = areas.filter(a => ((a.counts && a.counts.total) || 0) > 0).length;
       const total = areas.length || 0;
       const pct = total > 0 ? ((wired / total) * 100).toFixed(0) : 0;
       tile.querySelector('.tile-val').textContent = total > 0 ? `${pct}%` : '—';
-      tile.querySelector('.tile-sub').textContent = `SOC 2 · ${wired}/${total} control areas wired (MTD)`;
-      tile.className = 'audit-tile' + (wired === total && total > 0 ? ' severity-clean' : ' severity-info');
+      tile.querySelector('.tile-sub').textContent =
+        `SOC 2 · ${wired}/${total} substrate-wired · ${producing}/${total} producing events (MTD)`;
+      tile.className = 'audit-tile' + (wired === total && producing === total && total > 0
+        ? ' severity-clean'
+        : (wired === total ? ' severity-info' : ' severity-warn'));
     } catch (e) { /* keep prior */ }
   }
 

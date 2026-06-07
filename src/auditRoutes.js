@@ -19,6 +19,7 @@ const {
   listAuditFileAccess,
   listAuditCredentialChanges,
   listAuditPermissionChanges,
+  listAuditAttestations,
   listPolicyRules,
   getPolicyRule,
   listPolicyViolations,
@@ -87,12 +88,12 @@ function csvEscape(v) {
 
 const CONTROL_AREA_MAP = {
   soc2: [
-    { id: 'CC1', name: 'Control Environment', audit_object_classes: [] },
-    { id: 'CC2', name: 'Communication & Information', audit_object_classes: [] },
+    { id: 'CC1', name: 'Control Environment', audit_object_classes: ['audit_attestation'] },
+    { id: 'CC2', name: 'Communication & Information', audit_object_classes: ['audit_attestation'] },
     { id: 'CC6', name: 'Logical & Physical Access Controls', audit_object_classes: ['audit_permission_change', 'audit_credential_change'] },
     { id: 'CC7', name: 'System Operations', audit_object_classes: ['audit_tool_invocation', 'audit_file_access'] },
     { id: 'CC8', name: 'Change Management', audit_object_classes: ['audit_permission_change'] },
-    { id: 'CC9', name: 'Risk Mitigation', audit_object_classes: [] },
+    { id: 'CC9', name: 'Risk Mitigation', audit_object_classes: ['audit_attestation'] },
   ],
   iso27001: [
     { id: 'A.5',  name: 'Information Security Policies', audit_object_classes: ['policy_rule'] },
@@ -111,10 +112,12 @@ const CONTROL_AREA_MAP = {
   ],
 };
 
-function countsForObjectClasses(classes, { from, to }) {
+function countsForObjectClasses(classes, { from, to, control_area } = {}) {
   // Single-class fast paths: invoke the helper with a large limit and count.
   // Phase 1 cap: 10k rows per class per period is empirically safe for the
   // dashboards we ship; if rollup hits this ceiling we move counts into SQL.
+  // CP12.10: audit_attestation rows are filtered by control_area so a CC1
+  // attestation doesn't inflate CC2's count.
   const limit = 10000;
   let total = 0;
   for (const cls of classes) {
@@ -126,6 +129,8 @@ function countsForObjectClasses(classes, { from, to }) {
       total += listAuditCredentialChanges({ from, to, limit }).length;
     } else if (cls === 'audit_permission_change') {
       total += listAuditPermissionChanges({ from, to, limit }).length;
+    } else if (cls === 'audit_attestation') {
+      total += listAuditAttestations({ from, to, control_area, limit }).length;
     } else if (cls === 'policy_rule') {
       total += listPolicyRules().length;
     } else if (cls === 'policy_violation') {
@@ -320,7 +325,7 @@ router.get('/audit/by-control-area', (req, res) => {
       name: area.name,
       audit_object_classes: area.audit_object_classes,
       counts: {
-        total: countsForObjectClasses(area.audit_object_classes, { from, to }),
+        total: countsForObjectClasses(area.audit_object_classes, { from, to, control_area: area.id }),
       },
     }));
 

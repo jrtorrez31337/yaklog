@@ -637,6 +637,30 @@ function initializeDb() {
     )
   `).run();
 
+  // CP12.10 (2026-06-07): audit_attestation — governance-tier substrate
+  // for SOC 2 CC1 (Control Environment) / CC2 (Communication & Information)
+  // / CC9 (Risk Mitigation). Phase 3 of ADR-0030. Distinct from event-stream
+  // audit tables: no machine-emitted rows — each row is a human/ops-key
+  // action attesting that a control area was reviewed for a defined period
+  // (org-chart review, comm-policy refresh, risk-register review). Lifts
+  // Attestation status tile from 3/6 substrate-wired → 6/6.
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS audit_attestation (
+      id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_id           TEXT NOT NULL,
+      occurred_at        TEXT NOT NULL,
+      control_area       TEXT NOT NULL,
+      attestation_class  TEXT NOT NULL,
+      attestation_text   TEXT NOT NULL,
+      actor              TEXT NOT NULL,
+      period_start       TEXT,
+      period_end         TEXT,
+      reference_url      TEXT
+    )
+  `).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_audit_attest_area_time ON audit_attestation(control_area, occurred_at DESC)`).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_audit_attest_time ON audit_attestation(occurred_at)`).run();
+
   return db;
 }
 
@@ -1284,6 +1308,65 @@ function listAuditPermissionChanges({ from, to, agent_id, limit = 100 } = {}) {
   const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
   return database
     .prepare(`SELECT * FROM audit_permission_change ${whereClause} ORDER BY occurred_at DESC LIMIT @limit`)
+    .all({ ...params, limit });
+}
+
+// ─── audit_attestation (CP12.10 Phase 3 governance substrate) ─────────────
+
+// Canonical SOC 2 areas eligible for Phase 3 governance attestation.
+// Phase 3.5 will expand to ISO 27001 A.5 + GDPR Art.5 once cross-framework
+// attestation cadence is parch-ratified.
+const ATTESTATION_CONTROL_AREAS = new Set(['CC1', 'CC2', 'CC9']);
+const ATTESTATION_TEXT_MAX = 16 * 1024;
+
+function insertAuditAttestation(row) {
+  if (!row || !row.control_area || !row.attestation_class || !row.attestation_text || !row.actor) {
+    throw new Error('insertAuditAttestation: control_area + attestation_class + attestation_text + actor required');
+  }
+  if (!ATTESTATION_CONTROL_AREAS.has(row.control_area)) {
+    throw new Error(`insertAuditAttestation: control_area must be one of ${[...ATTESTATION_CONTROL_AREAS].join('|')}`);
+  }
+  if (typeof row.attestation_text !== 'string' || row.attestation_text.length > ATTESTATION_TEXT_MAX) {
+    throw new Error(`insertAuditAttestation: attestation_text required (max ${ATTESTATION_TEXT_MAX} chars)`);
+  }
+  const database = getDb();
+  const occurred_at = row.occurred_at || new Date().toISOString();
+  const event_id = row.event_id || computeAuditEventId(
+    row.prev_event_id, occurred_at, row.actor, `attest:${row.control_area}:${row.attestation_class}`,
+    { text_hash: fullSha256(row.attestation_text).slice(0, 16) }
+  );
+  const result = database.prepare(`
+    INSERT INTO audit_attestation (
+      event_id, occurred_at, control_area, attestation_class, attestation_text,
+      actor, period_start, period_end, reference_url
+    ) VALUES (
+      @event_id, @occurred_at, @control_area, @attestation_class, @attestation_text,
+      @actor, @period_start, @period_end, @reference_url
+    )
+  `).run({
+    event_id,
+    occurred_at,
+    control_area: row.control_area,
+    attestation_class: row.attestation_class,
+    attestation_text: row.attestation_text,
+    actor: row.actor,
+    period_start: row.period_start || null,
+    period_end: row.period_end || null,
+    reference_url: row.reference_url ? String(row.reference_url).slice(0, 500) : null,
+  });
+  return { id: result.lastInsertRowid, event_id };
+}
+
+function listAuditAttestations({ from, to, control_area, limit = 100 } = {}) {
+  const database = getDb();
+  const where = [];
+  const params = {};
+  if (from)         { where.push('occurred_at >= @from'); params.from = from; }
+  if (to)           { where.push('occurred_at <= @to'); params.to = to; }
+  if (control_area) { where.push('control_area = @control_area'); params.control_area = control_area; }
+  const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  return database
+    .prepare(`SELECT * FROM audit_attestation ${whereClause} ORDER BY occurred_at DESC LIMIT @limit`)
     .all({ ...params, limit });
 }
 
@@ -2552,6 +2635,10 @@ module.exports = {
   listAuditCredentialChanges,
   insertAuditPermissionChange,
   listAuditPermissionChanges,
+  // CP12.10 (2026-06-07): audit_attestation governance substrate (Phase 3 ADR-0030)
+  insertAuditAttestation,
+  listAuditAttestations,
+  ATTESTATION_CONTROL_AREAS,
   upsertPolicyRule,
   listPolicyRules,
   getPolicyRule,
