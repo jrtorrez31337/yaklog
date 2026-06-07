@@ -246,9 +246,9 @@ Four GRC-tier KPI tiles, refreshed every 60s:
 | Tile | What it shows | When to act |
 |---|---|---|
 | **Open policy violations** | Pending violations grouped by severity (critical / violation / warn / info); tile color = top-severity present. | Critical / violation tile → switch to Incident sub-tab and disposition. Clean (green) when zero. |
-| **Coverage gaps** | `N policies codified / M agents missing 7d trail` — load-bearing GRC governance indicator. | `0 codified` means cluster discipline is tribal; author seed rule corpus. `M > 0` missing trail means agents not yet hooked into audit pipeline. |
+| **Coverage gaps** | `N policies codified / M agents genuine-gap` — load-bearing GRC governance indicator with CP12.9 disposition enrichment. | `7 codified` post-CP12.18 + parch #8012 Jon-ratified seed corpus (6 active + 1 draft). `M genuine-gap` counts ONLY true instrumentation gaps; known-noise (alias-of / different-runtime / inactive) excluded. |
 | **Recent high-risk events · 24h** | Top-3 anomalous agents by policy_violation count over last 24h. | Investigate any agent appearing here — Incident sub-tab for disposition flow. |
-| **Attestation status** | SOC2 control-area completeness rollup (e.g., `60% · 6/10 wired`). | Below 100% → wire missing audit-classes; Phase 2 framework-specific bundle exports unlock then. |
+| **Attestation status** | SOC2 control-area completeness — substrate-wired ratio + producing-events ratio (CP12.10 dual-signal). | All 6 SOC 2 areas substrate-wired (CC6/CC7/CC8 event-stream + CC1/CC2/CC9 attestation-tier via `audit_attestation`). Producing ratio reflects events landed this period; below total → run attestation flow or surface event-stream lift. |
 
 ### Six sub-tabs — what each is for
 
@@ -270,6 +270,13 @@ Cadence-driven periodic-review lens. Top of sub-tab: **coverage-gap banner** sho
 Control-driven attestation lens. Framework picker (SOC2 default / ISO27001 / GDPR) → control-area browser. Each row shows control ID, name, mapped audit-object classes (chips), event-count for the period. **Export evidence bundle** button kicks `/audit/export?schema=<framework>-bundle&period=mtd` — Phase 1 ships generic CSV; framework-specific schemas return 501 (Phase 2 scope).
 
 Per ADR-0030 §7 expanded ISO27001 subset (bizmodel #7697 OQ#5 amendment): **A.5, A.8, A.9, A.12, A.13, A.16, A.18** (7 of 14 categories claimed). A.13 (communications security — yaklog TLS / ssh-key / cluster-bus encryption substrate) + A.18 (compliance meta-control — implicit since we claim GDPR) added beyond parch's baseline subset.
+
+**CP12.20 Chain integrity card** (below control-area list): 30-day grid showing per-day Phase 3 (A) anchor verify status. One cell per day, color-coded:
+- 🟢 **green** = `match:true` (verified — no tamper detected)
+- 🔴 **red** = `match:false` AND `tamper_detected:true` (Reading-2 semantic: stored high-water event_id is missing OR digest over events≤high_water differs from stored)
+- ⬜ **gray** = no anchor recorded for that day (gap — anchor-publisher cron didn't run or day predates first anchor)
+
+Click any cell → alert with full digest comparison (stored vs recomputed) + tamper signal class + sample size. Anchor covers chain high-water event_id + 100-event recent horizon (sample-based, not full Merkle); Reading-2 semantics (CP12.12.1) mean `match:false` is genuine tamper signal, NOT chain-advancement noise. Substrate: S3 Object Lock baseline (7-year retention) per ADR-0030 v1.2 ratify; cron-driver at `scripts/audit-anchor-publisher.sh`.
 
 #### Policies — "Codify cluster canon as enforceable rules"
 

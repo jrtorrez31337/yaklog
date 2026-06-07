@@ -102,7 +102,7 @@ The Cost tab implements a CFO-tier three-lens architecture. The audience-tier is
 
 **Anti-features deliberately omitted** (ADR-0029 §8): no sankey diagrams, no AI-generated narrative, no sub-penny precision, no cost-per-business-outcome rollups, no multi-currency, no scenario/counterfactual/CI surfaces. Linear-only projection with explicit basis-labeling.
 
-### 2.5 Audit-tab three-lens UX (ADR-0030 / CP12.1-3.1)
+### 2.5 Audit-tab three-lens UX (ADR-0030 v1.2 RATIFIED / CP12.1-20)
 
 The Audit tab implements a GRC-tier three-lens architecture mirroring the Cost-tab shape. The audience-tier is **finance/IT-governance + compliance/risk officer**, not engineering-ops (the legacy DM-audit-log reader is preserved under the Detail sub-tab).
 
@@ -111,9 +111,9 @@ The Audit tab implements a GRC-tier three-lens architecture mirroring the Cost-t
 | Tile | Source | Default state |
 |---|---|---|
 | **Open policy violations** | `/policy/violations?disposition=pending` | Severity-grouped (critical / violation / warn / info); tile color = top-severity present. Clean when zero. |
-| **Coverage gaps** | `/policy/divergence` + `/audit/coverage-gap` | `N policies codified / M agents missing 7d trail` — load-bearing GRC governance indicator (echoes ADR-0029 R4 divergence-banner pattern). |
+| **Coverage gaps** | `/policy/divergence` + `/audit/coverage-gap` | `N policies codified / M agents genuine-gap` — load-bearing GRC governance indicator. Per CP12.9: enrichment classifies missing agents by disposition (alias_of / different_runtime / inactive / genuine_gap) so the headline reads "genuine instrumentation gaps" not "raw missing count". 7 rules codified per CP12.18 + parch #8012 Jon-ratified Option (d). |
 | **Recent high-risk events · 24h** | `/audit/anomaly-detail` | Top-3 anomalous agents by policy_violation_count over last 24h. |
-| **Attestation status** | `/audit/by-control-area?control_framework=soc2&period=mtd` | SOC2 control-area completeness rollup as `wired / total` percentage. Phase 1 stub; framework-specific bundles ship in Phase 2. |
+| **Attestation status** | `/audit/by-control-area?control_framework=soc2&period=mtd` | SOC2 control-area completeness rollup. Per CP12.10: governance-tier `audit_attestation` substrate wires CC1/CC2/CC9 → 6/6 substrate-wired. Sub-label surfaces both `substrate-wired` AND `producing events` ratios so attestation-cadence health is visible alongside coverage. |
 
 **Six sub-tabs** (Incident default; mirrors ADR-0029 Pace-default precedent — highest-pressure use case as the landing surface):
 
@@ -121,7 +121,7 @@ The Audit tab implements a GRC-tier three-lens architecture mirroring the Cost-t
 |---|---|---|
 | **Incident** | Pending policy_violations list (server-side R-A2 sort: pending-first → severity DESC → occurred_at DESC) + event_id lookup with drill-through to `/audit/event/:event_id`. Highest-pressure case-driven workflow. | `/policy/violations`, `/audit/event/:id` |
 | **Review** | Coverage-gap banner (bizmodel R-A3) + dim picker defaults `control_area` (R-A1; switchable to `agent_id` / `policy_rule` / `cost_center`-honest-Phase-2-hedge) + 4-card aggregate grid (activity register / violation register / credential-rotation / permission-change). Cadence-driven periodic-review workflow. | `/audit/tool-invocations`, `/audit/credential-changes`, `/audit/permission-changes`, `/audit/coverage-gap`, `/audit/by-control-area`, `/policy/violations` |
-| **Attest** | Framework picker (SOC2 / ISO27001 / GDPR) → control-area browser with audit-class chips → evidence-bundle export button. SOC2 default (highest-leverage external-auditor framework). | `/audit/by-control-area`, `/audit/export?schema=...` |
+| **Attest** | Framework picker (SOC2 / ISO27001 / GDPR) → control-area browser with audit-class chips → evidence-bundle export button → **Chain integrity card** (CP12.20): 30-day grid showing per-day anchor verify status (🟢 match / 🔴 TAMPER / ⬜ no anchor), click-to-drill into full digest comparison. SOC2 default (highest-leverage external-auditor framework). | `/audit/by-control-area`, `/audit/export?schema=...`, `/audit/anchors`, `/audit/anchor/:day`, `/audit/anchor-verify` |
 | **Policies** | Ops-key gated. Rule list (status-colored: draft yellow / active green / deprecated muted) + add/edit form with save-as-draft + save-and-ratify in one flow. DSL hint references secops #7706 sandbox spec. | `/policy/rules`, `/ops/policy/rule`, `/ops/policy/rule/:id/ratify`, `/ops/policy/rule/:id/deprecate` |
 | **Reconcile** | Ops-key gated form (period + external-system-label + plexus/external counts + reconciler_agent_id) → POST `/ops/audit/reconcile` → result banner with delta + delta_pct. Mirror of cost-reconcile shape. | `/ops/audit/reconcile` |
 | **Detail** | Legacy DM-audit-log reader (CP8.2) relocated verbatim — banner + filter row (sender / recipient / msg-id / ops-key id) + reveal-body modal. Engineering-ops audience-tier preserved. | `/dm-audit` |
@@ -130,7 +130,7 @@ The Audit tab implements a GRC-tier three-lens architecture mirroring the Cost-t
 
 **Sandboxed policy DSL** (Policies sub-tab; secops #7706 spec): operators `==`, `!=`, `<`, `>`, `<=`, `>=`, `contains`, `startsWith`, `endsWith`, `IN`, `NOT IN`, `IS NULL`, `IS NOT NULL`, `AND`, `OR`, `NOT`. Case-insensitive SQL-style keywords. **No regex** (catastrophic-backtrack DoS vector — substitute with contains/startsWith/endsWith). 100ms deadline-check per evaluation between AST nodes; 1MB memory cap heuristic; prohibited tokens reject-at-parse (`eval`, dynamic-function constructors, `process`, `require`, `__proto__`, `constructor`, `prototype`). Hand-rolled Pratt-style parser; the evaluator does not invoke any JavaScript dynamic-code primitives — no `eval`, no Function constructor, no `vm.runInNewContext`.
 
-**Anti-features deliberately omitted** (ADR-0030 §8, 10 items): no AI-generated compliance narrative, no automated GDPR DSAR fulfillment, no auto-triage on risk score, no closed-form policy-violation severity scoring, no real-time enforcement actions, no risk-score-driven UI prioritization, no free-text NLP search on audit log, no audit-log integrity self-attestation (Plexus alone), no retention bypass for "operational reasons", no auto-fix on external-system reconciliation.
+**Anti-features deliberately omitted** (ADR-0030 §8, 10 items): no AI-generated compliance narrative, no automated GDPR DSAR fulfillment, no auto-triage on risk score, no closed-form policy-violation severity scoring, no real-time enforcement actions, no risk-score-driven UI prioritization, no free-text NLP search on audit log, ~~no audit-log integrity self-attestation~~ (RESOLVED by Phase 3 (A) external-anchor per ADR-0030 v1.2 — `audit_anchor` table + S3 Object Lock + Reading-2 verify; CISO-audience tamper-detection now operational), no retention bypass for "operational reasons", no auto-fix on external-system reconciliation.
 
 ---
 
@@ -243,11 +243,11 @@ All under `/api/v1/plexus/public/cost/*`, network-isolation trust (no per-reques
 
 Test coverage: 23 (costPersistence) + 12 (costRollup, mocked-fetch) + 29 (costApi) = 64 tests, all green.
 
-### 3.9 Audit + governance (ADR-0030 / CP12.x)
+### 3.9 Audit + governance (ADR-0030 v1.2 RATIFIED / CP12.x)
 
-GRC substrate per ratified ADR-0030 v1.1. 9 new tables + 24 helpers + sandboxed policy-DSL evaluator + ops-key auth-header exclusion middleware + 15 public read + 6 ops-key gated mutation endpoints. Three load-bearing architectural choices: split substrate (SQLite + future external-anchor), three-lens dashboard organization (Incident / Review / Attest), policy-as-code substrate as the GRC contribution that shifts cluster canon from tribal to codified.
+GRC substrate per ratified ADR-0030 v1.2 (parch landing-eval ratify 2026-06-07; v1.1 jon-ratify 2026-06-04). 12 new tables + ~35 helpers + sandboxed policy-DSL evaluator + ops-key auth-header exclusion middleware + 25 public read + 11 ops-key gated mutation endpoints + 2 host-side scanner scripts (permission-change + channel-subscription) + 1 anchor-publisher cron driver. **Three load-bearing architectural choices**: split substrate (SQLite + external integrity anchor per Phase 3 (A)), three-lens dashboard organization (Incident / Review / Attest), policy-as-code substrate as the GRC contribution that shifts cluster canon from tribal to codified. **Phase 3 (A) external integrity anchor SHIPPED at CP12.12 + CP12.12.1 + CP12.20**: S3 Object Lock baseline + Reading-2 semantic verify + dashboard Chain integrity card — chain-tamper-detection operational in live clusters.
 
-#### 3.9.1 Substrate (9 tables, `src/db.js`)
+#### 3.9.1 Substrate (12 tables, `src/db.js`)
 
 | Table | Purpose |
 |---|---|
@@ -257,11 +257,14 @@ GRC substrate per ratified ADR-0030 v1.1. 9 new tables + 24 helpers + sandboxed 
 | **`audit_permission_change`** | settings.local.json / agent-specs.git / systemd overrides / authorized_keys / gh hosts (Phase 2 source-coverage expansion per admin R4). |
 | **`policy_rule`** | Policy-as-code DSL substrate (rule_id PRIMARY KEY + name + description + applicability_json + predicate_dsl + severity_class ∈ {info, warn, violation, critical} + status ∈ {draft, active, deprecated} + current_version). Version bumps only on predicate_dsl change. |
 | **`policy_violation`** | Enforcement-observation log. disposition lifecycle: `pending` → `acknowledged` / `remediated` / `accepted-with-rationale` / `suppressed`. List query default-sort: pending-first → severity DESC → occurred_at DESC (bizmodel R-A2). |
-| **`audit_reconciliation`** | Mirror of `cost_reconciliation`. admin R3 fold adds `reconciler_agent_id` (stable identity column) so identity continuity survives ops-key rotations; `reconciled_by` stays pure forensic ops-key-at-time marker. |
+| **`audit_reconciliation`** | Mirror of `cost_reconciliation`. admin R3 fold adds `reconciler_agent_id` (stable identity column) so identity continuity survives ops-key rotations; `reconciled_by` stays pure forensic ops-key-at-time marker. **CP12.16**: `reconcile_class` column added with canonical vocab `{grc-platform, soc-tool, siem, internal-export, other}`; live-sync integrations correctly trigger-gated per Non-goals. |
 | **`audit_payload_store`** | Separate deletable BLOB store per secops F2. `payload_ref` UUID is FK from audit tables. Atomic SQLite txn wraps payload-delete + tombstone_at-set + meta-audit-row insertion (admin R2). |
 | **`subject_directory`** | GDPR hash-at-ingestion per bizmodel #7697 OQ#4 amendment. Only place cleartext user_email lives; right-to-be-forgotten is single-row `tombstoneSubject` deletion (severs cleartext correlation; audit tables retain `subject_hash` so hash-chain integrity preserved). Avoids compounding-PII problem (1 row vs touching 7 tables per DSAR). |
+| **`audit_attestation`** | **CP12.10 Phase 1-augmentation governance-tier substrate** for SOC 2 CC1 (Control Environment) / CC2 (Communication & Information) / CC9 (Risk Mitigation). Operator-authored attestation rows (org-chart review / comm-policy refresh / risk-register review). Distinct from event-stream tables: no machine-emitted rows. Lifts Attestation status tile substrate-wired ratio 3/6 → 6/6. |
+| **`audit_channel_subscription_change`** | **CP12.15 Phase 2** per-user channel subscription history. Source: per-user `~/.config/yaklog/channels` CSV. `change_type ∈ subscribe|unsubscribe`. Wires to SOC 2 CC6 + ISO 27001 A.9 (access-control) + SOC 2 CC2 per CP12.A enrichment (communication infrastructure). Ingester: `scripts/channel-subscription-scanner.sh` (scan-with-diff + ops-gated `POST /audit/channel-subscription/scan`). |
+| **`audit_anchor`** | **CP12.12 Phase 3 (A) external integrity anchor substrate** per ADR-0030 v1.2 parch ratify (S3 Object Lock baseline + daily cadence + 7y retention + dual-publish 12mo forward-track). One row per published daily hash digest. `UNIQUE(anchor_day, anchor_substrate)` permits dual-publish across substrates. Verify uses Reading-2 semantic (CP12.12.1): recomputes over events ≤ stored high-water → `match:true` reproducible indefinitely; `match:false` is unambiguous tamper signal. Cron-driver: `scripts/audit-anchor-publisher.sh`. |
 
-Helpers exposed (~24): `computeAuditEventId` (hash-chain formula `sha256(prev_event_id || occurred_at || agent_id || action_class || metadata_only)[0:16]` per admin R2; `metadata_only` EXCLUDES `payload_ref` for Phase 3 external-anchor compatibility), `subjectHash`, `fullSha256`, `insertAuditToolInvocation` / `listAuditToolInvocations` / `getAuditToolInvocationByEventId`, `insertAuditFileAccess` / `listAuditFileAccess`, `insertAuditCredentialChange` / `listAuditCredentialChanges`, `insertAuditPermissionChange` / `listAuditPermissionChanges`, `upsertPolicyRule` / `listPolicyRules` / `getPolicyRule` / `ratifyPolicyRule` / `deprecatePolicyRule`, `insertPolicyViolation` / `listPolicyViolations` / `disposePolicyViolation`, `insertAuditReconciliation` / `listAuditReconciliations`, `insertAuditPayload` / `getAuditPayload` / `tombstoneAuditPayload`, `upsertSubjectDirectory` / `getSubjectByHash` / `tombstoneSubject`.
+Helpers exposed (~35+): `computeAuditEventId` (hash-chain formula `sha256(prev_event_id || occurred_at || agent_id || action_class || metadata_only)[0:16]` per admin R2; `metadata_only` EXCLUDES `payload_ref` for Phase 3 external-anchor compatibility), `subjectHash`, `fullSha256`, `insertAuditToolInvocation` / `listAuditToolInvocations` / `getAuditToolInvocationByEventId`, `insertAuditFileAccess` / `listAuditFileAccess`, `insertAuditCredentialChange` / `listAuditCredentialChanges`, `insertAuditPermissionChange` / `listAuditPermissionChanges` / `processPermissionScan` / `diffPermissionSources` (CP12.8), `insertAuditAttestation` / `listAuditAttestations` / `ATTESTATION_CONTROL_AREAS` (CP12.10), `insertAuditChannelSubscriptionChange` / `listAuditChannelSubscriptionChanges` / `processChannelSubscriptionScan` / `diffChannelSubscriptions` (CP12.15), `RECONCILE_CLASS_VOCAB` / `aggregateAuditReconciliationsByClass` (CP12.16), `listRegistrationEventsByAgent` / `aggregateRegistrationEventsByAgent` / `aggregateCredentialChanges` (CP12.13 aggregate views), `findMessageIdsReferencingAdr` (CP12.17), `ANCHOR_SUBSTRATE_VOCAB` / `ANCHOR_CHAIN_TABLES` / `computeChainSnapshot` / `computeChainSnapshotAt` / `insertAuditAnchor` / `listAuditAnchors` / `getAuditAnchorByDay` / `verifyAuditAnchor` (CP12.12 + CP12.12.1 Reading-2 semantic), `upsertPolicyRule` / `listPolicyRules` / `getPolicyRule` / `ratifyPolicyRule` / `deprecatePolicyRule`, `insertPolicyViolation` / `listPolicyViolations` / `disposePolicyViolation`, `insertAuditReconciliation` / `listAuditReconciliations`, `insertAuditPayload` / `getAuditPayload` / `tombstoneAuditPayload`, `upsertSubjectDirectory` / `getSubjectByHash` / `tombstoneSubject`.
 
 #### 3.9.2 Sandboxed policy-DSL evaluator (`src/policyDsl.js`)
 
@@ -278,7 +281,7 @@ Sandbox constraints (mandatory pre-ship per ADR-0030 v1.1 §Phase 1 implementati
 
 Mandatory pre-ship per admin Refinement 1 + `feedback_admin_session_otel_secret_leak`. Wired into `src/app.js` BEFORE morgan (line 71 area). Redacts `Authorization` header value to `Bearer sha256:<16-char-prefix>` so downstream loggers / morgan / OTel-raw-body-logging surfaces see the masked form. Original token survives on `req.rawBearer` for downstream auth middleware (`src/middleware/auth.js` + `src/middleware/opsKey.js` extended with `req.rawBearer ?? extractBearerToken(req)` for backwards-compat).
 
-#### 3.9.4 Public read endpoints (15 under `/api/v1/plexus/public/`)
+#### 3.9.4 Public read endpoints (25 under `/api/v1/plexus/public/`)
 
 Network-isolation trust (no per-request auth in v1; mirrors `/cost/*`):
 
@@ -291,16 +294,26 @@ Network-isolation trust (no per-request auth in v1; mirrors `/cost/*`):
 | `GET /audit/permission-changes?from=&to=&agent=&limit=100` | Permission-change events list. |
 | `GET /audit/event/:event_id` | Single-event detail with drill-through (`source_event_id` for `agent_activity` drill-back). |
 | `GET /audit/agent-timeline?agent=&from=&to=&limit=100` | All audit events for one agent across all 4 object classes, time-sorted DESC. |
-| `GET /audit/by-control-area?control_framework=soc2|iso27001|gdpr&period=<named>` | Aggregates by GRC control area. SOC2: CC1-CC9 (CC6/CC7/CC8 wired today); ISO27001: A.5/A.8/A.9/A.12/A.13/A.16/A.18 per ADR-0030 v1.1 expanded subset; GDPR: Art.6/Art.15/Art.17/Art.30. |
+| `GET /audit/by-control-area?control_framework=soc2|iso27001|gdpr&period=<named>` | Aggregates by GRC control area. SOC2: CC1-CC9 (all 6 wired post-CP12.10 + CP12.15 + CP12.A); ISO27001: A.5/A.8/A.9/A.12/A.13/A.16/A.18 per ADR-0030 v1.1 expanded subset; GDPR: Art.6/Art.15/Art.17/Art.30. Per-area count filter prevents cross-area inflation (CP12.10). |
 | `GET /audit/anomaly-detail?from=&to=` | Per-agent risk-surface scan (Phase 1 heuristic: count of policy_violation matches + tool_invocation + file_access in period; sorted DESC). |
-| `GET /audit/coverage-gap` | Bizmodel R-A3 governance indicator. `distinct(agent_id)` from `audit_tool_invocation` in last 7d vs `distinct(agent_id)` from `presence` table. Returns `{agents_audit_wired, agents_missing_trail_7d, missing_agent_ids}`. |
+| `GET /audit/coverage-gap` | Bizmodel R-A3 governance indicator. **CP12.9 disposition enrichment**: classifies missing agents as `alias_of` / `different_runtime` / `inactive` / `genuine_gap`. Headline reads `{genuine_gap_count}` (not raw `agents_missing_trail_7d`) so signal-fidelity is high (eliminates known-noise from cluster rename cycles + non-CC runtimes). |
+| `GET /audit/channel-subscriptions?from=&to=&agent=&channel=&limit=100` | **CP12.15** per-user channel subscription change history. Inherits CP12.14 date-filter helper. |
+| `GET /audit/registration-timeline?agent_id=&from=&to=&limit=200` | **CP12.13** per-agent state-transition timeline over `registration_events` (DESC ts, rowid tiebreak for same-ms inserts). Returns events + derived transitions list. |
+| `GET /audit/registration-timeline-summary?from=&to=&period=` | **CP12.13** cluster-wide rollup: per-agent count grouped by event_type; sorted by total DESC. |
+| `GET /audit/credential-rotation-aggregate?from=&to=&group_by=credential_class|change_type|actor&period=` | **CP12.13** audit_credential_change rollup with group_by support. |
+| `GET /audit/adr-change-history?repo=agent-specs|agent-globals|adr-canon&limit=` | **CP12.13 + CP12.17 + Gate 3 (adr-canon.git)** ADR change-history aggregate. git-log over allowlisted bare repos + per-commit `correlated_message_ids[]` bus-cross-reference (regex match within commit_ts ± 7 days; ?correlate=false opt-out). |
+| `GET /audit/reconciliations?from=&to=&reconcile_class=&external_system_label=&limit=` | **CP12.16** audit_reconciliation list with class + label filters. |
+| `GET /audit/reconciliations-by-class?period=` | **CP12.16** rollup: count + total_delta + avg_delta_pct grouped by reconcile_class. |
+| `GET /audit/anchors?from=&to=&anchor_substrate=&limit=` | **CP12.12 Phase 3 (A)** anchor list, paginated (DESC anchor_day). |
+| `GET /audit/anchor/:day[?anchor_substrate=]` | **CP12.12** single-day anchor record (or array if dual-substrate day). 404 on missing. |
+| `GET /audit/anchor-verify?day=YYYY-MM-DD[&anchor_substrate=]` | **CP12.12 + CP12.12.1 Reading-2 semantic** anchor verify. Recomputes digest over events ≤ stored high-water; returns `{found, match, tamper_detected, stored_digest, recomputed_digest, note}`. `match:true` reproducible indefinitely; `match:false` = unambiguous tamper signal. Public access per OQ-3.3 (auditors verify without ops-key). |
 | `GET /audit/export?format=csv|json&schema=generic|soc2-bundle|iso27001-bundle|gdpr-dsar&period=<named>` | Compliance evidence-bundle export. Phase 1 ships `generic` CSV (audit_tool_invocation rows); the 3 framework-specific schemas return 501 NotImplemented (Phase 2 scope). |
 | `GET /policy/rules?status=draft|active|deprecated` | Policy rule list. |
 | `GET /policy/rules/:rule_id` | Single rule detail. |
 | `GET /policy/violations?from=&to=&rule_id=&disposition=&limit=100` | Violation list. Helper applies bizmodel R-A2 sort (pending-first → severity DESC → occurred_at DESC). |
-| `GET /policy/divergence` | Load-bearing GRC governance indicator. Phase 1: counts from policy_rule table — `{policies_codified, policies_active, policies_draft, policies_deprecated}`. |
+| `GET /policy/divergence` | Load-bearing GRC governance indicator. Counts from policy_rule table — `{policies_codified, policies_active, policies_draft, policies_deprecated}`. **CP12.18 lift**: 0 → 7 codified (6 active + 1 draft) per parch #8012 Jon-ratified Option (d) — 7-rule seed corpus with 3 predicate amendments + 1 description amendment + 2 held (substrate / evaluator-extension gated). |
 
-#### 3.9.5 Ops-key gated mutation endpoints (6 under `/api/v1/ops/`)
+#### 3.9.5 Ops-key gated mutation endpoints (11 under `/api/v1/ops/`)
 
 `Authorization: Bearer <ops-key>` (via `YAKLOG_OPS_API_KEYS` env); validated by `enforceOpsKey` middleware. `actor = sha256(bearerToken).slice(0,16)` recorded forensically on every mutation.
 
@@ -310,10 +323,15 @@ Network-isolation trust (no per-request auth in v1; mirrors `/cost/*`):
 | `POST /api/v1/ops/policy/rule/:id/ratify` | Mark draft rule as ratified (Jon-attribution marker stamped). 404 if unknown. |
 | `POST /api/v1/ops/policy/rule/:id/deprecate` | Move rule to deprecated status. 404 if unknown. |
 | `PATCH /api/v1/ops/policy/violation/:id` | Update disposition. Body: `{disposition, disposition_note?}`. Validates disposition enum. |
-| `POST /api/v1/ops/audit/reconcile` | Submit reconciliation. Body: `{period_start, period_end, external_system_label, plexus_count, external_count, ...}`. Computes `delta_count + delta_pct + concentration_json`. |
+| `POST /api/v1/ops/audit/reconcile` | Submit reconciliation. Body: `{period_start, period_end, external_system_label, reconcile_class?, plexus_count, external_count, ...}`. **CP12.16**: optional `reconcile_class ∈ {grc-platform, soc-tool, siem, internal-export, other}` (defaults `other`). Computes `delta_count + delta_pct + concentration_json`. |
 | `POST /api/v1/ops/audit/tombstone` | Tombstone audit-payload OR subject. Body: `{kind: 'audit-payload', table_name, row_id, reason}` OR `{kind: 'subject', subject_hash, reason}`. `reason` is REQUIRED (GDPR lawful-basis-class marker). 400 if missing; 409 on double-tombstone. Atomic SQLite txn per admin R2. |
+| `POST /api/v1/ops/audit/permission-change/scan` | **CP12.8 Phase 2 admin-R4 source-coverage**. Body: `{sources: [{source_class, source_path, agent_id, fingerprint}]}`. Diff against `permission_state_snapshot` + emit `audit_permission_change` rows; idempotent; first-scan silent baseline. Companion script: `scripts/permission-change-scanner.sh`. |
+| `POST /api/v1/ops/audit/attestation` | **CP12.10 Phase 1-augmentation governance**. Body: `{control_area ∈ {CC1,CC2,CC9}, attestation_class, attestation_text, period_start?, period_end?, reference_url?}`. Persists operator-authored attestation row. |
+| `POST /api/v1/ops/audit/channel-subscription/scan` | **CP12.15 Phase 2**. Body: `{subscriptions: [{agent_id, channels[], source_path?}]}`. Diff against `channel_subscription_snapshot` + emit subscribe/unsubscribe atomic rows. Companion script: `scripts/channel-subscription-scanner.sh`. |
+| `POST /api/v1/ops/audit/anchor-snapshot` | **CP12.12 Phase 3 (A)** cron-driver step 1. Returns current chain-high-water digest + event_id + table + sample_size. |
+| `POST /api/v1/ops/audit/anchor-record` | **CP12.12 Phase 3 (A)** cron-driver step 3. Body: `{anchor_day, anchor_substrate, anchor_uri, chain_high_water_event_id, chain_high_water_table, digest_sha256, published_at?}`. 409 on duplicate (anchor_day, substrate). Companion script: `scripts/audit-anchor-publisher.sh`. |
 
-Test coverage: 45 (policyDsl) + 36 (auditPersistence) + 35 (auditReadApi) + 25 (auditOpsApi) + 8 (opsKeyAuthHeader) = **149 tests** (exceeds ≥80 ADR-0030 Phase 1 floor); full server regression 439/439 green at v0.5.32.
+Test coverage: substantial growth post-CP12.4. v0.5.48 full suite **614/614 green**; audit-substrate contributions include CP12.7 (10) + CP12.8 (12) + CP12.10 (13) + CP12.13 (13) + CP12.14 (7) + CP12.15 (20) + CP12.16 (15) + CP12.17 (9) + CP12.A (1) + CP12.12 (29) + CP12.12.1 (3) = **132 audit-substrate tests added since CP12.4** atop the original 149 Phase 1 tests. Exceeds ADR-0030 v1.2 ≥80 Phase 1 floor by ~3.5x.
 
 ### 3.10 Auth + binding
 
