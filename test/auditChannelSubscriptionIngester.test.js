@@ -236,3 +236,17 @@ test('by-control-area: CC6 + A.9 include audit_channel_subscription_change', asy
   assert.ok(a9.audit_object_classes.includes('audit_channel_subscription_change'),
     'A.9 must include audit_channel_subscription_change');
 });
+
+// CP12.A (parch #8011 Gate 2 RATIFIED + bizmodel #8008 positional): channels
+// ARE the cluster's primary inter-agent communication substrate; mapping to
+// CC2 alongside the existing audit_attestation governance-tier substrate is
+// aspectually clean (same event in CC6 + CC2 since channels are both
+// access-control and communication infrastructure).
+test('by-control-area: CC2 enrichment with audit_channel_subscription_change', async () => {
+  const r = await request(app).get('/api/v1/plexus/public/audit/by-control-area?control_framework=soc2');
+  const cc2 = r.body.control_areas.find(a => a.id === 'CC2');
+  assert.ok(cc2.audit_object_classes.includes('audit_attestation'),
+    'CC2 must retain audit_attestation (CP12.10)');
+  assert.ok(cc2.audit_object_classes.includes('audit_channel_subscription_change'),
+    'CC2 must include audit_channel_subscription_change (CP12.A enrichment)');
+});

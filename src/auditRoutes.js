@@ -34,6 +34,8 @@ const {
   listAuditReconciliations,
   aggregateAuditReconciliationsByClass,
   RECONCILE_CLASS_VOCAB,
+  // CP12.17 Phase 2 ADR change-history bus-message-ID cross-reference
+  findMessageIdsReferencingAdr,
 } = require('./db');
 
 const costQuery = require('./costQuery');
@@ -117,7 +119,7 @@ function csvEscape(v) {
 const CONTROL_AREA_MAP = {
   soc2: [
     { id: 'CC1', name: 'Control Environment', audit_object_classes: ['audit_attestation'] },
-    { id: 'CC2', name: 'Communication & Information', audit_object_classes: ['audit_attestation'] },
+    { id: 'CC2', name: 'Communication & Information', audit_object_classes: ['audit_attestation', 'audit_channel_subscription_change'] },
     { id: 'CC6', name: 'Logical & Physical Access Controls', audit_object_classes: ['audit_permission_change', 'audit_credential_change', 'audit_channel_subscription_change'] },
     { id: 'CC7', name: 'System Operations', audit_object_classes: ['audit_tool_invocation', 'audit_file_access'] },
     { id: 'CC8', name: 'Change Management', audit_object_classes: ['audit_permission_change'] },
@@ -818,6 +820,31 @@ router.get('/audit/adr-change-history', (req, res) => {
     }
     if (current && current.files.length > 0) commits.push(current);
     const adrCommits = commits.slice(0, limit);
+
+    // CP12.17: bus-message-ID cross-reference. Extract ADR number from each
+    // commit's first ADR-named file, then query messages.body for refs
+    // within commit_ts ± 7 days. Per parch #8015: governance-narrative load-
+    // bearing (auditor traces ADR ratify-cycle from prose → canonical →
+    // application without three separate queries).
+    const WINDOW_DAYS = 7;
+    const correlate = req.query.correlate !== 'false';  // default on
+    if (correlate) {
+      for (const c of adrCommits) {
+        const adrFile = c.files.find(f => /adr/i.test(f));
+        const m = adrFile && adrFile.match(/adr[-_]?(\d{1,5})/i);
+        if (!m) { c.correlated_message_ids = []; continue; }
+        const adrNum = m[1];
+        const ts = new Date(c.ts);
+        if (Number.isNaN(ts.getTime())) { c.correlated_message_ids = []; continue; }
+        const from = new Date(ts.getTime() - WINDOW_DAYS * 86400_000).toISOString();
+        const to   = new Date(ts.getTime() + WINDOW_DAYS * 86400_000).toISOString();
+        c.correlated_message_ids = findMessageIdsReferencingAdr({
+          adr_number: adrNum, from, to, limit: 50,
+        });
+        c.adr_number = adrNum;
+      }
+    }
+
     return res.json({ repo, limit, count: adrCommits.length, commits: adrCommits });
   } catch (e) {
     return safeError(res, e);

@@ -2717,6 +2717,46 @@ function processPermissionScan({ sources, actor, scan_at } = {}) {
   };
 }
 
+// ─── CP12.17 Phase 2: ADR change-history bus-message-ID cross-reference ───
+//
+// Per parch #8015 OQ-B: each ADR commit in /audit/adr-change-history is
+// correlated with cluster-bus messages whose body text references that ADR
+// (regex /ADR-NNNN/i) within commit_ts ± window_days. Returns DESC message
+// IDs (newest first); cap defaults to 50 per ADR (operator can drill into
+// /messages for the full thread).
+
+function findMessageIdsReferencingAdr({ adr_number, from, to, limit = 50 } = {}) {
+  if (!adr_number || !/^\d{1,5}$/.test(String(adr_number))) {
+    return [];
+  }
+  const database = getDb();
+  // Normalize: ADR-0030 + ADR-30 + adr-0030 all match. Use LIKE with
+  // padded + unpadded form; correlate at app layer via regex post-filter
+  // to avoid SQLite regex extension dependency.
+  const padded = String(adr_number).padStart(4, '0');
+  const where = [];
+  const params = {};
+  // Lex-compare against ISO timestamps.
+  if (from) { where.push('created_at >= @from'); params.from = from; }
+  if (to)   { where.push('created_at <= @to');   params.to = to; }
+  // Pre-filter via LIKE for common ADR-NNNN / ADR-NN reference shapes.
+  // Catches both padded ("ADR-0030") and unpadded ("ADR-30") forms.
+  where.push(`(body LIKE @like_padded OR body LIKE @like_unpadded)`);
+  params.like_padded = `%ADR-${padded}%`;
+  params.like_unpadded = `%ADR-${String(adr_number).replace(/^0+/, '') || '0'}%`;
+  const whereClause = `WHERE ${where.join(' AND ')}`;
+  const rows = database
+    .prepare(`SELECT id, body FROM messages ${whereClause} ORDER BY id DESC LIMIT @cap`)
+    .all({ ...params, cap: Math.min(limit * 4, 500) });  // overscan for app-layer regex
+  // App-layer precision filter: must contain "ADR-<n>" where n matches
+  // either padded or unpadded, with word boundary on either side.
+  const re = new RegExp(`\\bADR[-_]?0*${Number(adr_number)}\\b`, 'i');
+  return rows
+    .filter(r => re.test(r.body))
+    .slice(0, limit)
+    .map(r => r.id);
+}
+
 // ─── CP12.15 Phase 2: channel-subscription change history ─────────────────
 //
 // Accepts a scanner-provided list of {agent_id, channels[], source_path}
@@ -2976,6 +3016,8 @@ module.exports = {
   // CP12.16 (2026-06-07): GRC reconcile-class extension (Phase 2)
   RECONCILE_CLASS_VOCAB,
   aggregateAuditReconciliationsByClass,
+  // CP12.17 (2026-06-07): ADR change-history bus-message-ID cross-reference
+  findMessageIdsReferencingAdr,
   upsertPolicyRule,
   listPolicyRules,
   getPolicyRule,
