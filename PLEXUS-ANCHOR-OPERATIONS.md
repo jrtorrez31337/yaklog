@@ -86,9 +86,10 @@ sudo systemctl start audit-anchor-publisher.timer
 **Response playbook**:
 
 1. **Do NOT delete or modify anything in `audit_anchor`** — those rows are the forensic record of when tamper was detected.
-2. **Snapshot the affected day's chain state to a side database** for forensic review:
+2. **Snapshot the affected day's chain state to a side database** for forensic review. **Write to persistent storage, NOT /tmp** (per `feedback_devel_tmp_is_tmpfs` — /tmp wipes on host reboot; forensic evidence must survive):
    ```bash
-   sqlite3 /data/yaklog.db ".dump audit_tool_invocation audit_file_access audit_credential_change audit_permission_change audit_attestation audit_channel_subscription_change" > /tmp/chain-forensic-$(date -u +%Y%m%d).sql
+   mkdir -p /var/lib/yaklog/forensic
+   sqlite3 /data/yaklog.db ".dump audit_tool_invocation audit_file_access audit_credential_change audit_permission_change audit_attestation audit_channel_subscription_change" > /var/lib/yaklog/forensic/chain-forensic-$(date -u +%Y%m%d-%H%M%S).sql
    ```
 3. **Identify scope**: which event_id is the chain-high-water for the affected anchor day? When was that event published vs when did anchor publish?
    ```bash
@@ -130,14 +131,19 @@ Root-cause checks:
 | `/home/devel/.config/yaklog/aws-credentials` | AWS access key for S3 PUT | ssw-devops |
 | `s3://plexus-audit-anchor-devel/` | Anchor storage | ssw-devops (Object Lock policy) |
 
-## Metric reference (post-CP12.21 Prom wiring)
+## Metric reference
 
-| Metric | Type | Alert threshold |
-|---|---|---|
-| `plexus_audit_anchor_last_publish_ts_seconds` | gauge | stale > 48h → publisher failure |
-| `plexus_audit_anchor_publish_total` | counter | rate < 0.5/day → potential cron failure |
-| `plexus_audit_anchor_publish_failures_total` | counter | any increment > 0 in 24h → investigate |
-| `plexus_audit_anchor_verify_mismatch_total` | counter | **any increment > 0 → CRITICAL tamper signal** |
+`audit-anchor-publisher.sh` emits Prometheus metrics via textfile-collector pattern at `${TEXTFILE_DIR:-/var/lib/yaklog/textfile}/plexus_audit_anchor.prom` (atomic write: writes to `.tmp` then `mv -f`). Three gauge metrics emitted per run regardless of outcome:
+
+| Metric | Labels | Value semantics | Alert threshold |
+|---|---|---|---|
+| `plexus_audit_anchor_last_publish_ts_seconds` | `substrate`, `anchor_day` | unix timestamp of last publish attempt | `time() - $value > 172800` (48h) → publisher failure |
+| `plexus_audit_anchor_publish_status` | `substrate`, `anchor_day` | 1 = success, 0 = failure | `== 0` → investigate last cron run |
+| `plexus_audit_anchor_publish_http_code` | `substrate` | last anchor-record endpoint HTTP code | `!= 200` → server-side record failure |
+
+**Scrape config required** (admin / ssw-devops coord-ask): node_exporter must scan `/var/lib/yaklog/textfile/*.prom` via the textfile-collector flag. Sample systemd unit drop-in: `--collector.textfile.directory=/var/lib/yaklog/textfile`. Once node_exporter scrapes, Plexus Prometheus picks up via the existing devel scrape config; Grafana dashboard alerts wire from there.
+
+**Forward-track (post-Phase-3-A operational close-gate)**: a CP12.21.x cycle can replace the textfile pattern with direct OTLP emission to `plexus-otel-collector:4318` once an OTLP HTTP client is staged in the publisher script. Either pattern delivers the same scrape result; textfile is the simpler dependency-free path for first ship.
 
 ## Forward-track
 

@@ -73,7 +73,14 @@ echo "[anchor] digest: $DIGEST"
 YEAR=$(echo "$ANCHOR_DAY" | cut -d- -f1)
 MONTH=$(echo "$ANCHOR_DAY" | cut -d- -f2)
 DAY=$(echo "$ANCHOR_DAY" | cut -d- -f3)
-S3_KEY="${YEAR}/${MONTH}/${DAY}/digest.txt"
+# CP12.21 secops #8068 §2 refinement: content-addressed S3 key schema.
+# Key includes digest-first-16 chars so an attacker who PutObject's a
+# crafted digest cannot silently replace the original (key derives from
+# content). External auditors using the `external_ref` from the
+# `/audit/anchors` endpoint fetch the specific object; flat-key replace
+# attacks are defeated.
+DIGEST_PREFIX="${DIGEST:0:16}"
+S3_KEY="${YEAR}/${MONTH}/${DAY}/${DIGEST_PREFIX}.txt"
 ANCHOR_URI=""
 
 if [[ $DRY_RUN -eq 1 ]]; then
@@ -94,6 +101,20 @@ else
     --object-lock-retain-until-date "$RETENTION_UNTIL" \
     --content-type text/plain
   ANCHOR_URI="s3://${S3_BUCKET}/${S3_KEY}"
+
+  # CP12.21 secops #8068 §3 refinement: GetObject post-publish self-verify.
+  # Re-read the object we just wrote; confirm body matches the digest we
+  # published. Catches silent write-failure / mid-publish corruption /
+  # IAM-policy denial that PUT returned 200 on but the object isn't
+  # readable. Non-blocking on yaklog-side record (we still record the
+  # anchor even if self-verify fails — operator sees the warning).
+  ROUNDTRIP=$(aws s3api get-object --bucket "$S3_BUCKET" --key "$S3_KEY" /dev/stdout 2>/dev/null | head -c 64)
+  if [[ "$ROUNDTRIP" != "$DIGEST" ]]; then
+    echo "[WARN] post-publish self-verify FAILED: roundtrip='${ROUNDTRIP}' expected='${DIGEST}'" >&2
+    echo "[WARN] proceeding to record anchor in yaklog; operator should investigate S3 state" >&2
+  else
+    echo "[anchor] post-publish self-verify: roundtrip-match ✓"
+  fi
 fi
 echo "[anchor] anchor_uri=$ANCHOR_URI"
 
@@ -118,10 +139,40 @@ RESPONSE=$(curl -sS -w "\n%{http_code}" -X POST \
 HTTP_CODE=$(printf '%s' "$RESPONSE" | tail -1)
 BODY=$(printf '%s' "$RESPONSE" | head -n -1)
 
+# CP12.21 Prom metric textfile emit: write last-publish timestamp + status
+# to a textfile-collector path. node_exporter / Prom scrape-config is an
+# admin/ssw-devops coord-ask (path documented in PLEXUS-ANCHOR-OPERATIONS.md).
+# Emit happens regardless of yaklog-record HTTP status so operator sees
+# failed-record cases distinctly via Prom alert.
+TEXTFILE_DIR="${TEXTFILE_DIR:-/var/lib/yaklog/textfile}"
+mkdir -p "$TEXTFILE_DIR" 2>/dev/null || true
+TEXTFILE_PATH="${TEXTFILE_DIR}/plexus_audit_anchor.prom"
+NOW_TS=$(date -u +%s)
+
+emit_metrics() {
+  local status="$1"
+  local http_code="$2"
+  cat > "${TEXTFILE_PATH}.tmp" <<EOF
+# HELP plexus_audit_anchor_last_publish_ts_seconds Unix timestamp of last anchor publish attempt
+# TYPE plexus_audit_anchor_last_publish_ts_seconds gauge
+plexus_audit_anchor_last_publish_ts_seconds{substrate="${ANCHOR_SUBSTRATE}",anchor_day="${ANCHOR_DAY}"} ${NOW_TS}
+# HELP plexus_audit_anchor_publish_status Status of last anchor publish (1=success, 0=failure)
+# TYPE plexus_audit_anchor_publish_status gauge
+plexus_audit_anchor_publish_status{substrate="${ANCHOR_SUBSTRATE}",anchor_day="${ANCHOR_DAY}"} ${status}
+# HELP plexus_audit_anchor_publish_http_code Last anchor-record endpoint HTTP code
+# TYPE plexus_audit_anchor_publish_http_code gauge
+plexus_audit_anchor_publish_http_code{substrate="${ANCHOR_SUBSTRATE}"} ${http_code}
+EOF
+  mv -f "${TEXTFILE_PATH}.tmp" "${TEXTFILE_PATH}" 2>/dev/null || true
+}
+
 if [[ "$HTTP_CODE" != "200" ]]; then
+  emit_metrics 0 "$HTTP_CODE"
   echo "[ERR] HTTP $HTTP_CODE from anchor-record" >&2
   echo "$BODY" >&2
   exit 5
 fi
 
+emit_metrics 1 "$HTTP_CODE"
 echo "[anchor] OK: $BODY"
+echo "[metrics] textfile emitted: $TEXTFILE_PATH"

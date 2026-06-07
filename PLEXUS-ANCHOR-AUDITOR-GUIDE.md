@@ -47,6 +47,17 @@ Tamper signals are unambiguous under Reading-2:
 - **Class A**: stored high-water event_id no longer present in chain → event was deleted post-anchor
 - **Class B**: recomputed digest differs from stored digest → event payload was modified post-anchor
 
+### Two-source verification architecture (security property per secops #8068)
+
+The verify chain has **two independent sources that must agree** for a clean pass:
+
+1. **Cluster API source**: `/audit/anchor-verify?day=YYYY-MM-DD` returns the digest stored in the local `audit_anchor` SQLite table (database-driven; not derived from S3 at request time)
+2. **External substrate source**: the S3 object at the content-addressed key `YYYY/MM/DD/<digest-first-16>.txt` returns the same digest, immutably preserved per Object Lock Compliance
+
+**Why this matters**: an attacker who compromises ONLY S3 (e.g. gains PutObject) cannot fool an auditor who cross-checks both sources. The local verify endpoint still returns the original database digest; the S3 content (if tampered) would disagree → tamper-detection fires at the cross-check step. Compromising BOTH the cluster database AND the S3 bucket simultaneously is a substantially harder attack, bounded by Plexus's trust-boundary discipline.
+
+**Auditor implication**: do NOT rely on a single source. The verification procedure below explicitly fetches from BOTH and confirms agreement; that's where the load-bearing security property lives. Content-addressed S3 key schema (CP12.21 per secops #8068 §2) further hardens this: an attacker overwriting at the original key cannot do so without knowing the original digest (since the key name IS derived from that digest).
+
 ## How to verify the cluster's chain integrity
 
 ### Step 1: List recent anchors
