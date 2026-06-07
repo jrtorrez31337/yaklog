@@ -28,6 +28,8 @@ const {
   listRegistrationEventsByAgent,
   aggregateRegistrationEventsByAgent,
   aggregateCredentialChanges,
+  // CP12.15 Phase 2 channel-subscription change history
+  listAuditChannelSubscriptionChanges,
 } = require('./db');
 
 const costQuery = require('./costQuery');
@@ -112,7 +114,7 @@ const CONTROL_AREA_MAP = {
   soc2: [
     { id: 'CC1', name: 'Control Environment', audit_object_classes: ['audit_attestation'] },
     { id: 'CC2', name: 'Communication & Information', audit_object_classes: ['audit_attestation'] },
-    { id: 'CC6', name: 'Logical & Physical Access Controls', audit_object_classes: ['audit_permission_change', 'audit_credential_change'] },
+    { id: 'CC6', name: 'Logical & Physical Access Controls', audit_object_classes: ['audit_permission_change', 'audit_credential_change', 'audit_channel_subscription_change'] },
     { id: 'CC7', name: 'System Operations', audit_object_classes: ['audit_tool_invocation', 'audit_file_access'] },
     { id: 'CC8', name: 'Change Management', audit_object_classes: ['audit_permission_change'] },
     { id: 'CC9', name: 'Risk Mitigation', audit_object_classes: ['audit_attestation'] },
@@ -120,7 +122,7 @@ const CONTROL_AREA_MAP = {
   iso27001: [
     { id: 'A.5',  name: 'Information Security Policies', audit_object_classes: ['policy_rule'] },
     { id: 'A.8',  name: 'Asset Management', audit_object_classes: ['audit_file_access'] },
-    { id: 'A.9',  name: 'Access Control', audit_object_classes: ['audit_permission_change', 'audit_credential_change'] },
+    { id: 'A.9',  name: 'Access Control', audit_object_classes: ['audit_permission_change', 'audit_credential_change', 'audit_channel_subscription_change'] },
     { id: 'A.12', name: 'Operations Security', audit_object_classes: ['audit_tool_invocation'] },
     { id: 'A.13', name: 'Communications Security', audit_object_classes: ['audit_credential_change'] },
     { id: 'A.16', name: 'Information Security Incident Management', audit_object_classes: ['policy_violation'] },
@@ -153,6 +155,8 @@ function countsForObjectClasses(classes, { from, to, control_area } = {}) {
       total += listAuditPermissionChanges({ from, to, limit }).length;
     } else if (cls === 'audit_attestation') {
       total += listAuditAttestations({ from, to, control_area, limit }).length;
+    } else if (cls === 'audit_channel_subscription_change') {
+      total += listAuditChannelSubscriptionChanges({ from, to, limit }).length;
     } else if (cls === 'policy_rule') {
       total += listPolicyRules().length;
     } else if (cls === 'policy_violation') {
@@ -227,6 +231,26 @@ router.get('/audit/file-access', (req, res) => {
       from, to,
       agent_id: req.query.agent ? String(req.query.agent) : undefined,
       path_prefix: req.query.path_prefix ? String(req.query.path_prefix) : undefined,
+      limit: clampLimit(req.query.limit),
+    });
+    return res.json({ rows, count: rows.length });
+  } catch (e) {
+    if (/unknown period/.test(e.message)) return badRequest(res, e.message);
+    return safeError(res, e);
+  }
+});
+
+// ──────────────────────────────────────────────────────────────────────────
+// 4b. GET /audit/channel-subscriptions (CP12.15 Phase 2)
+// ──────────────────────────────────────────────────────────────────────────
+
+router.get('/audit/channel-subscriptions', (req, res) => {
+  try {
+    const { from, to } = parseRange(req);
+    const rows = listAuditChannelSubscriptionChanges({
+      from, to,
+      agent_id: req.query.agent ? String(req.query.agent) : undefined,
+      channel_name: req.query.channel ? String(req.query.channel) : undefined,
       limit: clampLimit(req.query.limit),
     });
     return res.json({ rows, count: rows.length });

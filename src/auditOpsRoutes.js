@@ -37,6 +37,7 @@ const {
   processPermissionScan,
   insertAuditAttestation,
   ATTESTATION_CONTROL_AREAS,
+  processChannelSubscriptionScan,
 } = require('./db');
 
 const router = express.Router();
@@ -351,6 +352,35 @@ router.post('/audit/attestation', (req, res) => {
     return res.json({ ok: true, ...result });
   } catch (e) {
     return internal(res, e.message || 'audit attestation insert failed');
+  }
+});
+
+// CP12.15 Phase 2: channel-subscription change history scan.
+// Scanner script (scripts/channel-subscription-scanner.sh) reads each
+// per-user ~/.config/yaklog/channels CSV file + POSTs the parsed
+// {agent_id, channels[]} list here. Server-side does diff + emit +
+// snapshot-persist.
+//
+// Body: { subscriptions: [{agent_id, channels: [...], source_path?}] }
+// Response: { ok, first_scan, subscribes, unsubscribes, total_emitted }
+router.post('/audit/channel-subscription/scan', (req, res) => {
+  const actor = computeActor(req);
+  const body = req.body || {};
+  if (!Array.isArray(body.subscriptions)) {
+    return badRequest(res, 'subscriptions array required');
+  }
+  if (body.subscriptions.length > 10000) {
+    return badRequest(res, 'subscriptions array too large (max 10000 per scan)');
+  }
+  try {
+    const result = processChannelSubscriptionScan({
+      subscriptions: body.subscriptions,
+      actor,
+      scan_at: body.scan_at || undefined,
+    });
+    return res.json({ ok: true, ...result });
+  } catch (e) {
+    return internal(res, e.message || 'channel-subscription scan failed');
   }
 });
 

@@ -637,6 +637,36 @@ function initializeDb() {
     )
   `).run();
 
+  // CP12.15 (2026-06-07): audit_channel_subscription_change — per-user
+  // channel subscription history (Phase 2). Source: per-user
+  // ~/.config/yaklog/channels CSV file. change_type ∈ subscribe|unsubscribe.
+  // Each row is atomic: one channel added/removed per scan-with-diff.
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS audit_channel_subscription_change (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_id      TEXT NOT NULL,
+      occurred_at   TEXT NOT NULL,
+      agent_id      TEXT NOT NULL,
+      change_type   TEXT NOT NULL,
+      channel_name  TEXT NOT NULL,
+      actor         TEXT NOT NULL,
+      source_path   TEXT,
+      reason        TEXT
+    )
+  `).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_audit_csc_time ON audit_channel_subscription_change(occurred_at)`).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_audit_csc_agent_time ON audit_channel_subscription_change(agent_id, occurred_at)`).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_audit_csc_channel_time ON audit_channel_subscription_change(channel_name, occurred_at)`).run();
+
+  // CP12.15: channel_subscription_snapshot — single-row baseline mirror.
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS channel_subscription_snapshot (
+      id            INTEGER PRIMARY KEY CHECK (id = 1),
+      snapshot_json TEXT NOT NULL,
+      updated_at    TEXT NOT NULL
+    )
+  `).run();
+
   // CP12.10 (2026-06-07): audit_attestation — governance-tier substrate
   // for SOC 2 CC1 (Control Environment) / CC2 (Communication & Information)
   // / CC9 (Risk Mitigation). Phase 3 of ADR-0030. Distinct from event-stream
@@ -2631,6 +2661,190 @@ function processPermissionScan({ sources, actor, scan_at } = {}) {
   };
 }
 
+// ─── CP12.15 Phase 2: channel-subscription change history ─────────────────
+//
+// Accepts a scanner-provided list of {agent_id, channels[], source_path}
+// entries (one per scanned ~/.config/yaklog/channels file); diffs against
+// channel_subscription_snapshot; emits audit_channel_subscription_change
+// rows for subscribes / unsubscribes; persists new snapshot.
+//
+// First-scan discipline: persist baseline silently. Each diff produces N
+// atomic rows (one per channel added/removed for that agent).
+
+const CHANNEL_NAME_RE = /^[a-zA-Z0-9_-]{1,64}$/;
+
+function insertAuditChannelSubscriptionChange(row) {
+  if (!row || !row.agent_id || !row.change_type || !row.channel_name || !row.actor) {
+    throw new Error('insertAuditChannelSubscriptionChange: agent_id + change_type + channel_name + actor required');
+  }
+  if (!['subscribe', 'unsubscribe'].includes(row.change_type)) {
+    throw new Error('insertAuditChannelSubscriptionChange: change_type must be subscribe|unsubscribe');
+  }
+  if (!CHANNEL_NAME_RE.test(row.channel_name)) {
+    throw new Error('insertAuditChannelSubscriptionChange: channel_name must match [a-zA-Z0-9_-]{1,64}');
+  }
+  const database = getDb();
+  const occurred_at = row.occurred_at || new Date().toISOString();
+  const event_id = row.event_id || computeAuditEventId(
+    row.prev_event_id, occurred_at, row.agent_id, `csc:${row.change_type}`,
+    { channel: row.channel_name }
+  );
+  const result = database.prepare(`
+    INSERT INTO audit_channel_subscription_change (
+      event_id, occurred_at, agent_id, change_type, channel_name,
+      actor, source_path, reason
+    ) VALUES (
+      @event_id, @occurred_at, @agent_id, @change_type, @channel_name,
+      @actor, @source_path, @reason
+    )
+  `).run({
+    event_id, occurred_at,
+    agent_id: row.agent_id,
+    change_type: row.change_type,
+    channel_name: row.channel_name,
+    actor: row.actor,
+    source_path: row.source_path || null,
+    reason: row.reason ? String(row.reason).slice(0, 200) : null,
+  });
+  return { id: result.lastInsertRowid, event_id };
+}
+
+function listAuditChannelSubscriptionChanges({ from, to, agent_id, channel_name, limit = 100 } = {}) {
+  const database = getDb();
+  const where = [];
+  const params = {};
+  if (from)         { where.push('occurred_at >= @from'); params.from = from; }
+  if (to)           { where.push('occurred_at <= @to'); params.to = to; }
+  if (agent_id)     { where.push('agent_id = @agent_id'); params.agent_id = agent_id; }
+  if (channel_name) { where.push('channel_name = @channel_name'); params.channel_name = channel_name; }
+  const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  return database
+    .prepare(`SELECT * FROM audit_channel_subscription_change ${whereClause} ORDER BY occurred_at DESC, rowid DESC LIMIT @limit`)
+    .all({ ...params, limit });
+}
+
+function diffChannelSubscriptions(prior, current) {
+  // Identity: agent_id. Diff: per-agent set-difference of channel names.
+  // Returns: { subscribes: [{agent_id, channel_name, source_path}], unsubscribes: [...] }
+  function indexBy(list) {
+    const m = new Map();
+    for (const e of (list || [])) m.set(e.agent_id, e);
+    return m;
+  }
+  const priorMap = indexBy(prior);
+  const currMap = indexBy(current);
+  const subscribes = [];
+  const unsubscribes = [];
+  for (const [agent_id, curr] of currMap.entries()) {
+    const prev = priorMap.get(agent_id);
+    const prevSet = new Set((prev && prev.channels) || []);
+    const currSet = new Set(curr.channels || []);
+    for (const ch of currSet) {
+      if (!prevSet.has(ch)) {
+        subscribes.push({ agent_id, channel_name: ch, source_path: curr.source_path });
+      }
+    }
+    for (const ch of prevSet) {
+      if (!currSet.has(ch)) {
+        unsubscribes.push({ agent_id, channel_name: ch, source_path: curr.source_path });
+      }
+    }
+  }
+  // Agents that vanished entirely → all their channels become unsubscribes.
+  for (const [agent_id, prev] of priorMap.entries()) {
+    if (!currMap.has(agent_id)) {
+      for (const ch of (prev.channels || [])) {
+        unsubscribes.push({ agent_id, channel_name: ch, source_path: prev.source_path });
+      }
+    }
+  }
+  return { subscribes, unsubscribes };
+}
+
+function processChannelSubscriptionScan({ subscriptions, actor, scan_at } = {}) {
+  if (!Array.isArray(subscriptions)) {
+    throw new Error('processChannelSubscriptionScan: subscriptions array required');
+  }
+  if (!actor || typeof actor !== 'string') {
+    throw new Error('processChannelSubscriptionScan: actor (ops-key sha256[:16] OR script-id) required');
+  }
+  // Validate + normalize each subscription entry. Drop malformed silently;
+  // log count for operator visibility.
+  const validated = subscriptions.filter(s =>
+    s && typeof s.agent_id === 'string' && s.agent_id.length > 0
+    && Array.isArray(s.channels)
+    && s.channels.every(c => typeof c === 'string' && CHANNEL_NAME_RE.test(c))
+  ).map(s => ({
+    agent_id: s.agent_id,
+    channels: [...new Set(s.channels)].sort(),  // dedup + sort for stable snapshot
+    source_path: s.source_path || null,
+  }));
+  if (validated.length !== subscriptions.length) {
+    console.warn(`[channel-sub-scan] dropped ${subscriptions.length - validated.length} malformed subscription rows`);
+  }
+
+  const database = getDb();
+  const occurred_at = scan_at || new Date().toISOString();
+  const priorRow = database.prepare('SELECT snapshot_json FROM channel_subscription_snapshot WHERE id = 1').get();
+  let prior = null;
+  if (priorRow) {
+    try { prior = JSON.parse(priorRow.snapshot_json).subscriptions; } catch (e) { prior = null; }
+  }
+  const isFirstScan = !prior;
+
+  if (isFirstScan) {
+    database.prepare(`
+      INSERT INTO channel_subscription_snapshot (id, snapshot_json, updated_at)
+      VALUES (1, @snapshot_json, @updated_at)
+    `).run({
+      snapshot_json: JSON.stringify({ subscriptions: validated }),
+      updated_at: occurred_at,
+    });
+    return {
+      first_scan: true,
+      subscriptions_count: validated.length,
+      subscribes: 0, unsubscribes: 0, total_emitted: 0,
+    };
+  }
+
+  const diff = diffChannelSubscriptions(prior, validated);
+  let emitted = 0;
+  function safeEmit(row) {
+    try { insertAuditChannelSubscriptionChange(row); emitted++; } catch (e) { /* never block scan */ }
+  }
+  for (const s of diff.subscribes) {
+    safeEmit({
+      occurred_at, agent_id: s.agent_id, change_type: 'subscribe',
+      channel_name: s.channel_name, actor,
+      source_path: s.source_path,
+      reason: `channel-sub-scan: ${s.agent_id} subscribed to ${s.channel_name}`,
+    });
+  }
+  for (const s of diff.unsubscribes) {
+    safeEmit({
+      occurred_at, agent_id: s.agent_id, change_type: 'unsubscribe',
+      channel_name: s.channel_name, actor,
+      source_path: s.source_path,
+      reason: `channel-sub-scan: ${s.agent_id} unsubscribed from ${s.channel_name}`,
+    });
+  }
+
+  database.prepare(`
+    INSERT OR REPLACE INTO channel_subscription_snapshot (id, snapshot_json, updated_at)
+    VALUES (1, @snapshot_json, @updated_at)
+  `).run({
+    snapshot_json: JSON.stringify({ subscriptions: validated }),
+    updated_at: occurred_at,
+  });
+
+  return {
+    first_scan: false,
+    subscribes: diff.subscribes.length,
+    unsubscribes: diff.unsubscribes.length,
+    total_emitted: emitted,
+  };
+}
+
 module.exports = {
   initializeDb,
   insertMessage,
@@ -2698,6 +2912,11 @@ module.exports = {
   insertAuditAttestation,
   listAuditAttestations,
   ATTESTATION_CONTROL_AREAS,
+  // CP12.15 (2026-06-07): channel-subscription change history (Phase 2)
+  insertAuditChannelSubscriptionChange,
+  listAuditChannelSubscriptionChanges,
+  processChannelSubscriptionScan,
+  diffChannelSubscriptions,
   upsertPolicyRule,
   listPolicyRules,
   getPolicyRule,
