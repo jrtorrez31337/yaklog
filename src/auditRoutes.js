@@ -30,6 +30,10 @@ const {
   aggregateCredentialChanges,
   // CP12.15 Phase 2 channel-subscription change history
   listAuditChannelSubscriptionChanges,
+  // CP12.16 Phase 2 GRC reconcile-class extension
+  listAuditReconciliations,
+  aggregateAuditReconciliationsByClass,
+  RECONCILE_CLASS_VOCAB,
 } = require('./db');
 
 const costQuery = require('./costQuery');
@@ -716,6 +720,38 @@ router.get('/audit/credential-rotation-aggregate', (req, res) => {
     const buckets = aggregateCredentialChanges({ from, to, group_by });
     const total = buckets.reduce((s, b) => s + b.count, 0);
     return res.json({ from, to, group_by, total, buckets });
+  } catch (e) {
+    if (/unknown period/.test(e.message)) return badRequest(res, e.message);
+    return safeError(res, e);
+  }
+});
+
+// CP12.16 Phase 2: GET /audit/reconciliations + /audit/reconciliations-by-class
+router.get('/audit/reconciliations', (req, res) => {
+  try {
+    const { from, to } = parseRange(req);
+    const reconcile_class = req.query.reconcile_class ? String(req.query.reconcile_class) : undefined;
+    if (reconcile_class && !RECONCILE_CLASS_VOCAB.has(reconcile_class)) {
+      return badRequest(res, `reconcile_class must be one of ${[...RECONCILE_CLASS_VOCAB].join('|')}`);
+    }
+    const rows = listAuditReconciliations({
+      from, to, reconcile_class,
+      external_system_label: req.query.external_system_label ? String(req.query.external_system_label) : undefined,
+      limit: clampLimit(req.query.limit),
+    });
+    return res.json({ rows, count: rows.length });
+  } catch (e) {
+    if (/unknown period/.test(e.message)) return badRequest(res, e.message);
+    return safeError(res, e);
+  }
+});
+
+router.get('/audit/reconciliations-by-class', (req, res) => {
+  try {
+    const { from, to } = parseRange(req, { defaultPeriod: '90d' });
+    const buckets = aggregateAuditReconciliationsByClass({ from, to });
+    const total = buckets.reduce((s, b) => s + b.count, 0);
+    return res.json({ from, to, total, buckets });
   } catch (e) {
     if (/unknown period/.test(e.message)) return badRequest(res, e.message);
     return safeError(res, e);

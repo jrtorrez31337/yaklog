@@ -38,6 +38,7 @@ const {
   insertAuditAttestation,
   ATTESTATION_CONTROL_AREAS,
   processChannelSubscriptionScan,
+  RECONCILE_CLASS_VOCAB,
 } = require('./db');
 
 const router = express.Router();
@@ -196,12 +197,18 @@ router.post('/audit/reconcile', (req, res) => {
   if (!Number.isInteger(b.plexus_count) || !Number.isInteger(b.external_count)) {
     return badRequest(res, 'plexus_count + external_count must be integers');
   }
+  // CP12.16: reconcile_class optional (defaults 'other' in helper); validate
+  // at handler for the 400 vs 500 boundary discipline.
+  if (b.reconcile_class && !RECONCILE_CLASS_VOCAB.has(b.reconcile_class)) {
+    return badRequest(res, `reconcile_class must be one of ${[...RECONCILE_CLASS_VOCAB].join('|')}`);
+  }
   const actor = computeActor(req);
   try {
     const result = insertAuditReconciliation({
       period_start: b.period_start,
       period_end: b.period_end,
       external_system_label: b.external_system_label,
+      reconcile_class: b.reconcile_class,
       plexus_count: b.plexus_count,
       external_count: b.external_count,
       concentration_json: b.concentration_json,

@@ -596,6 +596,15 @@ function initializeDb() {
   `).run();
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_audit_recon_period ON audit_reconciliation(period_end DESC)`).run();
 
+  // CP12.16 Phase 2: reconcile_class column for GRC vocab discipline. Safe
+  // ADD COLUMN with DEFAULT so prior rows default to 'other'. Idempotent
+  // re-run via PRAGMA check; SQLite has no "ADD COLUMN IF NOT EXISTS".
+  const reconColInfo = db.prepare(`PRAGMA table_info(audit_reconciliation)`).all();
+  if (!reconColInfo.some(c => c.name === 'reconcile_class')) {
+    db.prepare(`ALTER TABLE audit_reconciliation ADD COLUMN reconcile_class TEXT NOT NULL DEFAULT 'other'`).run();
+  }
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_audit_recon_class_period ON audit_reconciliation(reconcile_class, period_end DESC)`).run();
+
   // audit_payload_store — separate deletable-payload store per secops R/
   // Finding 2 fold. payload_ref UUID is the FK from audit tables. Atomic
   // deletion in tombstone transaction per admin R2 fold.
@@ -1567,12 +1576,29 @@ function disposePolicyViolation(id, { disposition, disposition_by, disposition_n
 
 // ─── audit_reconciliation ───────────────────────────────────────────────────
 
+// CP12.16 Phase 2: canonical reconcile-class vocab discipline. Operators
+// stuffing free-form labels into external_system_label fragments the audit-
+// tab narrative; reconcile_class provides cross-cycle aggregation key.
+//
+//   grc-platform    — Vanta / Drata / ServiceNow GRC / Hyperproof
+//   soc-tool        — SOC analyst tooling (Splunk + Sentinel + Chronicle)
+//   siem            — SIEM-export reconciliation (most common Phase 1 path)
+//   internal-export — internal audit bundle delta reconciliation
+//   other           — catch-all (default for pre-CP12.16 rows)
+const RECONCILE_CLASS_VOCAB = new Set([
+  'grc-platform', 'soc-tool', 'siem', 'internal-export', 'other',
+]);
+
 function insertAuditReconciliation(row) {
   if (!row || !row.period_start || !row.period_end || !row.external_system_label || !row.reconciler_agent_id || !row.reconciled_by) {
     throw new Error('insertAuditReconciliation: period_start + period_end + external_system_label + reconciler_agent_id + reconciled_by required');
   }
   if (!Number.isInteger(row.plexus_count) || !Number.isInteger(row.external_count)) {
     throw new Error('insertAuditReconciliation: plexus_count + external_count must be integers');
+  }
+  const reconcile_class = row.reconcile_class || 'other';
+  if (!RECONCILE_CLASS_VOCAB.has(reconcile_class)) {
+    throw new Error(`insertAuditReconciliation: reconcile_class must be one of ${[...RECONCILE_CLASS_VOCAB].join('|')}`);
   }
   const database = getDb();
   const delta_count = row.external_count - row.plexus_count;
@@ -1581,11 +1607,11 @@ function insertAuditReconciliation(row) {
     : (row.external_count === 0 ? 0 : 100);
   const result = database.prepare(`
     INSERT INTO audit_reconciliation (
-      period_start, period_end, external_system_label,
+      period_start, period_end, external_system_label, reconcile_class,
       plexus_count, external_count, delta_count, delta_pct,
       concentration_json, notes, reconciler_agent_id, reconciled_by, reconciled_at
     ) VALUES (
-      @period_start, @period_end, @external_system_label,
+      @period_start, @period_end, @external_system_label, @reconcile_class,
       @plexus_count, @external_count, @delta_count, @delta_pct,
       @concentration_json, @notes, @reconciler_agent_id, @reconciled_by, @reconciled_at
     )
@@ -1593,6 +1619,7 @@ function insertAuditReconciliation(row) {
     period_start: row.period_start,
     period_end: row.period_end,
     external_system_label: row.external_system_label,
+    reconcile_class,
     plexus_count: row.plexus_count,
     external_count: row.external_count,
     delta_count,
@@ -1608,9 +1635,38 @@ function insertAuditReconciliation(row) {
   return { id: result.lastInsertRowid, delta_count, delta_pct };
 }
 
-function listAuditReconciliations({ limit = 100 } = {}) {
+function listAuditReconciliations({ from, to, reconcile_class, external_system_label, limit = 100 } = {}) {
   const database = getDb();
-  return database.prepare('SELECT * FROM audit_reconciliation ORDER BY id DESC LIMIT ?').all(limit);
+  const where = [];
+  const params = { limit };
+  if (from)                  { where.push('period_end >= @from'); params.from = from; }
+  if (to)                    { where.push('period_end <= @to'); params.to = to; }
+  if (reconcile_class)       { where.push('reconcile_class = @reconcile_class'); params.reconcile_class = reconcile_class; }
+  if (external_system_label) { where.push('external_system_label = @external_system_label'); params.external_system_label = external_system_label; }
+  const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  return database
+    .prepare(`SELECT * FROM audit_reconciliation ${whereClause} ORDER BY id DESC LIMIT @limit`)
+    .all(params);
+}
+
+function aggregateAuditReconciliationsByClass({ from, to } = {}) {
+  const database = getDb();
+  const where = [];
+  const params = {};
+  if (from) { where.push('period_end >= @from'); params.from = from; }
+  if (to)   { where.push('period_end <= @to'); params.to = to; }
+  const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  return database
+    .prepare(`
+      SELECT reconcile_class, COUNT(*) AS count,
+             SUM(delta_count) AS total_delta_count,
+             AVG(delta_pct) AS avg_delta_pct
+      FROM audit_reconciliation
+      ${whereClause}
+      GROUP BY reconcile_class
+      ORDER BY count DESC
+    `)
+    .all(params);
 }
 
 // ─── audit_payload_store ───────────────────────────────────────────────────
@@ -2917,6 +2973,9 @@ module.exports = {
   listAuditChannelSubscriptionChanges,
   processChannelSubscriptionScan,
   diffChannelSubscriptions,
+  // CP12.16 (2026-06-07): GRC reconcile-class extension (Phase 2)
+  RECONCILE_CLASS_VOCAB,
+  aggregateAuditReconciliationsByClass,
   upsertPolicyRule,
   listPolicyRules,
   getPolicyRule,
