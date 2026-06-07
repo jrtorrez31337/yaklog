@@ -40,6 +40,21 @@ function clampLimit(raw, def = 100, max = 1000) {
   return Math.min(n, max);
 }
 
+// CP12.14: explicit date-only bounds are expanded to start/end of day in
+// ISO form so the SQL lex-compare against occurred_at (which always has a
+// time component) doesn't accidentally exclude same-day events. Mirrors the
+// period-branch behavior. Fixes bizmodel #7974 + #7976 + #7988 half-open
+// to= bug observed across the older /audit/{tool-invocations, file-access,
+// credential-changes, permission-changes} endpoints + applies to the
+// CP12.13 explicit-bounds code path too. Full-ISO bounds passthrough.
+function expandIsoBound(s, endOfDay) {
+  if (!s) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    return endOfDay ? `${s}T23:59:59.999Z` : `${s}T00:00:00.000Z`;
+  }
+  return s;
+}
+
 function parseRange(req, { defaultPeriod = null } = {}) {
   // Returns { from, to, period? } resolving either explicit from/to or named period.
   const period = req.query.period ? String(req.query.period) : null;
@@ -51,7 +66,10 @@ function parseRange(req, { defaultPeriod = null } = {}) {
     return { period, from: `${r.from}T00:00:00.000Z`, to: `${r.to}T23:59:59.999Z`, label: r.label };
   }
   if (explicitFrom || explicitTo) {
-    return { from: explicitFrom, to: explicitTo };
+    return {
+      from: expandIsoBound(explicitFrom, false),
+      to: expandIsoBound(explicitTo, true),
+    };
   }
   if (defaultPeriod) {
     const r = costQuery.periodToRange(defaultPeriod);
