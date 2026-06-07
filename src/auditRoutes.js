@@ -459,24 +459,86 @@ router.get('/policy/divergence', (req, res) => {
 // — these are the surfaces where instrumentation needs catch-up.
 // ──────────────────────────────────────────────────────────────────────────
 
+// CP12.9 (2026-06-06): per-agent disposition enrichment per Jon-direct
+// honesty-of-the-tile ask. Classifies each "missing" agent so dashboard
+// can distinguish genuine gaps from known-inactive / alias / different-
+// runtime noise. Heuristics per cluster canon (project_* memories):
+//   inactive       — daemon_state=down OR last_heartbeat > 7d ago
+//   alias_of:<x>   — known-alias map (gamedev-godot-apple → macdev-godot)
+//   different_runtime:<r> — known non-Claude-Code runtimes (gemini, codex)
+//   genuine_gap    — daemon up + heartbeat fresh + no audit_tool_invocation
+//                    in 7d window — this is the real instrumentation gap
+//                    that needs operator attention
+//
+// Hard-coded knowledge in this file is the pragmatic Phase-1 path; a
+// formal agent-registry lookup (per-agent runtime + disposition flag)
+// would be Phase 2 once the agent_registry table lands.
+
+const KNOWN_ALIAS_MAP = {
+  'gamedev-godot-apple-agent': 'macdev-godot-agent',
+};
+const KNOWN_DIFFERENT_RUNTIME = {
+  'gemini-agent': 'gemini-cli',
+  'aieng3-agent': 'codex',
+};
+
+function classifyMissingAgent(agentId, presenceRow, nowMs) {
+  if (KNOWN_ALIAS_MAP[agentId]) {
+    return { agent_id: agentId, disposition: 'alias_of', detail: KNOWN_ALIAS_MAP[agentId] };
+  }
+  if (KNOWN_DIFFERENT_RUNTIME[agentId]) {
+    return { agent_id: agentId, disposition: 'different_runtime', detail: KNOWN_DIFFERENT_RUNTIME[agentId] };
+  }
+  if (!presenceRow) {
+    return { agent_id: agentId, disposition: 'no_presence_row', detail: null };
+  }
+  if (presenceRow.daemon_state === 'down') {
+    return { agent_id: agentId, disposition: 'inactive', detail: 'daemon down' };
+  }
+  if (presenceRow.last_heartbeat_at) {
+    const ageMs = nowMs - new Date(presenceRow.last_heartbeat_at).getTime();
+    if (ageMs > 7 * 86400_000) {
+      return { agent_id: agentId, disposition: 'inactive', detail: `heartbeat ${Math.floor(ageMs / 86400_000)}d old` };
+    }
+  }
+  // Active + heartbeating + audited:false → this is the genuine gap
+  return { agent_id: agentId, disposition: 'genuine_gap', detail: 'active but no audit_tool_invocation events' };
+}
+
 router.get('/audit/coverage-gap', (req, res) => {
   try {
     const now = new Date();
-    const from = new Date(now.getTime() - 7 * 86400_000).toISOString();
+    const nowMs = now.getTime();
+    const from = new Date(nowMs - 7 * 86400_000).toISOString();
     const to = now.toISOString();
 
     const tiRows = listAuditToolInvocations({ from, to, limit: 10000 });
     const audited = new Set(tiRows.map(r => r.agent_id).filter(Boolean));
 
     const presenceRows = listPresence();
+    const presenceById = new Map(presenceRows.map(p => [p.agent_id, p]));
     const presenceAgents = new Set(presenceRows.map(p => p.agent_id).filter(Boolean));
 
     const missing = [...presenceAgents].filter(a => !audited.has(a)).sort();
+    const missing_dispositions = missing.map(a => classifyMissingAgent(a, presenceById.get(a), nowMs));
+
+    // Honest count: only genuine_gap entries are real instrumentation gaps.
+    // alias / different_runtime / inactive are noise that the dashboard
+    // should surface separately.
+    const genuine_gap_count = missing_dispositions.filter(d => d.disposition === 'genuine_gap').length;
+    const inactive_count = missing_dispositions.filter(d => d.disposition === 'inactive').length;
+    const alias_count = missing_dispositions.filter(d => d.disposition === 'alias_of').length;
+    const different_runtime_count = missing_dispositions.filter(d => d.disposition === 'different_runtime').length;
 
     return res.json({
       agents_audit_wired: audited.size,
       agents_missing_trail_7d: missing.length,
+      genuine_gap_count,
+      inactive_count,
+      alias_count,
+      different_runtime_count,
       missing_agent_ids: missing,
+      missing_dispositions,
       window_from: from,
       window_to: to,
       computed_at: new Date().toISOString(),

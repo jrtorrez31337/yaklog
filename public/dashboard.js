@@ -3140,20 +3140,44 @@
       if (!tile) return;
       const codified = polR.policies_codified || 0;
       const missingTrail = gapR.agents_missing_trail_7d || 0;
-      tile.querySelector('.tile-val').textContent = `${codified} / ${missingTrail}`;
-      // CP12.4.1 (C-honesty per parch #7817 arbitration): qualifier that audit
-      // trail is wired for PRESENCE but forensic-content (tool_name + digests)
-      // is gated on Phase 1.5.D substrate-tier capture per the A+D+C composite.
-      // No implied audit-coverage that empirically doesn't hold (ADR-0030 §8 #1+#8).
+      const genuineGap = gapR.genuine_gap_count != null ? gapR.genuine_gap_count : missingTrail;
+      const inactiveCount = gapR.inactive_count || 0;
+      const aliasCount = gapR.alias_count || 0;
+      const differentRuntimeCount = gapR.different_runtime_count || 0;
+
+      // Headline: codified / genuine-gap (NOT raw missing — most of the
+      // raw missing count is known-inactive / alias / different-runtime
+      // noise per CP12.9 disposition enrichment).
+      tile.querySelector('.tile-val').textContent = `${codified} / ${genuineGap}`;
+
+      // Build noise-breakdown suffix when there's any noise to surface.
+      const noiseParts = [];
+      if (inactiveCount > 0) noiseParts.push(`${inactiveCount} inactive`);
+      if (aliasCount > 0) noiseParts.push(`${aliasCount} alias`);
+      if (differentRuntimeCount > 0) noiseParts.push(`${differentRuntimeCount} non-CC runtime`);
+      const noiseSuffix = noiseParts.length > 0
+        ? ` (${noiseParts.join(' · ')} excluded as known-disposition)`
+        : '';
+
+      // CP12.9 (2026-06-06): Phase 1.5.D OPERATIONAL per #7959 — forensic-
+      // content tier (tool_name + file-access digests) now landed via the
+      // plexus-audit-ingester eBPF substrate. Stale "gated on Phase 1.5.D"
+      // qualifier removed.
       tile.querySelector('.tile-sub').textContent =
-        `${codified} policies codified · ${missingTrail} agents missing 7d trail · ` +
-        `presence-tier wired; forensic-content (tool_name+digests) gated on Phase 1.5.D`;
+        `${codified} policies codified · ${genuineGap} genuine instrumentation gaps in 7d` +
+        noiseSuffix +
+        ` · presence-tier + forensic-content both wired (CP12.4 + Phase 1.5.D OPERATIONAL)`;
+
       tile.title =
-        'Coverage gaps = policies codified + agents with audit-trail in last 7d. ' +
-        'Per CP12.4.1 cross-lane arbitration: presence-tier capture is wired (CP12.4); ' +
-        'forensic-content tier (tool_name + input/output digests) lands at Phase 1.5.D ' +
-        'eBPF substrate ship (process-tree cmdline + content-digest in-kernel).';
-      tile.className = 'audit-tile' + (codified === 0 || missingTrail > 0 ? ' severity-warn' : ' severity-clean');
+        'Coverage gaps = policies codified + agents with genuine audit-trail gap in last 7d. ' +
+        'Per CP12.9 disposition enrichment: missing agents classified as ' +
+        'alias_of / different_runtime / inactive / genuine_gap; headline reflects ' +
+        'genuine_gap only. Phase 1.5.D file-access substrate OPERATIONAL per #7959 ' +
+        '(eBPF tracepoints + 3-program load + ringbuf pin; CC7 events_mtd ~16K).';
+
+      // Severity: warn if any genuine gap OR no codified policies; clean otherwise
+      tile.className = 'audit-tile' +
+        (codified === 0 || genuineGap > 0 ? ' severity-warn' : ' severity-clean');
     } catch (e) { /* keep prior */ }
 
     // Tile 3: Recent high-risk events (last 24h)
