@@ -770,7 +770,7 @@ router.get('/audit/reconciliations-by-class', (req, res) => {
 // Aggregate over bare-repo git-log. Filters commits that touched ADR
 // markdown files. Heuristic match: filename contains 'adr' (case-insensitive)
 // AND ends in .md.
-const ADR_REPO_ALLOWLIST = new Set(['agent-specs', 'agent-globals']);
+const ADR_REPO_ALLOWLIST = new Set(['agent-specs', 'agent-globals', 'adr-canon']);
 
 router.get('/audit/adr-change-history', (req, res) => {
   try {
@@ -818,7 +818,12 @@ router.get('/audit/adr-change-history', (req, res) => {
         };
       } else if (line.trim() && current) {
         const path = line.trim();
-        if (/\.md$/i.test(path) && /adr/i.test(path)) {
+        // adr-canon repo: any .md is an ADR (dedicated-purpose repo per Gate 3
+        // canonical layout — naming is leading-digit `NNNN-slug.md`, not
+        // adr-prefixed). Other repos: heuristic 'adr' in filename.
+        const isAdr = /\.md$/i.test(path)
+          && (repo === 'adr-canon' ? /(^|\/)\d{3,4}-/.test(path) : /adr/i.test(path));
+        if (isAdr) {
           current.files.push(path);
         }
       }
@@ -835,8 +840,10 @@ router.get('/audit/adr-change-history', (req, res) => {
     const correlate = req.query.correlate !== 'false';  // default on
     if (correlate) {
       for (const c of adrCommits) {
-        const adrFile = c.files.find(f => /adr/i.test(f));
-        const m = adrFile && adrFile.match(/adr[-_]?(\d{1,5})/i);
+        const adrFile = c.files[0];  // first ADR-recognized file per filter above
+        // Match: canonical adr-canon shape "NNNN-slug.md" leading digits,
+        // OR heuristic "adr-NNNN" / "ADR-NNNN" anywhere in filename.
+        const m = adrFile && (adrFile.match(/(?:^|\/)(\d{3,4})-/) || adrFile.match(/adr[-_]?(\d{1,5})/i));
         if (!m) { c.correlated_message_ids = []; continue; }
         const adrNum = m[1];
         const ts = new Date(c.ts);

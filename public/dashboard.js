@@ -3577,6 +3577,124 @@
     } catch (e) {
       list.innerHTML = `<div class="audit-loading">error: ${e.message}</div>`;
     }
+
+    // CP12.20: Chain integrity card — last 30 days anchor verify status.
+    // Per ADR-0030 v1.2 §Phase 3(A) + secops #8028 honesty note: anchor
+    // covers high-water event_id + 100-event recent horizon (sample-based);
+    // verify uses Reading-2 semantics (CP12.12.1) so match:true is
+    // reproducible + match:false signals genuine tamper.
+    const chainCard = _buildChainIntegrityCard();
+    panel.appendChild(chainCard);
+    _populateChainIntegrityCard(chainCard);  // async fill
+  }
+
+  function _buildChainIntegrityCard() {
+    const card = el('div', { class: 'chain-integrity-card' });
+    const header = el('div', { class: 'ci-header' });
+    header.appendChild(el('div', { class: 'ci-title' }, 'Chain integrity (Phase 3 (A) anchor verify)'));
+    header.appendChild(el('div', { class: 'ci-substrate' }, 'substrate: s3-object-lock'));
+    card.appendChild(header);
+    card.appendChild(el('div', { class: 'ci-note' },
+      'Anchor covers chain high-water event_id + 100-event recent horizon (sample-based, not full Merkle). Reading-2 verify (CP12.12.1): match:false = genuine tamper signal, not chain-advancement noise. Click any day to inspect.'));
+
+    const grid = el('div', { class: 'chain-integrity-grid' });
+    card.appendChild(grid);
+
+    // Build 30-day window placeholder (gray) first; populate from API.
+    const today = new Date();
+    const days = [];
+    for (let i = 29; i >= 0; i--) {
+      const d = new Date(today.getTime() - i * 86400_000);
+      days.push(d.toISOString().slice(0, 10));
+    }
+    const cellByDay = new Map();
+    for (const day of days) {
+      const cell = el('div', { class: 'ci-cell ci-missing', title: `${day} · no anchor recorded yet` });
+      cell.addEventListener('click', () => _drillChainIntegrity(day));
+      cellByDay.set(day, cell);
+      grid.appendChild(cell);
+    }
+
+    // Legend
+    const legend = el('div', { class: 'chain-integrity-legend' });
+    const mkSwatch = (cls) => {
+      const s = el('span', { class: `legend-swatch ${cls}` });
+      s.style.backgroundColor = cls === 'ci-match' ? 'var(--green)'
+        : cls === 'ci-tamper' ? 'var(--red)'
+        : 'rgba(255,255,255,0.04)';
+      return s;
+    };
+    const lm = el('span'); lm.appendChild(mkSwatch('ci-match')); lm.appendChild(document.createTextNode(' verified (match)'));
+    const lt = el('span'); lt.appendChild(mkSwatch('ci-tamper')); lt.appendChild(document.createTextNode(' TAMPER DETECTED'));
+    const ln = el('span'); ln.appendChild(mkSwatch('ci-missing')); ln.appendChild(document.createTextNode(' no anchor (gap)'));
+    legend.appendChild(lm); legend.appendChild(lt); legend.appendChild(ln);
+    card.appendChild(legend);
+
+    // Stash cell-by-day map on the card so the async populator can find it.
+    card._cellByDay = cellByDay;
+    card._days = days;
+    return card;
+  }
+
+  async function _populateChainIntegrityCard(card) {
+    const cellByDay = card._cellByDay;
+    const days = card._days;
+    if (!cellByDay || !days) return;
+    try {
+      const r = await fetch(`/api/v1/plexus/public/audit/anchors?from=${days[0]}&to=${days[days.length-1]}&limit=100`);
+      const j = await r.json();
+      const anchors = j.rows || [];
+      await Promise.all(anchors.map(async (a) => {
+        const cell = cellByDay.get(a.anchor_day);
+        if (!cell) return;
+        try {
+          const vr = await fetch(`/api/v1/plexus/public/audit/anchor-verify?day=${a.anchor_day}&anchor_substrate=${encodeURIComponent(a.anchor_substrate)}`);
+          const vj = await vr.json();
+          cell.classList.remove('ci-missing');
+          if (vj.match) {
+            cell.classList.add('ci-match');
+            cell.title = `${a.anchor_day} · ${a.anchor_substrate} · verified (match:true)`;
+          } else {
+            cell.classList.add('ci-tamper');
+            cell.title = `${a.anchor_day} · ${a.anchor_substrate} · TAMPER DETECTED — ${vj.note || 'mismatch'}`;
+          }
+        } catch (e) { /* leave as missing */ }
+      }));
+    } catch (e) { /* leave grid as missing */ }
+  }
+
+  async function _drillChainIntegrity(day) {
+    try {
+      const r = await fetch(`/api/v1/plexus/public/audit/anchor/${day}`);
+      if (r.status === 404) {
+        alert(`No anchor recorded for ${day}.\n\nGap may mean: anchor-publisher cron didn't run that day, OR the day is before the first anchor was recorded.`);
+        return;
+      }
+      const j = await r.json();
+      const vr = await fetch(`/api/v1/plexus/public/audit/anchor-verify?day=${day}`);
+      const vj = await vr.json();
+      const lines = [
+        `Anchor: ${day}`,
+        '',
+        `Substrate: ${j.anchor_substrate || (j.anchors && j.anchors[0] && j.anchors[0].anchor_substrate) || '(multi)'}`,
+        `Anchor URI: ${j.anchor_uri || (j.anchors && j.anchors[0] && j.anchors[0].anchor_uri) || '(see anchors[])'}`,
+        '',
+        `Verify result: ${vj.match ? '✓ MATCH' : '✗ TAMPER DETECTED'}`,
+        `tamper_detected: ${vj.tamper_detected}`,
+        '',
+        `Stored digest:     ${vj.stored_digest || '—'}`,
+        `Recomputed digest: ${vj.recomputed_digest || '—'}`,
+        '',
+        `Stored high-water: ${vj.stored_high_water_event_id || '—'}`,
+        `Stored table:      ${vj.stored_high_water_table || '—'}`,
+        `Sample size:       ${vj.sample_size || '—'}`,
+        '',
+        `Note: ${vj.note || ''}`,
+      ];
+      alert(lines.join('\n'));
+    } catch (e) {
+      alert(`drill failed: ${e.message}`);
+    }
   }
 
   // ─── Policies sub-view: rule list + add/edit form ───────────────────

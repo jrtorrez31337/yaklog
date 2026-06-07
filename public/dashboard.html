@@ -468,6 +468,21 @@
   .control-area-row .ca-classes .ca-class { display: inline-block; background: rgba(255,255,255,0.05); padding: 1px 5px; border-radius: 3px; margin-right: 4px; }
   .control-area-row .ca-counts { color: var(--text); font-variant-numeric: tabular-nums; text-align: right; }
 
+  /* CP12.20: Chain integrity card (Phase 3 (A) Attest sub-view) */
+  .chain-integrity-card { margin-top: 16px; padding: 12px 14px; background: var(--panel); border: 1px solid var(--border); border-radius: 4px; }
+  .chain-integrity-card .ci-header { display: flex; align-items: baseline; gap: 12px; margin-bottom: 4px; }
+  .chain-integrity-card .ci-title { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+  .chain-integrity-card .ci-substrate { font-size: 11px; color: var(--blue); font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+  .chain-integrity-card .ci-note { font-size: 11px; color: var(--muted); margin-bottom: 10px; font-style: italic; }
+  .chain-integrity-grid { display: grid; grid-template-columns: repeat(30, 1fr); gap: 3px; margin-top: 6px; }
+  .ci-cell { aspect-ratio: 1; border-radius: 2px; background: rgba(255,255,255,0.04); cursor: pointer; transition: transform 0.05s; }
+  .ci-cell:hover { transform: scale(1.15); }
+  .ci-cell.ci-match { background: var(--green); }
+  .ci-cell.ci-tamper { background: var(--red); }
+  .ci-cell.ci-missing { background: rgba(255,255,255,0.04); border: 1px dashed var(--muted); }
+  .chain-integrity-legend { display: flex; gap: 14px; margin-top: 10px; font-size: 11px; color: var(--muted); }
+  .chain-integrity-legend .legend-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
+
   /* Policies sub-view: rule list + add/edit form */
   .policy-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
   .policy-row { background: var(--panel); border: 1px solid var(--border); border-left: 3px solid var(--blue); border-radius: 4px; padding: 10px 14px; display: grid; grid-template-columns: 180px 1fr 80px 80px; gap: 12px; align-items: center; font-size: 12px; }
