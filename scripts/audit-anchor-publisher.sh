@@ -27,12 +27,18 @@ S3_BUCKET=""
 DRY_RUN=0
 ANCHOR_DAY="${ANCHOR_DAY:-$(date -u +%Y-%m-%d)}"
 ANCHOR_SUBSTRATE="s3-object-lock"
+# CP12.21.1 (2026-06-09): --endpoint-url support for local-S3-equivalent
+# (MinIO on devel per Jon-direct brand-narrative pivot). Defaults to
+# AWS_ENDPOINT_URL env var (which aws cli v2.13+ honors natively); script
+# flag is explicit override. Empty = AWS-default-cloud-S3 endpoint.
+S3_ENDPOINT_URL="${AWS_ENDPOINT_URL:-}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --yaklog-url)    YAKLOG_URL="$2"; shift 2 ;;
     --ops-key-file)  OPS_KEY_FILE="$2"; shift 2 ;;
     --s3-bucket)     S3_BUCKET="$2"; shift 2 ;;
+    --endpoint-url)  S3_ENDPOINT_URL="$2"; shift 2 ;;
     --anchor-day)    ANCHOR_DAY="$2"; shift 2 ;;
     --substrate)     ANCHOR_SUBSTRATE="$2"; shift 2 ;;
     --dry-run)       DRY_RUN=1; shift ;;
@@ -42,6 +48,14 @@ while [[ $# -gt 0 ]]; do
     *) echo "[ERR] unknown flag: $1" >&2; exit 2 ;;
   esac
 done
+
+# Build --endpoint-url arg array (empty if no endpoint set; passed to all
+# aws s3api calls as expansion). Avoids breaking AWS-default-cloud usage.
+AWS_ENDPOINT_ARGS=()
+if [[ -n "$S3_ENDPOINT_URL" ]]; then
+  AWS_ENDPOINT_ARGS=("--endpoint-url" "$S3_ENDPOINT_URL")
+  echo "[anchor] S3 endpoint: $S3_ENDPOINT_URL"
+fi
 
 if [[ -z "$OPS_KEY_FILE" && -z "${YAKLOG_OPS_KEY:-}" ]]; then
   echo "[ERR] --ops-key-file <path> required (or YAKLOG_OPS_KEY env)" >&2
@@ -85,7 +99,9 @@ ANCHOR_URI=""
 
 if [[ $DRY_RUN -eq 1 ]]; then
   echo "[dry-run] would PUT s3://${S3_BUCKET}/${S3_KEY} with Object Lock Compliance 7y"
-  ANCHOR_URI="s3://${S3_BUCKET}/${S3_KEY}#dry-run"
+  echo "[dry-run] would record anchor in yaklog (skipped to avoid incoherent DB row without S3 object)"
+  echo "[dry-run] OK — snapshot + key computation paths validated; substrate untouched"
+  exit 0
 else
   if ! command -v aws >/dev/null; then
     echo "[ERR] aws cli not installed; cannot publish to S3" >&2
@@ -93,13 +109,22 @@ else
   fi
   RETENTION_UNTIL=$(date -u -d "$ANCHOR_DAY +7 years" +%Y-%m-%dT%H:%M:%SZ)
   echo "[anchor] PUT s3://${S3_BUCKET}/${S3_KEY} (Compliance until $RETENTION_UNTIL)"
-  echo "$DIGEST" | aws s3api put-object \
+  # AWS CLI --body requires a file path (not /dev/stdin). Use mktemp +
+  # trap-cleanup so the digest file is gone after publish; nothing stays
+  # in tmpfs that survives the publish call.
+  DIGEST_FILE=$(mktemp --tmpdir audit-anchor-digest.XXXXXX)
+  trap "rm -f '$DIGEST_FILE'" EXIT
+  printf '%s' "$DIGEST" > "$DIGEST_FILE"
+  aws s3api put-object \
+    "${AWS_ENDPOINT_ARGS[@]}" \
     --bucket "$S3_BUCKET" \
     --key "$S3_KEY" \
-    --body /dev/stdin \
+    --body "$DIGEST_FILE" \
     --object-lock-mode COMPLIANCE \
     --object-lock-retain-until-date "$RETENTION_UNTIL" \
     --content-type text/plain
+  rm -f "$DIGEST_FILE"
+  trap - EXIT
   ANCHOR_URI="s3://${S3_BUCKET}/${S3_KEY}"
 
   # CP12.21 secops #8068 §3 refinement: GetObject post-publish self-verify.
@@ -108,7 +133,7 @@ else
   # IAM-policy denial that PUT returned 200 on but the object isn't
   # readable. Non-blocking on yaklog-side record (we still record the
   # anchor even if self-verify fails — operator sees the warning).
-  ROUNDTRIP=$(aws s3api get-object --bucket "$S3_BUCKET" --key "$S3_KEY" /dev/stdout 2>/dev/null | head -c 64)
+  ROUNDTRIP=$(aws s3api get-object "${AWS_ENDPOINT_ARGS[@]}" --bucket "$S3_BUCKET" --key "$S3_KEY" /dev/stdout 2>/dev/null | head -c 64)
   if [[ "$ROUNDTRIP" != "$DIGEST" ]]; then
     echo "[WARN] post-publish self-verify FAILED: roundtrip='${ROUNDTRIP}' expected='${DIGEST}'" >&2
     echo "[WARN] proceeding to record anchor in yaklog; operator should investigate S3 state" >&2
