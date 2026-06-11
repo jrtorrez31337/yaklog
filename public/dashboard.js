@@ -1310,11 +1310,14 @@
     setView(idx) {
       if (idx === this.currentView) return;
       this.currentView = idx;
-      // Update the view-label in the header (added by _renderHead)
-      const labelEl = this.headEl.querySelector('.agent-card-view-label');
-      if (labelEl) {
-        labelEl.textContent = `${VIEW_LABELS[idx]} ${idx + 1}/${VIEW_LABELS.length}`;
-      }
+      // CP12.23 (2026-06-11): per Jon-direct, view-label "$idx/$count" replaced
+      // with a clickable pill row. Update active state on the pills instead of
+      // mutating a text span.
+      const pillEls = this.headEl.querySelectorAll('.agent-card-view-pill');
+      pillEls.forEach((p, i) => {
+        if (i === idx) p.classList.add('active');
+        else p.classList.remove('active');
+      });
       this.rerenderBody();
     }
     update(presenceRow) {
@@ -1337,11 +1340,29 @@
       const badge = runtime && runtimeBadge(runtime);
       if (badge) this.headEl.appendChild(badge);
       this.headEl.appendChild(el('span', { class: 'name' }, r.agent_id || this.agentId));
-      // CP10.5: view-label shows current carousel position (e.g. "Trace 6/6")
-      this.headEl.appendChild(el('span', {
-        class: 'agent-card-view-label',
-        title: 'click ‹/› on the card edges (or arrow keys when focused) to switch view',
-      }, `${VIEW_LABELS[this.currentView]} ${this.currentView + 1}/${VIEW_LABELS.length}`));
+      // CP12.23 (2026-06-11): replaced "$idx/$count" view-label with a row of
+      // clickable pills per Jon-direct. Each pill jumps directly to that view;
+      // the active view's pill is highlighted. Side arrows + arrow-keys still
+      // work for sequential navigation.
+      const viewPills = el('span', {
+        class: 'agent-card-view-pills',
+        title: 'click a pill to jump to that view (or use ‹/› arrows / left+right keys)',
+      });
+      VIEW_LABELS.forEach((lbl, i) => {
+        const pill = el('button', {
+          type: 'button',
+          class: 'agent-card-view-pill' + (i === this.currentView ? ' active' : ''),
+          'data-view-idx': String(i),
+          'aria-label': `switch to ${lbl} view`,
+          title: lbl,
+        }, lbl);
+        pill.addEventListener('click', (e) => {
+          e.stopPropagation();
+          this.setView(i);
+        });
+        viewPills.appendChild(pill);
+      });
+      this.headEl.appendChild(viewPills);
       const lbl = r.label || '';
       this.headEl.appendChild(el('span', {
         class: 'label-badge label-' + lbl,
