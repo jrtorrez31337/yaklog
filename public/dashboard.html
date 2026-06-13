@@ -223,7 +223,12 @@
   /* CP6.5: per-card loading state for on-demand range fetches */
   .agent-card .view-loading-inline { color: var(--muted); font-size: 10px; opacity: 0.6; text-align: center; padding: 4px 0; }
   .agent-card-pills { display: flex; gap: 4px; margin-left: auto; }
-  .agent-card .otel-pill, .agent-card .mon-pill { padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 500; cursor: help; }
+  .agent-card .otel-pill, .agent-card .mon-pill, .agent-card .sse-pill { padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 500; cursor: help; }
+  /* CP12.x.4 (2026-06-13): SSE-stale pill. Red family (distinct from
+     Monitor-dead orange family) — silent-dead SSE means agent is missing
+     live bus traffic, which is a more severe failure mode than a dead
+     events.ndjson Monitor subprocess (which only affects @-mention wakeup). */
+  .agent-card .sse-pill { background: rgba(248,113,113,0.14); color: #f87171; }
   .agent-card .otel-pill.live { background: var(--green-bg); color: var(--green); }
   .agent-card .otel-pill.quiet { background: rgba(250,204,21,0.10); color: var(--yellow); }
   .agent-card .mon-pill { background: rgba(251,146,60,0.12); color: #fb923c; }

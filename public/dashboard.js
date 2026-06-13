@@ -1435,6 +1435,24 @@
           title: 'events.ndjson Monitor subprocess is dead',
         }, 'Monitor dead'));
       }
+      // CP12.x.4 (2026-06-13): SSE-stale pill per sleuth #8532 + admin
+      // #8534/#8536 forensic. Server derives sse_stream_stale = heartbeat
+      // fresh AND cursor unchanged > 5min AND cluster traffic flowing.
+      // Catches the daemon-alive + stream-silent failure mode that left
+      // sleuth's events.ndjson frozen for ~21h until server-restart jolted
+      // the daemon out of its silent-dead state. Distinct from Monitor-dead
+      // (subprocess) and stalled (no hook activity); this surfaces the
+      // SSE consume-loop being stuck despite daemon health probes passing.
+      if (r.sse_stream_stale === true) {
+        const ageM = r.last_cursor_advance_at
+          ? Math.round((Date.now() - new Date(r.last_cursor_advance_at).getTime()) / 60000)
+          : null;
+        const tip = `SSE stream silent-dead — daemon process alive + heartbeating, but cursor hasn't advanced in ${ageM != null ? ageM + 'min' : '5+ min'} while cluster traffic continues. Last cursor: ${r.cursor_position}. Per sleuth #8532 + CP12.x.4 substrate bug.`;
+        pills.appendChild(el('span', {
+          class: 'sse-pill',
+          title: tip,
+        }, 'SSE-stale'));
+      }
       // CP7.2: update-available pill (server enriches /presence/public with
       // update_available + canonical_daemon_version per /update manifest).
       if (r.update_available === true) {

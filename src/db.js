@@ -187,6 +187,15 @@ function initializeDb() {
     // daemons read as active = no behavior change.
     ['runtime_state', 'TEXT'],            // 'active' | 'quota_exhausted' | 'error' | NULL→active
     ['runtime_blocked_until', 'TEXT'],    // ISO-8601 reset ETA when not-active; NULL otherwise
+    // CP12.x.4 (2026-06-13): SSE-silent-dead detection per sleuth #8532 +
+    // admin #8534/#8536 forensics. last_cursor_advance_at tracks when the
+    // daemon's SSE-derived cursor_position last incremented; combined with
+    // last_heartbeat_at this surfaces the "process alive, stream silent"
+    // failure mode that left sleuth's events.ndjson frozen for ~21h between
+    // my v0.5.53 restart (induced) and v0.5.54 restart (recovered).
+    // Server-side derived sse_stream_stale flag fires when heartbeat is
+    // fresh AND cursor hasn't advanced AND cluster traffic is flowing.
+    ['last_cursor_advance_at', 'TEXT'],   // ISO-8601 of last cursor_position increment; NULL pre-CP12.x.4
     // CP14.1 (2026-06-13): runtime-class field per Jon-direct via admin #8521.
     // Distinguishes CC vs Codex vs Gemini at dashboard + Prom query level.
     // Prior state: serve-time-enriched at /presence/public via runtimeOf()
@@ -2213,6 +2222,20 @@ function upsertPresence({
 
   const last_state_change_at = stateChanged ? now : (existing ? existing.last_state_change_at : now);
 
+  // CP12.x.4: track last_cursor_advance_at. Sleuth's #8532 + admin #8536
+  // forensic on the SSE silent-dead window showed cursor stays frozen at
+  // the message-id-before-disconnect while heartbeats stay fresh — the
+  // silent-dead signature. Persisting the timestamp lets the dashboard
+  // surface "fresh heartbeat + stale cursor + cluster traffic flowing" as
+  // an SSE-stale pill, catching the case in minutes not hours.
+  const cursorAdvanced = existing
+    && existing.cursor_position != null
+    && cursor_position != null
+    && Number(cursor_position) > Number(existing.cursor_position);
+  const last_cursor_advance_at = cursorAdvanced
+    ? now
+    : (existing && existing.last_cursor_advance_at) || (cursor_position != null ? now : null);
+
   const stmt = database.prepare(`
     INSERT INTO presence (
       agent_id, daemon_state, session_state, cursor_position, lock_held,
@@ -2224,7 +2247,7 @@ function upsertPresence({
       runtime_uid, runtime_gid, runtime_hostname, current_cwd,
       daemon_pid, daemon_version, daemon_started_at,
       runtime_state, runtime_blocked_until,
-      runtime
+      runtime, last_cursor_advance_at
     )
     VALUES (
       @agent_id, @daemon_state, @session_state, @cursor_position, @lock_held,
@@ -2236,7 +2259,7 @@ function upsertPresence({
       @runtime_uid, @runtime_gid, @runtime_hostname, @current_cwd,
       @daemon_pid, @daemon_version, @daemon_started_at,
       @runtime_state, @runtime_blocked_until,
-      @runtime
+      @runtime, @last_cursor_advance_at
     )
     ON CONFLICT(agent_id) DO UPDATE SET
       daemon_state = excluded.daemon_state,
@@ -2297,7 +2320,11 @@ function upsertPresence({
       -- REGISTRY). When daemons start passing explicit runtime in Layer 2,
       -- their value wins via raw-assign — consistent with the daemon-pid /
       -- daemon-version pattern (current authoritative value, not accumulated).
-      runtime = excluded.runtime
+      runtime = excluded.runtime,
+      -- CP12.x.4: SSE-stale detection. Raw assign — JS layer computed the
+      -- correct value (advanced timestamp on cursor increase, retained
+      -- prior timestamp otherwise, seeded to now on first row with cursor).
+      last_cursor_advance_at = excluded.last_cursor_advance_at
   `);
   stmt.run({
     agent_id,
@@ -2328,7 +2355,8 @@ function upsertPresence({
     daemon_started_at: daemon_started_at ?? null,
     runtime_state: runtime_state ?? null,
     runtime_blocked_until: runtime_blocked_until ?? null,
-    runtime: runtime ?? null
+    runtime: runtime ?? null,
+    last_cursor_advance_at: last_cursor_advance_at ?? null
   });
 
   if (stateChanged) {
@@ -2377,7 +2405,9 @@ function getPresenceByAgent(agent_id) {
     runtime_state: row.runtime_state,
     runtime_blocked_until: row.runtime_blocked_until,
     // CP14.1 runtime-class (CC / Codex / Gemini)
-    runtime: row.runtime
+    runtime: row.runtime,
+    // CP12.x.4 SSE-stale detection
+    last_cursor_advance_at: row.last_cursor_advance_at
   };
 }
 
@@ -2419,7 +2449,9 @@ function listPresence() {
     runtime_state: row.runtime_state,
     runtime_blocked_until: row.runtime_blocked_until,
     // CP14.1 runtime-class (CC / Codex / Gemini)
-    runtime: row.runtime
+    runtime: row.runtime,
+    // CP12.x.4 SSE-stale detection
+    last_cursor_advance_at: row.last_cursor_advance_at
   }));
 }
 

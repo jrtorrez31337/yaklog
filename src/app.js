@@ -167,6 +167,34 @@ app.get('/api/v1/presence/public', (req, res) => {
     if (row.runtime == null) {
       row.runtime = runtimeOf(row.agent_id);
     }
+    // CP12.x.4 (2026-06-13): SSE-stale detection per sleuth #8532 +
+    // admin #8534/#8536 forensics. Surface the silent-dead signature:
+    // heartbeat fresh BUT cursor hasn't advanced AND cluster traffic IS
+    // flowing. Catches the case where the daemon process is alive but its
+    // SSE stream is stuck (sleuth's #8464→#8534 21h gap signature).
+    // Thresholds chosen conservatively to avoid false-positives during
+    // legitimate low-traffic windows:
+    //   - heartbeat must be within 90s (daemon publishes every 30s)
+    //   - cursor must be stale > 5min (above the 30s server keepalive +
+    //     STREAM_RECV_TIMEOUT_S 30s reconnect cycle budget, with margin)
+    //   - cluster traffic flowing = cursor_position < globalHwm - 10
+    //     (agent is meaningfully behind, not just briefly during a quiet)
+    // null when prerequisites can't be evaluated (preserves null-as-unknown
+    // semantics established for update_available + runtime_state fields).
+    if (row.daemon_state === 'up'
+        && row.last_heartbeat_at
+        && row.last_cursor_advance_at
+        && row.cursor_position != null) {
+      const nowMs = Date.now();
+      const hbAgeMs = nowMs - new Date(row.last_heartbeat_at).getTime();
+      const cursorAgeMs = nowMs - new Date(row.last_cursor_advance_at).getTime();
+      const cursorLag = globalHwm - Number(row.cursor_position);
+      row.sse_stream_stale = (hbAgeMs < 90_000)
+        && (cursorAgeMs > 300_000)
+        && (cursorLag >= 3);
+    } else {
+      row.sse_stream_stale = null;
+    }
   }
   const etag = publicPresenceEtag(presence, globalHwm);
   res.set('ETag', etag);
