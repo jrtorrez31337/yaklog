@@ -187,6 +187,16 @@ function initializeDb() {
     // daemons read as active = no behavior change.
     ['runtime_state', 'TEXT'],            // 'active' | 'quota_exhausted' | 'error' | NULL→active
     ['runtime_blocked_until', 'TEXT'],    // ISO-8601 reset ETA when not-active; NULL otherwise
+    // CP14.1 (2026-06-13): runtime-class field per Jon-direct via admin #8521.
+    // Distinguishes CC vs Codex vs Gemini at dashboard + Prom query level.
+    // Prior state: serve-time-enriched at /presence/public via runtimeOf()
+    // lookup in src/agentRuntimes.js; not Prom-queryable, not analytics-surface.
+    // Now: schema column populated at upsert via runtimeOf() server-side
+    // (source-of-truth stays in agentRuntimes.js REGISTRY; column is cached
+    // representation). Future Layer 2 will allow daemon-reported override
+    // when emitters supply OTEL_RESOURCE_ATTRIBUTES service.name.
+    // Values: 'claude_code' | 'codex' | 'gemini' (per VALID_RUNTIMES set).
+    ['runtime', 'TEXT'],                  // CP14.1: runtime-class column
   ];
   for (const [colName, colType] of RUNTIME_META_COLUMNS) {
     if (!presenceColNames.has(colName)) {
@@ -2092,10 +2102,20 @@ function upsertPresence({
   // v0.5.9 runtime-execution-liveness (per parch ratification #6684; ADR-0027
   // scope). Default 'active' preserves backcompat — legacy daemons omit →
   // null → dashboard treats as active.
-  runtime_state, runtime_blocked_until
+  runtime_state, runtime_blocked_until,
+  // CP14.1 (2026-06-13): runtime-class. Caller may pass explicit value (future
+  // Layer 2 — daemon-reported via OTEL_RESOURCE_ATTRIBUTES service.name);
+  // when omitted, server-side compute via agentRuntimes.runtimeOf() lookup.
+  runtime
 }) {
   const database = getDb();
   const now = new Date().toISOString();
+  // CP14.1: compute runtime-class server-side when caller doesn't pass it.
+  // Source-of-truth = src/agentRuntimes.js REGISTRY map + DEFAULT fallback.
+  if (runtime == null) {
+    const { runtimeOf } = require('./agentRuntimes');
+    runtime = runtimeOf(agent_id);
+  }
   const newLabel = deriveLabel(daemon_state, session_state, events_consumer_count);
 
   const existing = database.prepare('SELECT * FROM presence WHERE agent_id = ?').get(agent_id);
@@ -2119,7 +2139,8 @@ function upsertPresence({
       last_session_source, subagent_active_count,
       runtime_uid, runtime_gid, runtime_hostname, current_cwd,
       daemon_pid, daemon_version, daemon_started_at,
-      runtime_state, runtime_blocked_until
+      runtime_state, runtime_blocked_until,
+      runtime
     )
     VALUES (
       @agent_id, @daemon_state, @session_state, @cursor_position, @lock_held,
@@ -2130,7 +2151,8 @@ function upsertPresence({
       @last_session_source, @subagent_active_count,
       @runtime_uid, @runtime_gid, @runtime_hostname, @current_cwd,
       @daemon_pid, @daemon_version, @daemon_started_at,
-      @runtime_state, @runtime_blocked_until
+      @runtime_state, @runtime_blocked_until,
+      @runtime
     )
     ON CONFLICT(agent_id) DO UPDATE SET
       daemon_state = excluded.daemon_state,
@@ -2185,7 +2207,13 @@ function upsertPresence({
       -- only renders countdown when runtime_state !== 'active'), so no
       -- explicit clear needed.
       runtime_state = COALESCE(excluded.runtime_state, presence.runtime_state),
-      runtime_blocked_until = COALESCE(excluded.runtime_blocked_until, presence.runtime_blocked_until)
+      runtime_blocked_until = COALESCE(excluded.runtime_blocked_until, presence.runtime_blocked_until),
+      -- CP14.1: runtime-class. Raw assign because server-side compute is
+      -- always-known (runtimeOf() returns DEFAULT 'claude_code' when not in
+      -- REGISTRY). When daemons start passing explicit runtime in Layer 2,
+      -- their value wins via raw-assign — consistent with the daemon-pid /
+      -- daemon-version pattern (current authoritative value, not accumulated).
+      runtime = excluded.runtime
   `);
   stmt.run({
     agent_id,
@@ -2215,7 +2243,8 @@ function upsertPresence({
     daemon_version: daemon_version ?? null,
     daemon_started_at: daemon_started_at ?? null,
     runtime_state: runtime_state ?? null,
-    runtime_blocked_until: runtime_blocked_until ?? null
+    runtime_blocked_until: runtime_blocked_until ?? null,
+    runtime: runtime ?? null
   });
 
   if (stateChanged) {
@@ -2262,7 +2291,9 @@ function getPresenceByAgent(agent_id) {
     daemon_started_at: row.daemon_started_at,
     // v0.5.9 runtime-execution-liveness
     runtime_state: row.runtime_state,
-    runtime_blocked_until: row.runtime_blocked_until
+    runtime_blocked_until: row.runtime_blocked_until,
+    // CP14.1 runtime-class (CC / Codex / Gemini)
+    runtime: row.runtime
   };
 }
 
@@ -2302,7 +2333,9 @@ function listPresence() {
     daemon_started_at: row.daemon_started_at,
     // v0.5.9 runtime-execution-liveness
     runtime_state: row.runtime_state,
-    runtime_blocked_until: row.runtime_blocked_until
+    runtime_blocked_until: row.runtime_blocked_until,
+    // CP14.1 runtime-class (CC / Codex / Gemini)
+    runtime: row.runtime
   }));
 }
 

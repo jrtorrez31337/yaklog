@@ -658,6 +658,14 @@
   const SERVICE_TO_RUNTIME = {
     'claude-code': 'claude_code',
     'gemini-cli': 'gemini',
+    // CP14.1 (2026-06-13): codex-cli mapping so aieng3 + future codex-class
+    // agents resolve to the codex runtime badge when they emit OTel with
+    // PLEXUS_SERVICE_NAME=codex-cli (per gemini-runtime.sh / plexus-emit.sh
+    // canonical pattern). Without this entry the OTel-first resolution
+    // returned null and silently fell back to the registry — mostly a no-op
+    // because registry already has aieng3-agent → codex, but it meant the
+    // OTel-first preference was structurally dead for codex.
+    'codex-cli': 'codex',
   };
   const OTEL_LIVE_WINDOW_MS = 10 * 60 * 1000;   // 10 min = "recently emitted"
   function noteFrameOtelAgents(payload) {
@@ -1336,7 +1344,13 @@
         title: `color: ${ac.name} · ${ac.hex} · ${ac.rgb}`,
       }));
       // v0.5.8.2: runtime badge — OTel-derived first, server registry fallback.
+      // CP14.1 (2026-06-13): also expose runtime on the AgentCard root via
+      // data-runtime attribute so CSS can apply runtime-class accent styling
+      // (right-edge border-tint) — visual distinction at-a-glance without
+      // making the badge larger or competing with the status-color border-left.
       const runtime = resolveRuntime(this.agentId, r);
+      if (runtime) this.el.setAttribute('data-runtime', runtime);
+      else this.el.removeAttribute('data-runtime');
       const badge = runtime && runtimeBadge(runtime);
       if (badge) this.headEl.appendChild(badge);
       this.headEl.appendChild(el('span', { class: 'name' }, r.agent_id || this.agentId));

@@ -160,7 +160,13 @@ app.get('/api/v1/presence/public', (req, res) => {
     // v0.5.8.2: hand-curated registry-fallback runtime. Frontend prefers the
     // OTel-derived runtime when available (service_name → claude_code/gemini),
     // falls back to this field for agents that don't emit Plexus telemetry.
-    row.runtime = runtimeOf(row.agent_id);
+    // CP14.1 (2026-06-13): prefer the DB-stored runtime (now schema-resident
+    // per upsertPresence server-side compute). Falls back to registry-lookup
+    // when row.runtime is null — defends against pre-CP14.1 rows that haven't
+    // yet been touched by a fresh heartbeat.
+    if (row.runtime == null) {
+      row.runtime = runtimeOf(row.agent_id);
+    }
   }
   const etag = publicPresenceEtag(presence, globalHwm);
   res.set('ETag', etag);
