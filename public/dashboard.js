@@ -654,17 +654,25 @@
   // v0.5.8.2: track service_name observed per agent_id so the AgentCard
   // runtime badge can derive runtime from OTel (claude-code | gemini-cli)
   // first, falling back to the server registry only when OTel is silent.
+  // CP12.x.3.1 (2026-06-13): also track plexus.runtime_class resource attr
+  // per s345-aieng #8539 canonical schema. Prefer runtime_class over
+  // service_name when both present (runtime_class is the cluster-canonical
+  // attribute; service_name is the OTel SDK built-in). Cluster substrate
+  // sets both today via ssw-devops #8526/#8530 substrate-touch on aieng3 +
+  // gemini, plus s345-aieng #8544 sister-CC propagation; backward-compat
+  // preserved for agents that only set OTEL_SERVICE_NAME.
   const otelServiceByAgent = new Map();
   const SERVICE_TO_RUNTIME = {
     'claude-code': 'claude_code',
     'gemini-cli': 'gemini',
-    // CP14.1 (2026-06-13): codex-cli mapping so aieng3 + future codex-class
-    // agents resolve to the codex runtime badge when they emit OTel with
-    // PLEXUS_SERVICE_NAME=codex-cli (per gemini-runtime.sh / plexus-emit.sh
-    // canonical pattern). Without this entry the OTel-first resolution
-    // returned null and silently fell back to the registry — mostly a no-op
-    // because registry already has aieng3-agent → codex, but it meant the
-    // OTel-first preference was structurally dead for codex.
+    // CP12.x.3 (2026-06-13; renamed from CP14.1 per Jon-direct premature-
+    // chapter-numbering correction while CP13 unratified): codex-cli mapping
+    // so aieng3 + future codex-class agents resolve to the codex runtime
+    // badge when they emit OTel with PLEXUS_SERVICE_NAME=codex-cli. Without
+    // this entry the OTel-first resolution returned null and silently fell
+    // back to the registry — mostly a no-op because registry already has
+    // aieng3-agent → codex, but it meant the OTel-first preference was
+    // structurally dead for codex.
     'codex-cli': 'codex',
   };
   const OTEL_LIVE_WINDOW_MS = 10 * 60 * 1000;   // 10 min = "recently emitted"
@@ -675,8 +683,15 @@
     for (const s of result) {
       const id = s.metric && s.metric.plexus_agent_id;
       if (id) otelLastSeen.set(id, now);
+      // CP12.x.3.1: prefer plexus_runtime_class resource attr over service_name.
+      // OTel resource attrs surface as Prom labels with dots converted to
+      // underscores (plexus.runtime_class → plexus_runtime_class). Falls
+      // back to service_name when the canonical attr isn't set — defends
+      // against agents whose OTel emit hasn't been Layer-2-aligned yet.
+      const cls = s.metric && s.metric.plexus_runtime_class;
       const svc = s.metric && s.metric.service_name;
-      if (id && svc) otelServiceByAgent.set(id, svc);
+      const observed = cls || svc;
+      if (id && observed) otelServiceByAgent.set(id, observed);
     }
   }
   function resolveRuntime(agentId, presenceRow) {
