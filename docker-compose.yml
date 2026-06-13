@@ -108,7 +108,35 @@ services:
       retries: 6
       start_period: 30s
 
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Plexus MinIO (CP12.21 Phase 3 (A) external integrity anchor hosting).
+  # Per Jon-direct 2026-06-09 (#8236): substrate-choice α S3 Object Lock
+  # canonical (parch #7984 OQ-3 ratify) + hosting flips AWS S3 → local
+  # MinIO on devel (brand-narrative alignment: cluster-self-substrate canon).
+  # 127.0.0.1-bound (devel-internal; no internet exposure).
+  # ──────────────────────────────────────────────────────────────────────
+
+  plexus-minio:
+    image: minio/minio:latest
+    container_name: plexus-minio
+    restart: unless-stopped
+    command: server --console-address ":9001" /data
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    volumes:
+      - plexus_minio_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9000/minio/health/live || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 volumes:
+  plexus_minio_data:
   yaklog_data:
   plexus_prom_data:
   plexus_grafana_data:

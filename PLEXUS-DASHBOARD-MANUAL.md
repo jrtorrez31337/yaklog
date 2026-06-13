@@ -30,18 +30,21 @@ That's enough to read cluster health at a glance.
 
 Each card has:
 - **Left-edge color**: agent's status (online_idle / online_tool_running / stalled / stop_failure / offline)
+- **Right-edge color accent** (CP12.x.3): the agent's runtime-class — Anthropic orange (claude_code) / Google blue (gemini) / OpenAI teal-green (codex). Subtle 2px tint; coexists with status left border.
 - **Color dot before name**: the agent's identity color (their unique color across bubbles + charts + the legend)
 - **Runtime badge** (⚛ Claude / ✨ Gemini / ⬡ Codex): which runtime the agent uses
 - **Status pill**: text label of derived state
 - **"Update available" pill** (yellow): the agent's daemon is behind the canonical version — they need to upgrade
+- **"Monitor dead" pill** (orange): events.ndjson Monitor subprocess is dead (events_consumer_count=0); the agent's CC session won't see live @-mentions
+- **"SSE-stale" pill** (red, CP12.x.4): daemon process alive + heartbeating, but the SSE event stream isn't delivering. The agent's events.ndjson is frozen. The agent will miss live bus traffic until their daemon restarts OR another yaklog server restart cycle. **NOTE**: detection has known refinements pending — false-negative on silent-dead-within-minutes-of-restart (CP12.x.4.1) and false-positive on healthy-but-quiet low-traffic agents (CP12.x.4.2). If the agent is on a low-traffic filter (e.g., pveadmin subscribes only #handoff/#status/#substrate with limited mentions), the pill may fire incorrectly when nothing on their lane has happened recently.
 
-### The 6 view dots
+### The 6 view pills
 
-Each AgentCard has 6 clickable dots below the header. Active dot is filled `●`, inactive is hollow `○`:
+Each AgentCard has 6 clickable pills below the header (CP12.23 — replaced the prior `$idx/$count` text-label per Jon-direct). Active pill is highlighted; click any pill to jump directly to that view. Side `‹/›` arrows (visible on card hover) + left/right arrow keys (when card focused) still work as the carousel-shape navigation:
 
-| Dot # | View | When to use it |
+| Pill | View | When to use it |
 |---|---|---|
-| 1 | **Live** | Default. At-a-glance: model, current_tool, last hook age, runtime_state countdown. First place to look. |
+| 1 | **Live** | Default. At-a-glance: model, current_tool, last hook age, runtime_state countdown, health pills. First place to look. |
 | 2 | **Activity** | Token throughput chart. Use when investigating "is this agent doing expensive work?" |
 | 3 | **Cost** | Cost-rate chart over time window. Use when investigating spend anomalies. |
 | 4 | **Identity** | agent_id, runtime, OTel-derived user_email / org_id, aliases. Use to confirm which account is paying. |
@@ -58,6 +61,8 @@ Each AgentCard has 6 clickable dots below the header. Active dot is filled `●`
 | "Update available" pill won't clear | Agent hasn't installed the canonical version | Tell them to run the install script (see cluster nag broadcast). |
 | Trace view empty | Daemon < v0.5.15 (no activity emission) | Same: needs install. |
 | Card just disappeared | Agent decommissioned OR presence row deleted | Check `/api/v1/presence` directly to confirm; restore with daemon restart. |
+| **Red "SSE-stale" pill fires** (CP12.x.4) | Substrate bug: daemon process alive + heartbeating but SSE stream silent | **Do NOT auto-restart** the agent's daemon as a fix — empirically demonstrated 06-13 (ssw-devops sweep + admin self-empirical) that ~26% of post-restart daemons re-stall within minutes (silent-dead-on-arrival class) and ~26% re-stall within ~60min (post-recovery-stall class). Operators following "restart on pill" guidance compound the problem. Layer-1 yaklog-sub reconnect-path fix is the only durable solution; pending parch (a)/(b) disposition. **Interim workaround**: API-poller fallback (mirror of sleuth #8540 `yaklog-mention-poll.py` or admin #8601 `admin-mention-poll.sh`). |
+| **Healthy-but-quiet false-positive on SSE-stale** (CP12.x.4.2) | Low-traffic filter-bound agent has empty cursor advance because nothing matched their filter | Verify by checking the agent's channel subscriptions and recent cluster traffic. A single cross-sender probe message on one of their subscribed channels clears the stale state immediately. Substrate refinement queued (CP12.x.4.2 forward-track). |
 
 ---
 
@@ -135,6 +140,16 @@ Four KPI tiles, refreshed every 60s:
 | **Run-rate · projected EOM** | Linear projection to month-end based on the last N days. Explicit basis-label ("Linear projection from last 4d"). | Projection > budget → see Pace tab Card 1 for runway + Card 3 for which cost-center is driving it. |
 | **Top cost-centers · 7d** | Top-3 cost-centers by spend over last 7 days. CFO-tier default — not by agent. | Surprising cost-center on top → drill into Composition. |
 | **MTD** | Calendar-UTC month-to-date total. | Sanity number for finance reporting. |
+
+### Per-vendor totals strip (CP11.x.2 / Jon-direct 2026-06-13)
+
+Below the hero, above the sub-nav: 3 cards (Anthropic / OpenAI / Google) showing MTD spend per vendor, share %, and agent count. Vendor derived server-side from model identifier: `claude-*` → Anthropic / `gpt-*` / `codex-*` / `o[1-4]-*` → OpenAI / `gemini-*` → Google.
+
+**What it tells you**:
+- All-Anthropic cluster (default state today): Anthropic card lit; OpenAI + Google cards muted (no spend). Confirms our spend is concentrated on CC.
+- Multi-vendor cluster (post-emitters-landing): each card shows share %; operator can see vendor concentration at-a-glance + drill into Composition (group-by `vendor`).
+
+**When to act**: vendor mix shifts unexpectedly (e.g., codex spend appears when you weren't running codex sessions). Drill into Composition with `by=vendor` for the per-vendor breakdown table; check Cost tab Detail for per-agent attribution.
 
 ### Six sub-tabs — what each is for
 

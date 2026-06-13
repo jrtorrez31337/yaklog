@@ -7,7 +7,9 @@
 
 ## What this substrate delivers
 
-Daily cryptographic hash digest of the cluster's audit chain, published to an external append-only store (S3 Object Lock Compliance mode + 7-year retention per ADR-0030 v1.2). Closes the *"audit-log integrity self-attestation by Plexus alone"* circular-trust gap — auditors verify integrity from external evidence, not from Plexus's own database.
+Daily cryptographic hash digest of the cluster's audit chain, published to an external append-only store (S3-compatible Object Lock Compliance mode + 7-year retention per ADR-0030 v1.2). Closes the *"audit-log integrity self-attestation by Plexus alone"* circular-trust gap — auditors verify integrity from external evidence, not from Plexus's own database.
+
+**Substrate hosting** (CP12.21.1 Jon-direct flip 2026-06-09 "we are not a cloud consumer in our biz narrative"): **local MinIO on devel** (cluster-self-substrate-canon-aligned; zero cloud dependency by default). AWS S3 remains a fully-supported deployment target — the publisher script accepts `--endpoint-url` for any S3-compatible substrate. The substrate-canon stays "S3-compatible Object Lock" regardless of hosting target.
 
 ## Substrate components
 
@@ -25,7 +27,7 @@ Daily cryptographic hash digest of the cluster's audit chain, published to an ex
 ## Substrate canon (do not change without ADR amendment)
 
 Per parch #7984 + ADR-0030 v1.2 ratify:
-- Substrate: **S3 Object Lock Compliance mode** (admin-override-proof even by bucket owner)
+- Substrate: **S3-compatible Object Lock Compliance mode** (admin-override-proof even by bucket owner); CP12.21.1 supports local MinIO + AWS S3 + any S3-compatible substrate via `--endpoint-url`
 - Cadence: **daily** at 01:00 UTC
 - Retention: **7 years** (covers SOC 2 + GDPR + most jurisdictions)
 - Verify access: **public** per OQ-3.3 (auditors verify without ops-key issuance)
@@ -61,12 +63,24 @@ curl -s 'http://localhost:3100/api/v1/plexus/public/audit/anchor-verify?day=2026
 ```bash
 # Override ANCHOR_DAY env to target a specific day:
 sudo systemctl stop audit-anchor-publisher.timer
+
+# AWS S3 hosting (legacy / cloud-deployment):
 ANCHOR_DAY=2026-06-05 sudo -u devel /home/jon/yaklog/scripts/audit-anchor-publisher.sh \
   --yaklog-url http://localhost:3100 \
   --ops-key-file /home/devel/.config/yaklog/ops-key \
   --s3-bucket plexus-audit-anchor-devel
+
+# Local MinIO hosting (CP12.21.1 default cluster posture):
+ANCHOR_DAY=2026-06-05 sudo -u devel /home/jon/yaklog/scripts/audit-anchor-publisher.sh \
+  --yaklog-url http://localhost:3100 \
+  --ops-key-file /home/devel/.config/yaklog/ops-key \
+  --s3-bucket plexus-audit-anchor-devel \
+  --endpoint-url http://localhost:9000
+
 sudo systemctl start audit-anchor-publisher.timer
 ```
+
+The `--endpoint-url` flag accepts any S3-compatible substrate endpoint. Substrate-canon (S3-compatible Object Lock Compliance) is hosting-target independent.
 
 ### Dry-run mode (no S3 publish)
 
@@ -109,7 +123,7 @@ Acceptable disposition: **leave gap as-is + investigate root cause**. The gap is
 Root-cause checks:
 - `systemctl status audit-anchor-publisher.timer audit-anchor-publisher.service`
 - `journalctl -u audit-anchor-publisher.service --since=yesterday`
-- AWS credential validity: `aws s3 ls s3://plexus-audit-anchor-devel/ | head`
+- S3-compatible credential validity: `aws s3 ls s3://plexus-audit-anchor-devel/ ${AWS_ENDPOINT_URL:+--endpoint-url $AWS_ENDPOINT_URL} | head`
 
 ### S3 bucket compromise suspected
 
@@ -128,8 +142,18 @@ Root-cause checks:
 | `/etc/systemd/system/audit-anchor-publisher.timer` | Daily trigger | admin |
 | `/etc/systemd/system/audit-anchor-publisher.service` | One-shot unit | admin |
 | `/home/devel/.config/yaklog/ops-key` | Ops-key for yaklog endpoints | secops |
-| `/home/devel/.config/yaklog/aws-credentials` | AWS access key for S3 PUT | ssw-devops |
-| `s3://plexus-audit-anchor-devel/` | Anchor storage | ssw-devops (Object Lock policy) |
+| `/home/devel/.config/yaklog/s3-credentials` | S3-compatible credentials for substrate PUT (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY env vars; works for AWS S3 + MinIO + any S3-compatible substrate) | ssw-devops |
+| `s3://plexus-audit-anchor-devel/` | Anchor storage bucket | ssw-devops (Object Lock policy) |
+
+**Environment variables** (CP12.21.1 — pass via systemd unit `Environment=` or shell export):
+
+| Variable | Purpose | Required when |
+|---|---|---|
+| `AWS_ACCESS_KEY_ID` | S3-compatible auth | always |
+| `AWS_SECRET_ACCESS_KEY` | S3-compatible auth | always |
+| `AWS_ENDPOINT_URL` | S3-compatible endpoint override (e.g. `http://localhost:9000`) | MinIO + any non-AWS S3-compatible hosting |
+| `AWS_REGION` | AWS region | AWS S3 hosting (MinIO ignores; default `us-east-1` for SDK compatibility) |
+| `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` | MinIO server credentials (NOT the publisher's credentials — the MinIO process itself) | local MinIO deployment only |
 
 ## Metric reference
 

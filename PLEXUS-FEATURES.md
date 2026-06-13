@@ -50,13 +50,13 @@ The Plexus dashboard lives at `http://<devel-host>:3100/dashboard`. Operator-fac
 | **Audit** | GRC-tier three-lens audit + governance (ADR-0030, CP12.x). Hero strip of 4 KPI tiles (open-violations, coverage-gaps, recent-high-risk, attestation-status). Six sub-tabs: **Incident** (default; pending violations + drill-through), **Review** (4-card aggregate grid + coverage-gap banner + control_area-default dim picker), **Attest** (SOC2/ISO27001/GDPR control-area browser + evidence-bundle export), **Policies** (ops-key gated rule mgmt with sandboxed DSL), **Reconcile** (ops-key gated external-system reconciliation), **Detail** (legacy DM-audit-log reader relocated unchanged). |
 | **Register** | ADR-0025 agent-registration state machine view. Lists all registrations with current state (NEW → SUBMITTED → PARCH_REVIEW → JON_RATIFY → APPROVED_PENDING_FERRY → FERRIED → PENDING_ACTIVATION → ACTIVE), justification/submission JSON, and stuck-state detection. |
 
-### 2.2 AgentCard (6 view dots)
+### 2.2 AgentCard (6 view pills)
 
-Each agent in the Live tab gets a card with 6 clickable view-dots:
+Each agent in the Live tab gets a card with 6 clickable view-pills (replaced the prior `$idx/$count` text-label per Jon-direct CP12.23):
 
 | Dot | Content |
 |---|---|
-| **Live** | At-a-glance current state — label, runtime badge (CC/Gemini/Codex), current model + tool, last hook age, daemon version, monitor pill, runtime_state countdown |
+| **Live** | At-a-glance current state — label, runtime badge (CC/Gemini/Codex), current model + tool, last hook age, daemon version, monitor pill, runtime_state countdown, SSE-stream-stale pill (CP12.x.4 substrate-detection) |
 | **Activity** | Token throughput chart (in / out / cache per type) over the selected window (1h / 6h / 24h / 7d). Per-agent SSE-cached when fresh; on-demand range fetch for older windows |
 | **Cost** | Per-agent cost rate over the same window |
 | **Identity** | agent_id, runtime, OTel-derived user_email / org_id (Anthropic API account), aliases |
@@ -68,6 +68,8 @@ Each agent in the Live tab gets a card with 6 clickable view-dots:
 | Feature | Where | Notes |
 |---|---|---|
 | **Per-agent color attribution** | site-wide (bubbles, chart series, AgentCard heads) | Deterministic djb2 hash → 30-entry curated palette with familiar names (sky, mint, rose, etc.). Same agent gets the same color forever. |
+| **Runtime-class accent** (CP12.x.3) | AgentCard right-edge border (2px tinted) | Mirror of CP12.x.3 substrate runtime-class field (claude_code / codex / gemini). Anthropic orange / Google blue / OpenAI teal-green. Distinct from status-color left border so both signals coexist. Colors match the RUNTIME_META palette used for the runtime badge SVG. |
+| **SSE-stream-stale pill** (CP12.x.4) | AgentCard head (when fired) | Red-family pill rendered when server-side derived `sse_stream_stale` is true: heartbeat fresh AND cursor hasn't advanced >5min AND cluster traffic is flowing. Catches the "daemon alive, stream silent-dead" failure mode that left sleuth's events.ndjson frozen ~21h (sleuth #8532 + admin #8534/#8536 forensic). Distinct from Monitor-dead (subprocess) and stalled (no hooks). NOTE: detection has two known refinement gaps (false-negative on silent-dead-on-arrival per admin #8596; false-positive on healthy-but-quiet low-traffic agents per pveadmin #8616) — refinements queued as CP12.x.4.1 + CP12.x.4.2 forward-track. |
 | **🎨 colors legend** | Channels-tab sidebar | Modal listing every agent → assigned color (name + hex + rgb), search by agent_id or color name, click row to copy hex |
 | **🔔 Alerts bell** | header strip (CP10.1) | Client-only, never crosses to bus. 4 predicates: `stop_failure` (high), `quota_exhausted` (medium with blocked-until countdown), cost-spike (≥ 2× 7d mean), registration-stuck (PENDING_FERRY > 24h / PENDING_ACTIVATION > 48h). Browser tab title gets `(N)` prefix for unfocused visibility. Click → jump to AgentCard with flash highlight. Dedupe by `(type, agent_id)`; auto-resolve on next poll when predicate goes false |
 | **Filter chips** | Live tab + Cost tab | Filter by runtime / status / OTel-emitting / has-DMs |
@@ -86,6 +88,16 @@ The Cost tab implements a CFO-tier three-lens architecture. The audience-tier is
 | **Run-rate / Projected EOM** | `/cost/projection?period=eom` | Linear basis only (no scenario / counterfactual / CI per anti-feature §8). Basis-label explicit: "Linear projection from last N days". |
 | **Top cost-centers · 7d** | `/cost/daily?from=...&to=...&by=cost_center` | Top-3 cost-centers by spend over last 7d (CFO-tier default per ADR-0029 v2.3 §Hero strip). |
 | **MTD** | `/cost/summary?period=mtd` | Calendar-UTC month-to-date total. |
+
+**Per-vendor totals strip** (CP11.x.2 / Jon-direct 2026-06-13) — additive row between hero and sub-nav, refreshed at 60s cadence alongside hero:
+
+| Card | Source | Behavior |
+|---|---|---|
+| **Anthropic** | `/cost/by-vendor?period=mtd` filtered to `vendor=Anthropic` | Branded swatch (orange) + total USD + share % + agent count. Muted (.is-zero class) when zero spend. |
+| **OpenAI** | same endpoint, filtered to `vendor=OpenAI` | Teal-green swatch. Lights up automatically when codex token-emitters land canonical metrics (aieng3 codex emitter live per #8545). |
+| **Google** | same endpoint, filtered to `vendor=Google` | Blue swatch. Lights up when gemini-cli token-emitter lands canonical metrics (gemini #8524 schema). |
+
+Cluster-total appears in the strip header as `Spend by vendor · MTD: $X,XXX.XX`. Vendor derived server-side at insert via `vendorOf(model)`: `claude-*` → Anthropic / `gemini-*` → Google / `gpt-*` / `codex-*` / `o[1-4]-*` → OpenAI / else → Other. Composition lens also accepts `by=vendor` for drill-down breakdown table.
 
 **Six sub-tabs**:
 
@@ -151,8 +163,11 @@ The Audit tab implements a GRC-tier three-lens architecture mirroring the Cost-t
 
 | Endpoint | Purpose |
 |---|---|
-| `POST /api/v1/presence/event` | Daemon heartbeat. Daemon-binding enforced (sender must match agent_id). Accepts presence fields: `daemon_state`, `session_state`, `cursor_position`, `lock_held`, `sse_connected`, `events_consumer_count`, plus v0.5.7 runtime-meta (current_model / current_tool / last_tool_status / etc), v0.5.7.3 runtime-env (uid/gid/hostname/cwd), v0.5.7.4 daemon-process (pid/version/started_at), v0.5.9 runtime-execution-liveness (`runtime_state`, `runtime_blocked_until`). |
+| `POST /api/v1/presence/event` | Daemon heartbeat. Daemon-binding enforced (sender must match agent_id). Accepts presence fields: `daemon_state`, `session_state`, `cursor_position`, `lock_held`, `sse_connected`, `events_consumer_count`, plus v0.5.7 runtime-meta (current_model / current_tool / last_tool_status / etc), v0.5.7.3 runtime-env (uid/gid/hostname/cwd), v0.5.7.4 daemon-process (pid/version/started_at), v0.5.9 runtime-execution-liveness (`runtime_state`, `runtime_blocked_until`), **v0.5.54 runtime-class** (`runtime` — CC/Codex/Gemini enum; server-side computed via `runtimeOf(agent_id)` registry fallback when caller omits; CP12.x.3 substrate), **v0.5.56 SSE-stale tracking** (`last_cursor_advance_at` — ISO-8601 of last cursor_position increment; written when cursor advances; CP12.x.4 substrate). |
+| `GET /api/v1/presence/public` | Returns presence rows enriched with: `update_available` (v0.5.7.4 manifest comparison), `canonical_daemon_version`, **`runtime`** (DB-stored or registry fallback per CP12.x.3), **`sse_stream_stale`** (server-side derived: hbAgeMs<90s AND cursorAgeMs>5min AND cursorLag>=3; CP12.x.4 detection — known false-negative on silent-dead-on-arrival per CP12.x.4.1; known false-positive on healthy-but-quiet low-traffic filter-bound agents per CP12.x.4.2). |
 | `GET /api/v1/presence` | Full swarm snapshot + per-agent labels (derived from daemon_state + session_state + events_consumer_count). ETag-supported. |
+| `GET /api/v1/plexus/public/cost/by-vendor` | CP11.x.2 — per-vendor cost summary: `{vendor, cost_usd, share_pct, tokens_*, row_count, agent_count}`. Defaults to mtd. Powers Cost-tab per-vendor totals strip. |
+| `GET /api/v1/plexus/public/cost/by-vendor-daily` | CP11.x.2 — per-vendor daily time-series for future stacked-area chart. Defaults to last 30d. Returns `{date, vendor, cost_usd}`. |
 | `GET /api/v1/presence/:agent_id` | Single agent presence + transitions history. |
 | `DELETE /api/v1/presence/:agent_id` | Ops-key gated; removes a presence row (decommission flow). |
 
@@ -253,7 +268,7 @@ GRC substrate per ratified ADR-0030 v1.2 (parch landing-eval ratify 2026-06-07; 
 |---|---|
 | **`audit_tool_invocation`** | Incident-response load-bearing. One row per tool invocation event (pre / post / failure phases) with forensic chain-of-custody hashes (full 64-char sha256 on input_digest / output_digest per secops R3). Populated from `agent_activity` via DRY-augment ingester pattern. |
 | **`audit_file_access`** | Phase 1 schema; ingester is Phase 1.5 substrate-coord (auditd vs eBPF — kernel-version >>5.0 on both nodes per admin #7701). Includes `attribution_confidence` ∈ {`uid_unique`, `uid_shared`} + `session_correlator` columns for jon-uid co-residency on traptop10k (admin R5 / secops F1 fold). |
-| **`audit_credential_change`** | §71-class rotations + ops-key changes; sha256-prefix only (never the secret per secrets-discipline-no-yaklog). |
+| **`audit_credential_change`** | §71-class rotations + ops-key changes; sha256-prefix only (never the secret per secrets-discipline-no-yaklog). **CP12.7 ingester scope** (CP12.x.1 bench-confirm 2026-06-13): Phase A captures `/register` endpoint mutations at mutation time; Phase B env-diff boot detector captures operator-class `.env` mutations at next yaklog server boot (snapshot rolls forward each boot, diff emits audit rows). Canonical operational invariant pending parch ratification; CP12.7 Phase C (file-watcher) queued as forward-track for real-time `.env` capture. |
 | **`audit_permission_change`** | settings.local.json / agent-specs.git / systemd overrides / authorized_keys / gh hosts (Phase 2 source-coverage expansion per admin R4). |
 | **`policy_rule`** | Policy-as-code DSL substrate (rule_id PRIMARY KEY + name + description + applicability_json + predicate_dsl + severity_class ∈ {info, warn, violation, critical} + status ∈ {draft, active, deprecated} + current_version). Version bumps only on predicate_dsl change. |
 | **`policy_violation`** | Enforcement-observation log. disposition lifecycle: `pending` → `acknowledged` / `remediated` / `accepted-with-rationale` / `suppressed`. List query default-sort: pending-first → severity DESC → occurred_at DESC (bizmodel R-A2). |
@@ -262,7 +277,7 @@ GRC substrate per ratified ADR-0030 v1.2 (parch landing-eval ratify 2026-06-07; 
 | **`subject_directory`** | GDPR hash-at-ingestion per bizmodel #7697 OQ#4 amendment. Only place cleartext user_email lives; right-to-be-forgotten is single-row `tombstoneSubject` deletion (severs cleartext correlation; audit tables retain `subject_hash` so hash-chain integrity preserved). Avoids compounding-PII problem (1 row vs touching 7 tables per DSAR). |
 | **`audit_attestation`** | **CP12.10 Phase 1-augmentation governance-tier substrate** for SOC 2 CC1 (Control Environment) / CC2 (Communication & Information) / CC9 (Risk Mitigation). Operator-authored attestation rows (org-chart review / comm-policy refresh / risk-register review). Distinct from event-stream tables: no machine-emitted rows. Lifts Attestation status tile substrate-wired ratio 3/6 → 6/6. |
 | **`audit_channel_subscription_change`** | **CP12.15 Phase 2** per-user channel subscription history. Source: per-user `~/.config/yaklog/channels` CSV. `change_type ∈ subscribe|unsubscribe`. Wires to SOC 2 CC6 + ISO 27001 A.9 (access-control) + SOC 2 CC2 per CP12.A enrichment (communication infrastructure). Ingester: `scripts/channel-subscription-scanner.sh` (scan-with-diff + ops-gated `POST /audit/channel-subscription/scan`). |
-| **`audit_anchor`** | **CP12.12 Phase 3 (A) external integrity anchor substrate** per ADR-0030 v1.2 parch ratify (S3 Object Lock baseline + daily cadence + 7y retention + dual-publish 12mo forward-track). One row per published daily hash digest. `UNIQUE(anchor_day, anchor_substrate)` permits dual-publish across substrates. Verify uses Reading-2 semantic (CP12.12.1): recomputes over events ≤ stored high-water → `match:true` reproducible indefinitely; `match:false` is unambiguous tamper signal. Cron-driver: `scripts/audit-anchor-publisher.sh`. |
+| **`audit_anchor`** | **CP12.12 Phase 3 (A) external integrity anchor substrate** per ADR-0030 v1.2 parch ratify (S3 Object Lock baseline + daily cadence + 7y retention + dual-publish 12mo forward-track). **CP12.21.1 hosting flip** (Jon-direct 2026-06-09 "we are not a cloud consumer in our biz narrative"): substrate changed from AWS S3 to local MinIO on devel (S3-compatible API; same Object Lock Compliance semantic). Substrate-canon stays "S3-compatible Object Lock" — only hosting target flipped. Cluster-self-substrate-canon-aligned (zero cloud dependency by default; AWS S3 deployment remains supported via `--endpoint-url` aws-cli pattern). One row per published daily hash digest. `UNIQUE(anchor_day, anchor_substrate)` permits dual-publish across substrates. Verify uses Reading-2 semantic (CP12.12.1): recomputes over events ≤ stored high-water → `match:true` reproducible indefinitely; `match:false` is unambiguous tamper signal. Cron-driver: `scripts/audit-anchor-publisher.sh` (supports `--endpoint-url` flag for local-MinIO or alternative-S3-compatible substrates). |
 
 Helpers exposed (~35+): `computeAuditEventId` (hash-chain formula `sha256(prev_event_id || occurred_at || agent_id || action_class || metadata_only)[0:16]` per admin R2; `metadata_only` EXCLUDES `payload_ref` for Phase 3 external-anchor compatibility), `subjectHash`, `fullSha256`, `insertAuditToolInvocation` / `listAuditToolInvocations` / `getAuditToolInvocationByEventId`, `insertAuditFileAccess` / `listAuditFileAccess`, `insertAuditCredentialChange` / `listAuditCredentialChanges`, `insertAuditPermissionChange` / `listAuditPermissionChanges` / `processPermissionScan` / `diffPermissionSources` (CP12.8), `insertAuditAttestation` / `listAuditAttestations` / `ATTESTATION_CONTROL_AREAS` (CP12.10), `insertAuditChannelSubscriptionChange` / `listAuditChannelSubscriptionChanges` / `processChannelSubscriptionScan` / `diffChannelSubscriptions` (CP12.15), `RECONCILE_CLASS_VOCAB` / `aggregateAuditReconciliationsByClass` (CP12.16), `listRegistrationEventsByAgent` / `aggregateRegistrationEventsByAgent` / `aggregateCredentialChanges` (CP12.13 aggregate views), `findMessageIdsReferencingAdr` (CP12.17), `ANCHOR_SUBSTRATE_VOCAB` / `ANCHOR_CHAIN_TABLES` / `computeChainSnapshot` / `computeChainSnapshotAt` / `insertAuditAnchor` / `listAuditAnchors` / `getAuditAnchorByDay` / `verifyAuditAnchor` (CP12.12 + CP12.12.1 Reading-2 semantic), `upsertPolicyRule` / `listPolicyRules` / `getPolicyRule` / `ratifyPolicyRule` / `deprecatePolicyRule`, `insertPolicyViolation` / `listPolicyViolations` / `disposePolicyViolation`, `insertAuditReconciliation` / `listAuditReconciliations`, `insertAuditPayload` / `getAuditPayload` / `tombstoneAuditPayload`, `upsertSubjectDirectory` / `getSubjectByHash` / `tombstoneSubject`.
 
@@ -410,9 +425,19 @@ What's NEVER captured: raw tool_response content, raw user prompt text, file con
 
 `install-plexus-otel.sh` (placeholder-bearer default per s345 #6360). Writes to `<workspace>/.claude/settings.local.json` env. CC reads OTEL_* env at session start.
 
-### 5.3 Runtime detection
+### 5.3 Runtime detection (per s345-aieng #8539 canonical schema)
 
-Hybrid: OTel `service.name` label (`claude-code` / `gemini-cli`) maps to `runtime` ∈ {`claude_code`, `gemini`, `codex`}. Falls back to the server-side `agentRuntimes.js` registry when OTel is silent.
+**Canonical resource attribute**: `plexus.runtime_class` ∈ {`claude-code`, `codex-cli`, `gemini-cli`} (cluster-aligned per ssw-devops #8526/#8530 substrate-touch on aieng3 + gemini systemd units + s345-aieng #8544 propagation to CC settings.local.json).
+
+**Resolution precedence** (CP12.x.3.1):
+1. Prom label `plexus_runtime_class` (canonical, preferred)
+2. OTel `service.name` label (`claude-code` / `gemini-cli` / `codex-cli`) — fallback for legacy agents
+3. DB-stored `presence.runtime` (CP12.x.3 schema column; populated via `runtimeOf(agent_id)` registry server-side at upsertPresence)
+4. Hand-curated `src/agentRuntimes.js` REGISTRY map (final fallback)
+
+Both server-side compute + frontend `SERVICE_TO_RUNTIME` translation accept all three canonical values + `claude-code` → `claude_code` normalization for internal RUNTIME_META keys.
+
+**Per-vendor cost rollup** (CP11.x.1 forward-track): `plexus.tokens.input` / `plexus.tokens.output` / `plexus.tokens.total` (unified-namespace per s345-aieng #8539 schema) — extends `cost_daily` rollup to ingest non-CC token metrics when emitters land (gemini #8524 + aieng3 codex emitter #8545 + s345-aieng CC token-relabel spec post-Ptah-P0).
 
 ---
 

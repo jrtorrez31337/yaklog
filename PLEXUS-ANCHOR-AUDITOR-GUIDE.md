@@ -20,7 +20,7 @@ Daily, the cluster publishes a cryptographic hash digest of the audit chain's re
 
 | Property | Value | Why it matters |
 |---|---|---|
-| **Substrate** | AWS S3 with Object Lock in Compliance mode | Admin-override-proof — even the bucket owner cannot delete or modify locked objects |
+| **Substrate** | S3-compatible Object Store with Object Lock in Compliance mode (AWS S3, MinIO, or any S3-compatible substrate per CP12.21.1 hosting-target flexibility; substrate-canon remains "S3-compatible Object Lock" regardless of hosting choice) | Admin-override-proof — even the bucket owner cannot delete or modify locked objects |
 | **Retention** | 7 years | Covers SOC 2 + GDPR + most jurisdictions |
 | **Cadence** | Daily at 01:00 UTC | Bounded latency on tamper-detection: at most 24h between events landing and being anchored |
 | **Verify access** | Public read | Auditors verify without ops-key issuance from Plexus |
@@ -141,8 +141,8 @@ A: Yes — `GET /api/v1/plexus/public/audit/anchors?from=2026-01-01&to=2026-12-3
 **Q: What if the cluster operator stops publishing anchors?**
 A: Visible immediately on the Audit-tab Chain integrity card (gray cells appear for missed days). Auditor can also detect via Step 1 (anchor list will have gap). Gap is honest signal; investigate root cause with operator.
 
-**Q: What if the AWS account is closed / S3 bucket deleted?**
-A: 7-year Object Lock Compliance retention means the bucket and its contents cannot be deleted before retention expiry, **even by the bucket owner**. If the AWS account itself is closed, AWS retains the bucket for the Object Lock retention period before deletion. Customer can verify this is enforced via AWS support.
+**Q: What if the substrate hosting provider goes away (AWS account closed / MinIO host failure / S3 bucket deleted)?**
+A: 7-year Object Lock Compliance retention means the bucket and its contents cannot be deleted before retention expiry, **even by the bucket owner**. For AWS S3 hosting: if the AWS account itself is closed, AWS retains the bucket for the Object Lock retention period before deletion; customer can verify this via AWS support. For local MinIO hosting (CP12.21.1 default per Jon-direct 2026-06-09): the substrate-canon stays S3-compatible Object Lock, but DR posture is the operator's responsibility — operators SHOULD pair MinIO with off-host replication of the Object Lock substrate for retention durability. Both hosting targets preserve substrate-canon; only DR ownership differs.
 
 **Q: Is the anchor format substrate-portable?**
 A: Yes. The anchor is plain-text `(anchor_day, digest_sha256, chain_high_water_event_id, chain_high_water_table)`. If Plexus migrates from S3 to RFC 3161 TSA or IPFS later (parch #7984 OQ-3.4 dual-publish 12mo forward-track), the digest content is identical; only wrappers change. No data migration required.
