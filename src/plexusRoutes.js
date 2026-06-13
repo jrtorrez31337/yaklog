@@ -496,6 +496,61 @@ publicRouter.get('/cost/summary', async (req, res) => {
   }
 });
 
+// CP11.x.2 (2026-06-13): per-vendor cost summary for the Cost-tab totals strip.
+// Returns array of {vendor, cost_usd, share_pct, tokens_*, row_count, agent_count}
+// sorted by cost desc. Defaults to month-to-date if period query omitted; accepts
+// period (mtd|wtd|prev7d|prev30d|qtr|prevqtr|ytd) or explicit from+to (YYYY-MM-DD).
+publicRouter.get('/cost/by-vendor', (req, res) => {
+  let from, to;
+  try {
+    if (req.query.period) {
+      const range = costQuery.periodToRange(String(req.query.period));
+      from = range.from; to = range.to;
+    } else {
+      from = req.query.from ? String(req.query.from) : null;
+      to = req.query.to ? String(req.query.to) : null;
+      if (!from || !to || !/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+        // Default to mtd if neither period nor from/to supplied.
+        const range = costQuery.periodToRange('mtd');
+        from = range.from; to = range.to;
+      }
+    }
+  } catch (e) {
+    return res.status(400).json({ error: 'ValidationError', message: e.message });
+  }
+  const rows = _costDb.getCostByVendor({ from, to });
+  const total = rows.reduce((s, r) => s + r.cost_usd, 0);
+  const result = rows.map((r) => ({
+    ...r,
+    share_pct: total > 0 ? Math.round((r.cost_usd / total) * 10000) / 100 : 0,
+  }));
+  return res.json({ from, to, total_usd: Math.round(total * 10000) / 10000, vendors: result });
+});
+
+// CP11.x.2: per-vendor daily time-series for the Composition-lens stacked-area
+// chart. Returns array of {date, vendor, cost_usd}. Frontend pivots into the
+// uPlot series shape (one series per vendor, x=date).
+publicRouter.get('/cost/by-vendor-daily', (req, res) => {
+  let from, to;
+  try {
+    if (req.query.period) {
+      const range = costQuery.periodToRange(String(req.query.period));
+      from = range.from; to = range.to;
+    } else {
+      from = req.query.from ? String(req.query.from) : null;
+      to = req.query.to ? String(req.query.to) : null;
+      if (!from || !to || !/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+        const range = costQuery.periodToRange('30d');
+        from = range.from; to = range.to;
+      }
+    }
+  } catch (e) {
+    return res.status(400).json({ error: 'ValidationError', message: e.message });
+  }
+  const rows = _costDb.getCostByVendorDaily({ from, to });
+  return res.json({ from, to, count: rows.length, rows });
+});
+
 publicRouter.get('/cost/daily', (req, res) => {
   const from = req.query.from ? String(req.query.from) : null;
   const to = req.query.to ? String(req.query.to) : null;
@@ -503,8 +558,10 @@ publicRouter.get('/cost/daily', (req, res) => {
     return res.status(400).json({ error: 'ValidationError', message: 'from + to required (YYYY-MM-DD)' });
   }
   const by = req.query.by ? String(req.query.by).split(',').map(s => s.trim()) : null;
+  // CP11.x.2 (2026-06-13): vendor added to VALID_DIMS so the Cost dashboard
+  // can request by=vendor for the per-vendor stacked-area chart.
   const VALID_DIMS = new Set(['agent_id', 'user_email', 'organization_id', 'model', 'host',
-    'cost_center', 'project_tag', 'environment_tier', 'billable_flag']);
+    'cost_center', 'project_tag', 'environment_tier', 'billable_flag', 'vendor']);
   if (by && !by.every(d => VALID_DIMS.has(d))) {
     return res.status(400).json({ error: 'ValidationError', message: `by must be CSV of: ${[...VALID_DIMS].join(', ')}` });
   }

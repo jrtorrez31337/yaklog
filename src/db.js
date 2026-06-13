@@ -352,6 +352,29 @@ function initializeDb() {
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_cost_daily_cost_center_date ON cost_daily(cost_center, date)`).run();
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_cost_daily_project_date ON cost_daily(project_tag, date)`).run();
 
+  // CP11.x.2 (2026-06-13): vendor column for per-vendor cost rollup per
+  // Jon-direct ("cost per vendor as well as total cost visualizations").
+  // Derived from model identifier at insert via vendorOf(model). Values:
+  // 'Anthropic' | 'OpenAI' | 'Google' | 'Other'. Idempotent ADD COLUMN.
+  // Backfill of existing rows happens immediately after — single UPDATE
+  // statement against the model column using SQL CASE.
+  const costDailyCols = new Set(db.pragma('table_info(cost_daily)').map((c) => c.name));
+  if (!costDailyCols.has('vendor')) {
+    db.exec(`ALTER TABLE cost_daily ADD COLUMN vendor TEXT NOT NULL DEFAULT ''`);
+    db.exec(`
+      UPDATE cost_daily SET vendor = CASE
+        WHEN model LIKE 'claude-%'                                 THEN 'Anthropic'
+        WHEN model LIKE 'gemini-%'                                 THEN 'Google'
+        WHEN model LIKE 'gpt-%' OR model LIKE 'codex-%'
+             OR model LIKE 'o1-%' OR model LIKE 'o2-%'
+             OR model LIKE 'o3-%' OR model LIKE 'o4-%'             THEN 'OpenAI'
+        ELSE 'Other'
+      END
+      WHERE vendor = ''
+    `);
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_cost_daily_vendor_date ON cost_daily(vendor, date)`).run();
+  }
+
   // cost_dimension_tags — operator-assigned tag mapping per agent_id.
   // Forward-propagates to NEW rollup rows (does NOT retroactively re-tag
   // historical cost_daily rows per bizmodel §Q2 audit-preservation discipline).
@@ -918,6 +941,20 @@ function deleteMessage(id) {
 // initializeDb() above; nothing in this block touches existing tables.
 // ────────────────────────────────────────────────────────────────────────
 
+// CP11.x.2 (2026-06-13): vendor derivation from model identifier. Aligned
+// with the s345-aieng #8539 canonical runtime_class enum (claude-code /
+// codex-cli / gemini-cli) but expressed at the vendor name level for
+// Cost dashboard rendering. Update both this function AND the migration
+// backfill CASE expression in tandem when adding new vendors.
+function vendorOf(model) {
+  if (!model || typeof model !== 'string') return 'Other';
+  if (model.startsWith('claude-')) return 'Anthropic';
+  if (model.startsWith('gemini-')) return 'Google';
+  if (model.startsWith('gpt-') || model.startsWith('codex-')) return 'OpenAI';
+  if (/^o[1-4]-/.test(model)) return 'OpenAI';
+  return 'Other';
+}
+
 // UPSERT a cost_daily row. Unique on (date, full dim-tuple); INSERT OR
 // REPLACE preserves the auto-increment id-cycle but is acceptable for
 // daily-rollup re-runs (id stability not load-bearing for cost_daily).
@@ -927,17 +964,21 @@ function upsertCostDaily(row) {
   }
   const database = getDb();
   const computed_at = row.computed_at || new Date().toISOString();
+  // CP11.x.2: prefer caller-supplied vendor; derive from model otherwise.
+  // Allows Layer-2 codex/gemini emitters (per s345-aieng #8539 schema) to
+  // pass vendor explicitly while CC/Prom-rollup path derives from model.
+  const vendor = row.vendor || vendorOf(row.model);
   database.prepare(`
     INSERT INTO cost_daily (
       date, agent_id, user_email, organization_id, model, host,
       cost_center, project_tag, environment_tier, billable_flag,
       tokens_input, tokens_output, tokens_cache_read, tokens_cache_creation,
-      cost_usd, source, computed_at
+      cost_usd, source, computed_at, vendor
     ) VALUES (
       @date, @agent_id, @user_email, @organization_id, @model, @host,
       @cost_center, @project_tag, @environment_tier, @billable_flag,
       @tokens_input, @tokens_output, @tokens_cache_read, @tokens_cache_creation,
-      @cost_usd, @source, @computed_at
+      @cost_usd, @source, @computed_at, @vendor
     )
     ON CONFLICT (date, agent_id, user_email, organization_id, model, host,
                  cost_center, project_tag, environment_tier, billable_flag)
@@ -948,7 +989,8 @@ function upsertCostDaily(row) {
       tokens_cache_creation = excluded.tokens_cache_creation,
       cost_usd              = excluded.cost_usd,
       source                = excluded.source,
-      computed_at           = excluded.computed_at
+      computed_at           = excluded.computed_at,
+      vendor                = excluded.vendor
   `).run({
     date: row.date,
     agent_id: row.agent_id || '',
@@ -967,11 +1009,53 @@ function upsertCostDaily(row) {
     cost_usd: Number.isFinite(row.cost_usd) ? row.cost_usd : 0,
     source: row.source || 'prom',
     computed_at,
+    vendor,
   });
 }
 
 // Query cost_daily rows by date range with optional dimension filter.
 // Returns array of row objects (NOT aggregated; caller sums if needed).
+// CP11.x.2: aggregate cost_daily grouped by vendor across [from, to]. Returns
+// array of {vendor, cost_usd, tokens_input, tokens_output, tokens_cache_read,
+// tokens_cache_creation, row_count, agent_count} ordered by cost desc.
+// Powers the per-vendor totals strip + share-% pills on the Cost tab.
+function getCostByVendor({ from, to } = {}) {
+  if (!from || !to) throw new Error('getCostByVendor: from + to are required (YYYY-MM-DD)');
+  const database = getDb();
+  return database.prepare(`
+    SELECT
+      COALESCE(NULLIF(vendor, ''), 'Other') AS vendor,
+      ROUND(SUM(cost_usd), 4) AS cost_usd,
+      SUM(tokens_input) AS tokens_input,
+      SUM(tokens_output) AS tokens_output,
+      SUM(tokens_cache_read) AS tokens_cache_read,
+      SUM(tokens_cache_creation) AS tokens_cache_creation,
+      COUNT(*) AS row_count,
+      COUNT(DISTINCT agent_id) AS agent_count
+    FROM cost_daily
+    WHERE date >= @from AND date <= @to
+    GROUP BY COALESCE(NULLIF(vendor, ''), 'Other')
+    ORDER BY cost_usd DESC
+  `).all({ from, to });
+}
+
+// CP11.x.2: per-vendor daily-bucket time-series for the composition-lens
+// stacked-area chart. Returns array of {date, vendor, cost_usd}.
+function getCostByVendorDaily({ from, to } = {}) {
+  if (!from || !to) throw new Error('getCostByVendorDaily: from + to are required (YYYY-MM-DD)');
+  const database = getDb();
+  return database.prepare(`
+    SELECT
+      date,
+      COALESCE(NULLIF(vendor, ''), 'Other') AS vendor,
+      ROUND(SUM(cost_usd), 4) AS cost_usd
+    FROM cost_daily
+    WHERE date >= @from AND date <= @to
+    GROUP BY date, COALESCE(NULLIF(vendor, ''), 'Other')
+    ORDER BY date ASC, cost_usd DESC
+  `).all({ from, to });
+}
+
 function getCostByPeriod({ from, to, agent_id, user_email, cost_center, project_tag, environment_tier, model, billable_flag } = {}) {
   if (!from || !to) throw new Error('getCostByPeriod: from + to are required (YYYY-MM-DD)');
   const database = getDb();
@@ -3239,7 +3323,10 @@ module.exports = {
   listAgentActivity,
   // CP11.1: cost-persistence (pre-staged for ADR-0029 Phase 1)
   upsertCostDaily,
+  vendorOf,
   getCostByPeriod,
+  getCostByVendor,
+  getCostByVendorDaily,
   upsertCostDimensionTags,
   getCostDimensionTags,
   upsertCostBudget,

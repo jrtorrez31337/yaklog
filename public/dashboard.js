@@ -2452,11 +2452,47 @@
     if (_costMounted) return;
     _costMounted = true;
     refreshHeroStrip();
+    // CP11.x.2: per-vendor totals strip refreshed alongside hero (same cadence).
+    refreshVendorStrip();
     setInterval(refreshHeroStrip, 60_000);  // 1m hero refresh
+    setInterval(refreshVendorStrip, 60_000);
     document.querySelectorAll('#cost-subnav button').forEach((b) => {
       b.addEventListener('click', () => costShowSub(b.dataset.sub));
     });
     costShowSub('pace');
+  }
+
+  // CP11.x.2 (2026-06-13): per-vendor totals strip refresh. Populates the
+  // 3-card row above the sub-nav (Anthropic / OpenAI / Google) from the
+  // /cost/by-vendor endpoint. Cards for vendors with zero spend render
+  // muted but visible — light up automatically when codex (aieng3 #8545)
+  // + gemini (#8524) canonical-token-emitters land data into cost_daily.
+  async function refreshVendorStrip() {
+    try {
+      const r = await fetch('/api/v1/plexus/public/cost/by-vendor?period=mtd');
+      const j = await r.json();
+      const totalEl = document.getElementById('vendor-strip-total');
+      if (totalEl) totalEl.textContent = fmtUSD(j.total_usd || 0);
+      // Build lookup by vendor name; iterate the 3 canonical cards in DOM order.
+      const byVendor = new Map();
+      for (const v of (j.vendors || [])) byVendor.set(v.vendor, v);
+      const cards = document.querySelectorAll('#vendor-strip-cards .vendor-card');
+      cards.forEach((card) => {
+        const name = card.getAttribute('data-vendor');
+        const data = byVendor.get(name);
+        const valEl = card.querySelector('.vendor-card-val');
+        const shareEl = card.querySelector('.vendor-card-share');
+        if (data && data.cost_usd > 0) {
+          card.classList.remove('is-zero');
+          valEl.textContent = fmtUSD(data.cost_usd);
+          shareEl.textContent = `${data.share_pct}% · ${data.agent_count} agent${data.agent_count === 1 ? '' : 's'}`;
+        } else {
+          card.classList.add('is-zero');
+          valEl.textContent = fmtUSD(0);
+          shareEl.textContent = 'no spend yet';
+        }
+      });
+    } catch { /* keep prior render */ }
   }
 
   function costShowSub(name) {
@@ -2653,7 +2689,7 @@
     ctrl.appendChild(periodSel);
     ctrl.appendChild(el('label', null, 'Group by'));
     const dimSel = el('select');
-    for (const d of ['agent_id', 'cost_center', 'project_tag', 'environment_tier', 'model', 'user_email', 'organization_id']) {
+    for (const d of ['vendor', 'agent_id', 'cost_center', 'project_tag', 'environment_tier', 'model', 'user_email', 'organization_id']) {
       const opt = el('option', { value: d }, d);
       if (d === _compDim) opt.selected = true;
       dimSel.appendChild(opt);

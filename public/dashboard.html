@@ -334,6 +334,29 @@
   .cost-tile .mover-row .mover-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
   .cost-tile .mover-row .mover-cost { color: var(--muted); font-variant-numeric: tabular-nums; flex-shrink: 0; }
 
+  /* CP11.x.2 (2026-06-13): per-vendor totals strip. Colors mirror the
+     CP12.x.3 runtime-class accent palette (Anthropic orange, OpenAI teal,
+     Google blue) so vendor branding is consistent between AgentCard accent
+     and Cost-tab strip. Zero-spend vendors render muted but visible — they
+     light up automatically when token-emitters land canonical metrics. */
+  .cost-vendor-strip { background: var(--panel); border-bottom: 1px solid var(--border); padding: 12px 18px 14px; }
+  .vendor-strip-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+  .vendor-strip-lbl { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
+  .vendor-strip-total { color: var(--text); font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .vendor-strip-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .vendor-card { background: rgba(255,255,255,0.02); border: 1px solid var(--border); border-radius: 4px; padding: 10px 12px; position: relative; overflow: hidden; }
+  .vendor-card.is-zero { opacity: 0.45; }
+  .vendor-card-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+  .vendor-swatch { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .vendor-card.vendor-anthropic .vendor-swatch { background: #cc785c; }
+  .vendor-card.vendor-openai    .vendor-swatch { background: #10a37f; }
+  .vendor-card.vendor-google    .vendor-swatch { background: #4285f4; }
+  .vendor-card.vendor-anthropic { border-left: 2px solid rgba(204,120,92,0.55); }
+  .vendor-card.vendor-openai    { border-left: 2px solid rgba(16,163,127,0.55); }
+  .vendor-card.vendor-google    { border-left: 2px solid rgba(66,133,244,0.55); }
+  .vendor-name { color: var(--text); font-size: 12px; font-weight: 500; }
+  .vendor-card-val { color: var(--text); font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.2; }
+  .vendor-card-share { color: var(--muted); font-size: 10px; margin-top: 2px; font-variant-numeric: tabular-nums; }
   .cost-subnav { display: flex; gap: 0; background: var(--panel); border-bottom: 1px solid var(--border); padding: 0 18px; }
   .cost-subnav button { background: transparent; color: var(--muted); border: 0; padding: 10px 16px; font: inherit; font-size: 12px; cursor: pointer; border-bottom: 2px solid transparent; transition: color 0.1s; }
   .cost-subnav button:hover { color: var(--text); }
@@ -1019,6 +1042,33 @@
       <div class="tile-lbl">MTD (UTC)</div>
       <div class="tile-val">—</div>
       <div class="tile-sub">—</div>
+    </div>
+  </div>
+
+  <!-- CP11.x.2 (2026-06-13): per-vendor totals strip. Always-visible alongside
+       hero. Cards light up automatically when non-CC token-emitters land
+       canonical metrics into cost_daily. -->
+  <div class="cost-vendor-strip" id="cost-vendor-strip">
+    <div class="vendor-strip-head">
+      <span class="vendor-strip-lbl">Spend by vendor · MTD</span>
+      <span class="vendor-strip-total" id="vendor-strip-total">—</span>
+    </div>
+    <div class="vendor-strip-cards" id="vendor-strip-cards">
+      <div class="vendor-card vendor-anthropic" data-vendor="Anthropic">
+        <div class="vendor-card-head"><span class="vendor-swatch"></span><span class="vendor-name">Anthropic</span></div>
+        <div class="vendor-card-val">—</div>
+        <div class="vendor-card-share">—</div>
+      </div>
+      <div class="vendor-card vendor-openai" data-vendor="OpenAI">
+        <div class="vendor-card-head"><span class="vendor-swatch"></span><span class="vendor-name">OpenAI</span></div>
+        <div class="vendor-card-val">—</div>
+        <div class="vendor-card-share">—</div>
+      </div>
+      <div class="vendor-card vendor-google" data-vendor="Google">
+        <div class="vendor-card-head"><span class="vendor-swatch"></span><span class="vendor-name">Google</span></div>
+        <div class="vendor-card-val">—</div>
+        <div class="vendor-card-share">—</div>
+      </div>
     </div>
   </div>
 
