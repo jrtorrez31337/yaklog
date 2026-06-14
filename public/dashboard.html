@@ -125,6 +125,16 @@
   .agent-card.status-unknown             { border-left-color: var(--yellow); }
   .agent-card.status-offline             { border-left-color: var(--red); }
   .agent-card.status-stop_failure        { border-left-color: var(--red); border-color: var(--red); }
+  /* F4 (parch #8743 + Jon-direct major-bug 2026-06-14): stale-idle override.
+     CC clients fire `Stop` on rate-limit (admin #8737 empirical) → daemon
+     writes session_state='idle' (sticky terminal per v0.5.2 design).
+     Without this hint a rate-limited CC session stays online_idle (green)
+     forever. Override at presentation layer: when last_hook is > 30min
+     stale, flip border to yellow + dim the label-badge. The canonical
+     API label is preserved; this is dashboard-only semantic surfacing.
+     F1 server-side age-aware deriveLabel is queued post-defensive-freeze. */
+  .agent-card.stale-idle                 { border-left-color: var(--yellow); }
+  .agent-card.stale-idle .label-badge    { opacity: 0.75; font-style: italic; }
   /* CP14.1 (2026-06-13): runtime-class right-edge accent. Status owns the
      left border (4px); runtime gets a thin right border-color tint that's
      visible at a glance but doesn't compete with the status signal.

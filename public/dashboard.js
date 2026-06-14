@@ -191,8 +191,17 @@
     });
 
     const counts = { online: 0, stalled: 0, offline: 0, daemon_only: 0, stop_failure: 0 };
+    // F4 (parch #8743 + Jon-direct major-bug 2026-06-14): mirror the
+    // stale-idle visual decay threshold so the count agrees with the card
+    // visuals. Stale-idle cards (online_idle + last_hook > 30min) count
+    // toward stalled, matching Jon's UX expectation that rate-limited CC
+    // sessions surface in the stalled counter.
+    const STALE_IDLE_THRESHOLD_MS = 30 * 60 * 1000;
     for (const r of payload.presence) {
+      const staleIdle = r.label === 'online_idle' && r.last_hook_at
+        && (Date.now() - new Date(r.last_hook_at).getTime()) > STALE_IDLE_THRESHOLD_MS;
       if (r.label === 'stop_failure' || r.session_state === 'stop_failure') counts.stop_failure++;
+      else if (staleIdle) counts.stalled++;
       else if (r.label && r.label.startsWith('online')) counts.online++;
       else if (r.label === 'daemon_only') counts.daemon_only++;
       else if (r.label === 'stalled' || r.label === 'unknown') counts.stalled++;
@@ -1393,10 +1402,35 @@
       });
       this.headEl.appendChild(viewPills);
       const lbl = r.label || '';
+      // F4 (parch #8743 + Jon-direct major-bug fix 2026-06-14): age-aware
+      // stale-idle visual decay. CC clients fire `Stop` on rate-limit
+      // interrupt (admin #8737 empirical: zero StopFailure across ~10
+      // rate-limit cycles), which puts session_state='idle' (sticky
+      // terminal per v0.5.2 design / gamedev-client #4535). Without this
+      // hint, a rate-limited CC session stays online_idle (green) forever.
+      // Dashboard-only fix: when an idle session hasn't fired any hook
+      // in > STALE_IDLE_THRESHOLD_MS, visually surface as stale (yellow
+      // border + suffix on the label tooltip + "stale idle" pill). The
+      // canonical API label is preserved unchanged for downstream consumers;
+      // this is presentation-layer-only. Server-side age-aware deriveLabel
+      // (F1) is queued post-defensive-freeze + Jon-direction on whether
+      // the v0.5.2 sticky-idle design needs canon-change.
+      const STALE_IDLE_THRESHOLD_MS = 30 * 60 * 1000; // 30 min
+      let staleIdle = false;
+      let staleIdleAgeMs = null;
+      if (r.label === 'online_idle' && r.last_hook_at) {
+        const ageMs = Date.now() - new Date(r.last_hook_at).getTime();
+        if (Number.isFinite(ageMs) && ageMs > STALE_IDLE_THRESHOLD_MS) {
+          staleIdle = true;
+          staleIdleAgeMs = ageMs;
+        }
+      }
+      const labelTitle = `daemon=${r.daemon_state || '?'} · session=${r.session_state || '?'}`
+        + (staleIdle ? ` · stale-idle (no hook for ${Math.round(staleIdleAgeMs/60000)}m; CC rate-limit fires Stop → sticky idle; presentation-layer hint)` : '');
       this.headEl.appendChild(el('span', {
-        class: 'label-badge label-' + lbl,
-        title: `daemon=${r.daemon_state || '?'} · session=${r.session_state || '?'}`,
-      }, lbl));
+        class: 'label-badge label-' + lbl + (staleIdle ? ' stale-idle' : ''),
+        title: labelTitle,
+      }, lbl + (staleIdle ? ' (stale)' : '')));
       const pills = el('span', { class: 'agent-card-pills' });
       const otel = agentOtelStatus(this.agentId);
       if (otel) {
@@ -1477,6 +1511,10 @@
       this.el.className = 'agent-card';
       if (r.label) this.el.classList.add('status-' + r.label);
       if (r.label === 'offline') this.el.classList.add('is-offline');
+      // F4 (parch #8743): stale-idle class flips the border-left to yellow
+      // and the label-badge to muted (CSS in dashboard.html). Computed
+      // above in the labelTitle block; mirrored here for the card itself.
+      if (staleIdle) this.el.classList.add('stale-idle');
     }
     rerenderBody() {
       switch (this.currentView) {
@@ -1945,10 +1983,18 @@
     if (label === 'stalled') return 'stalled';
     return 'offline';   // includes 'offline', 'daemon_only', 'unknown', anything else
   }
+  // F4 (parch #8743): stale-idle agents bucket as stalled for filtering,
+  // matching the visual decay + count semantics. Same 30min threshold.
+  function isStaleIdle(r) {
+    if (r.label !== 'online_idle' || !r.last_hook_at) return false;
+    const ageMs = Date.now() - new Date(r.last_hook_at).getTime();
+    return Number.isFinite(ageMs) && ageMs > 30 * 60 * 1000;
+  }
   function passesCardFilter(r) {
     const q = cardFilter.search.trim().toLowerCase();
     if (q && !((r.agent_id || '').toLowerCase().includes(q))) return false;
-    if (!cardFilter.statuses.has(statusBucket(r.label))) return false;
+    const bucket = isStaleIdle(r) ? 'stalled' : statusBucket(r.label);
+    if (!cardFilter.statuses.has(bucket)) return false;
     const runtime = resolveRuntime(r.agent_id, r);
     if (runtime && !cardFilter.runtimes.has(runtime)) return false;
     return true;
