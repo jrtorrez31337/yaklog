@@ -33,6 +33,22 @@
     if (!iso) return null;
     return new Date(iso.includes('T') ? iso : iso.replace(' ', 'T') + 'Z');
   }
+  // Jon-direct 2026-06-15: SI-suffix Y-axis values formatter for rate charts.
+  // Fixes left-margin truncation where values >99,999 (7+ chars with commas
+  // like "150,000") exceeded uPlot's default left-axis width. SI suffixes
+  // collapse the longest-magnitude labels to 3-4 chars (150k, 1.5M, 1.2B)
+  // without losing readability; preserves bare integers for small values.
+  function siAxisValues(self, vals) {
+    return vals.map((v) => {
+      if (v == null) return '';
+      const abs = Math.abs(v);
+      if (abs >= 1e9) return (v / 1e9).toFixed(abs >= 1e10 ? 0 : 1) + 'B';
+      if (abs >= 1e6) return (v / 1e6).toFixed(abs >= 1e7 ? 0 : 1) + 'M';
+      if (abs >= 1e3) return (v / 1e3).toFixed(abs >= 1e4 ? 0 : 1) + 'k';
+      if (abs > 0 && abs < 1) return v.toFixed(2);
+      return String(v);
+    });
+  }
   function fmtAge(iso) {
     if (!iso) return '—';
     const ts = _parseUtcIso(iso);
@@ -554,7 +570,10 @@
           scales: { x: { time: true } },
           axes: [
             { stroke: '#8a93a6', grid: { stroke: 'rgba(255,255,255,0.04)' } },
-            { stroke: '#8a93a6', grid: { stroke: 'rgba(255,255,255,0.04)' }, size: 56 },
+            // Jon-direct 2026-06-15: SI-suffix Y-axis fixes left-margin
+            // truncation when token rate exceeds 99k. size:48 is sufficient
+            // for 4-char SI labels (150k, 1.5M).
+            { stroke: '#8a93a6', grid: { stroke: 'rgba(255,255,255,0.04)' }, size: 48, values: siAxisValues },
           ],
           legend: { live: true },
           cursor: { drag: { x: true, y: false } },
@@ -2480,7 +2499,10 @@
           scales: { x: { time: true } },
           axes: [
             { stroke: '#8a93a6', grid: { stroke: 'rgba(255,255,255,0.04)' } },
-            { stroke: '#8a93a6', grid: { stroke: 'rgba(255,255,255,0.04)' }, size: 64 },
+            // Jon-direct 2026-06-15: SI-suffix Y-axis fixes left-margin
+            // truncation for large rate values (sister to line ~557 token
+            // rate view fix; same root cause + same fix).
+            { stroke: '#8a93a6', grid: { stroke: 'rgba(255,255,255,0.04)' }, size: 48, values: siAxisValues },
           ],
           legend: { live: true },
           cursor: { drag: { x: true, y: false } },
