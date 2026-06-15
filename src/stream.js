@@ -1,3 +1,5 @@
+const fs = require('fs');
+const path = require('path');
 const { messageBus, listMessagesAfter } = require('./db');
 const { applyDmVisibilityFilter, writeAuditEntries } = require('./middleware/dmFilter');
 
@@ -127,6 +129,76 @@ function getStreamStats() {
     server_boot_at: SERVER_BOOT_AT,
     cluster_event_count_since_boot: clusterEventCount,
   };
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// CP12.x.4 Layer-1 Step 2 in-process empirical-anchor snapshot loop
+// (per #8967 Option A path; sidesteps ops-key-secrets-at-rest concern by
+// running the capture in the yaklog-server process itself, no HTTP, no
+// auth-gate, no token-at-rest). Writes one NDJSON line per snapshot to
+// the bind-mounted /var/log/yaklog/ path so ssw-devops's external
+// /presence/public capture can be joined on snapshot_at + agent_id at
+// cycle close.
+//
+// Opt-in via env: YAKLOG_CP12_X_4_EMPIRICAL_ANCHOR_ENABLED=1
+// Anchor zero (default = process start; override for cycle-continuity):
+//   YAKLOG_CP12_X_4_EMPIRICAL_ANCHOR_ZERO=<ISO timestamp>
+// Output path (default = /var/log/yaklog/cp12-x-4-stream-stats.ndjson):
+//   YAKLOG_CP12_X_4_EMPIRICAL_ANCHOR_PATH=<absolute path>
+// Cadence (default 30min, matching ssw-devops loop):
+//   YAKLOG_CP12_X_4_EMPIRICAL_ANCHOR_INTERVAL_MS=<ms>
+// Max iters (default 96 = 48h at 30min; safety bound):
+//   YAKLOG_CP12_X_4_EMPIRICAL_ANCHOR_MAX_ITERS=<n>
+// ────────────────────────────────────────────────────────────────────────
+
+let _empiricalAnchorTimer = null;
+let _empiricalAnchorIter = 0;
+
+function startEmpiricalAnchorLoop() {
+  if (process.env.YAKLOG_CP12_X_4_EMPIRICAL_ANCHOR_ENABLED !== '1') return null;
+  const intervalMs = Number.parseInt(
+    process.env.YAKLOG_CP12_X_4_EMPIRICAL_ANCHOR_INTERVAL_MS, 10,
+  ) || 30 * 60 * 1000;
+  const maxIters = Number.parseInt(
+    process.env.YAKLOG_CP12_X_4_EMPIRICAL_ANCHOR_MAX_ITERS, 10,
+  ) || 96;
+  const outPath = process.env.YAKLOG_CP12_X_4_EMPIRICAL_ANCHOR_PATH
+    || '/var/log/yaklog/cp12-x-4-stream-stats.ndjson';
+  const anchorZero = process.env.YAKLOG_CP12_X_4_EMPIRICAL_ANCHOR_ZERO
+    || SERVER_BOOT_AT;
+
+  try { fs.mkdirSync(path.dirname(outPath), { recursive: true }); } catch {}
+
+  const fire = () => {
+    _empiricalAnchorIter += 1;
+    const snapshot = {
+      snapshot_at: new Date().toISOString(),
+      iteration: _empiricalAnchorIter,
+      anchor_zero: anchorZero,
+      server_boot_at: SERVER_BOOT_AT,
+      stream_stats: getStreamStats(),
+    };
+    fs.appendFile(outPath, JSON.stringify(snapshot) + '\n', (err) => {
+      if (err) console.error(`[empirical-anchor] append failed: ${err.message}`);
+    });
+    if (_empiricalAnchorIter >= maxIters) {
+      stopEmpiricalAnchorLoop();
+      console.log(`[empirical-anchor] window complete; stopped at iter=${_empiricalAnchorIter}`);
+    }
+  };
+  _empiricalAnchorTimer = setInterval(fire, intervalMs);
+  if (_empiricalAnchorTimer.unref) _empiricalAnchorTimer.unref();
+  // Immediate baseline snapshot at iter=1.
+  fire();
+  console.log(`[empirical-anchor] CP12.x.4 loop started; cadence=${intervalMs/60000}min path=${outPath} anchorZero=${anchorZero} maxIters=${maxIters}`);
+  return _empiricalAnchorTimer;
+}
+
+function stopEmpiricalAnchorLoop() {
+  if (_empiricalAnchorTimer) {
+    clearInterval(_empiricalAnchorTimer);
+    _empiricalAnchorTimer = null;
+  }
 }
 
 function parseCursor(value) {
@@ -391,4 +463,4 @@ function streamHandler(req, res) {
   }, KEEPALIVE_MS);
 }
 
-module.exports = { streamHandler, getStreamStats };
+module.exports = { streamHandler, getStreamStats, startEmpiricalAnchorLoop, stopEmpiricalAnchorLoop };

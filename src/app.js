@@ -75,6 +75,17 @@ if (process.env.NODE_ENV !== 'test' && process.env.YAKLOG_AUDIT_INGESTER_DISABLE
   console.log('[auditFromActivity] boot drain + ticker armed (60s interval)');
 }
 
+// CP12.x.4 Layer-1 Step 2: in-process empirical-anchor snapshot loop
+// (per yaklog #8967 Option A path; opt-in via env so test env / production
+// without the empirical window stays unaffected). When enabled, writes
+// per-30min /ops/stream/stats snapshots to bind-mounted log path for join
+// with ssw-devops's external /presence/public capture.
+if (process.env.NODE_ENV !== 'test'
+    && process.env.YAKLOG_CP12_X_4_EMPIRICAL_ANCHOR_ENABLED === '1') {
+  const { startEmpiricalAnchorLoop } = require('./stream');
+  startEmpiricalAnchorLoop();
+}
+
 const app = express();
 
 // helmet's default CSP includes `upgrade-insecure-requests` which forces the
