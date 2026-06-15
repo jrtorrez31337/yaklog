@@ -345,6 +345,98 @@ test('emits keepalive comments periodically', async () => {
   server.close();
 });
 
+// ─── CP12.x.4 Layer-1 Step 1 (per parch #8949): /ops/stream/stats ─────
+
+const { getStreamStats } = require('../src/stream');
+
+test('CP12.x.4 Step 1: getStreamStats returns boot timestamp + cluster counter', () => {
+  const stats = getStreamStats();
+  assert.ok(typeof stats.server_boot_at === 'string' && stats.server_boot_at.endsWith('Z'));
+  assert.ok(typeof stats.cluster_event_count_since_boot === 'number');
+  assert.ok(Array.isArray(stats.agents));
+});
+
+test('CP12.x.4 Step 1: open + close lifecycle increments counters', async () => {
+  const server = await startServer();
+  const port = server.address().port;
+  const { close } = await openStream(port, '?channel=ka_lifecycle&exclude_sender=lifecycle-agent');
+  await new Promise((r) => setTimeout(r, 150));  // let initial replay + first keepalive
+  close();
+  await new Promise((r) => setTimeout(r, 50));   // let cleanup fire
+
+  const stats = getStreamStats();
+  const me = stats.agents.find((a) => a.agent_id === 'lifecycle-agent');
+  assert.ok(me, 'lifecycle-agent stats present');
+  assert.ok(me.open_count >= 1);
+  // current_active_count back to 0 after close
+  assert.equal(me.current_active_count, 0);
+  // close-reason fold: client_close should fire on req.destroy()
+  assert.ok(me.close_count_by_reason.client_close >= 1);
+  server.close();
+});
+
+test('CP12.x.4 Step 1: filter_match_count_total tracks bus events matching filter', async () => {
+  const server = await startServer();
+  const port = server.address().port;
+  const { events, close } = await openStream(port, '?channel=filter-match-test&exclude_sender=filter-agent');
+  // Open is asynchronous; wait for initial setup before sending
+  await new Promise((r) => setTimeout(r, 50));
+  insertMessage({ sender: 'someone-else', channel: 'filter-match-test', body: 'hello' });
+  await waitFor(() => events.some((e) => e.includes('hello')), 1500);
+  close();
+  await new Promise((r) => setTimeout(r, 50));
+
+  const stats = getStreamStats();
+  const me = stats.agents.find((a) => a.agent_id === 'filter-agent');
+  assert.ok(me.filter_match_count_total >= 1, 'filter_match_count_total advanced');
+  assert.ok(me.events_dispatched_total >= 1);
+  server.close();
+});
+
+test('CP12.x.4 Step 1 + #182: low_traffic_likely_healthy fires when no events match filter', async () => {
+  const server = await startServer();
+  const port = server.address().port;
+  // Open with a channel that gets ZERO traffic during the window
+  const { close } = await openStream(port, '?channel=zero-traffic-zzz&exclude_sender=quiet-agent');
+  await new Promise((r) => setTimeout(r, 200));  // let keepalive fire (KEEPALIVE_MS=100)
+  // Send unrelated cluster traffic on a DIFFERENT channel (must not match filter)
+  insertMessage({ sender: 'somebody', channel: 'other-channel-not-watched', body: 'noise' });
+  await new Promise((r) => setTimeout(r, 50));
+  close();
+  await new Promise((r) => setTimeout(r, 50));
+
+  const stats = getStreamStats();
+  const me = stats.agents.find((a) => a.agent_id === 'quiet-agent');
+  assert.equal(me.filter_match_count_total, 0, 'no filter matches');
+  assert.ok(me.keepalive_count_total >= 1, 'keepalives flowed');
+  assert.ok(stats.cluster_event_count_since_boot >= 1, 'cluster has traffic');
+  assert.equal(me.low_traffic_likely_healthy, true, '#182 flag fires correctly');
+  server.close();
+});
+
+test('CP12.x.4 Step 1: replay_rows_histogram + replay_ms_p50 populate', async () => {
+  // Seed some messages first so replay returns rows
+  insertMessage({ sender: 'seeder', channel: 'replay-test', body: 'one' });
+  insertMessage({ sender: 'seeder', channel: 'replay-test', body: 'two' });
+
+  const server = await startServer();
+  const port = server.address().port;
+  const { close } = await openStream(port, '?channel=replay-test&exclude_sender=replay-agent&since=0');
+  await new Promise((r) => setTimeout(r, 100));
+  close();
+  await new Promise((r) => setTimeout(r, 50));
+
+  const stats = getStreamStats();
+  const me = stats.agents.find((a) => a.agent_id === 'replay-agent');
+  assert.ok(me, 'replay-agent stats present');
+  // replay_rows_histogram total = open_count
+  const histSum = Object.values(me.replay_rows_histogram).reduce((a, b) => a + b, 0);
+  assert.ok(histSum >= 1);
+  // replay_ms_p50 should be a non-negative number
+  assert.ok(me.replay_ms_p50 >= 0);
+  server.close();
+});
+
 test.after(() => {
   closeDb();
   fs.rmSync(tempDir, { recursive: true, force: true });

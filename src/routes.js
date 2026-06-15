@@ -6,7 +6,7 @@ const { execFileSync } = require('child_process');
 const { insertMessage, listMessages, listChannels, updateMessage, deleteMessage, getMessage,
         upsertPresence, getPresenceByAgent, listPresence, listPresenceTransitions,
         deletePresenceRow, insertAgentActivity, listAgentActivity } = require('./db');
-const { streamHandler } = require('./stream');
+const { streamHandler, getStreamStats } = require('./stream');
 const config = require('./config');
 const { enforceSenderBinding, enforceMutationBinding, resolveAllowedSenders } = require('./middleware/senderBinding');
 const { enforceDaemonBinding } = require('./middleware/daemonBinding');
@@ -738,6 +738,23 @@ router.get('/agents/:agent_id/activity', (req, res) => {
 });
 
 router.get('/stream', streamHandler);
+
+// CP12.x.4 Layer-1 + #181 + #182 combined-cycle Step 1 (per parch #8949 Jon-
+// direct 3-arbitration ratify + secops #8945 pre-clearance): ops-gated stream
+// lifecycle stats endpoint. Returns per-agent counters: open/close lifecycle,
+// replay metrics, keepalive count, close-reason fold (incl. arrival_silent vs
+// recovery_stall), filter-match counts, low_traffic_likely_healthy boolean.
+// No message content, no token material, no cursor values — operational
+// metadata only per secops #8945 pre-scope §2.
+router.get('/ops/stream/stats', (req, res) => {
+  if (!req.auth || !req.auth.opsKeyId) {
+    return res.status(403).json({
+      error: 'OpsKeyRequired',
+      message: 'GET /ops/stream/stats requires a Bearer token from YAKLOG_OPS_API_KEYS.'
+    });
+  }
+  return res.json(getStreamStats());
+});
 
 // Canonical-doc name validator: lowercase letters/digits/dot/dash/underscore,
 // must end in .md. Rejects anything that could traverse paths or load

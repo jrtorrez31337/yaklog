@@ -8,6 +8,127 @@ const MENTION_RE = /^[A-Za-z0-9_\-]{1,64}$/;
 const KEEPALIVE_MS = Number.parseInt(process.env.YAKLOG_STREAM_KEEPALIVE_MS, 10) || 15_000;
 const DEFAULT_COALESCE_MS = 500;
 
+// ────────────────────────────────────────────────────────────────────────
+// CP12.x.4 Layer-1 + #181 + #182 combined-cycle Step 1 instrumentation
+// (per parch #8949 Jon-direct 3-arbitration ratify + secops #8945 pre-clear).
+//
+// Tracks per-agent /stream lifecycle counters in-memory so we can empirically
+// anchor the 3-class taxonomy (healthy-advancing / silent-dead-on-arrival /
+// post-recovery-stall per ssw-devops #8638) plus the filter-aware false-
+// positive distinguisher (per pveadmin #8616). Zero persistence; resets on
+// server boot. Surfaced via ops-gated GET /ops/stream/stats.
+//
+// Per [[feedback_substrate_check_before_routing_claims]] empirical-before-
+// claim discipline + [[feedback_jon_regression_report_requires_empirical_
+// anchor_before_revert]] sister-pattern.
+// ────────────────────────────────────────────────────────────────────────
+
+const SERVER_BOOT_AT = new Date().toISOString();
+let clusterEventCount = 0;
+messageBus.on('message', () => { clusterEventCount += 1; });
+
+// Per-agent counters. Keyed by exclude_sender (the requesting agent's ID);
+// streams with no exclude_sender bucket as '__anonymous__'. Each entry:
+// {
+//   open_count, current_active_count,
+//   close_count_by_reason: {client_close, error, select_timeout, server_close, arrival_silent, recovery_stall},
+//   replay_rows_samples: [], replay_filtered_samples: [], replay_ms_samples: [],
+//   first_byte_ms_samples: [],
+//   keepalive_count_total, events_dispatched_total,
+//   duration_s_samples: [],
+//   filter_match_count_total,
+//   last_close_had_events,  // for #181 recovery_stall distinguishing
+// }
+const agentStats = new Map();
+
+// Bounded sample retention to cap memory (median+p99 don't need raw history).
+const SAMPLE_CAP = 256;
+
+function getOrInitAgent(agentId) {
+  let s = agentStats.get(agentId);
+  if (s) return s;
+  s = {
+    open_count: 0,
+    current_active_count: 0,
+    close_count_by_reason: {
+      client_close: 0, error: 0, select_timeout: 0, server_close: 0,
+      arrival_silent: 0, recovery_stall: 0,
+    },
+    replay_rows_samples: [], replay_filtered_samples: [], replay_ms_samples: [],
+    first_byte_ms_samples: [],
+    keepalive_count_total: 0, events_dispatched_total: 0,
+    duration_s_samples: [],
+    filter_match_count_total: 0,
+    last_close_had_events: false,
+  };
+  agentStats.set(agentId, s);
+  return s;
+}
+
+function pushSample(arr, value) {
+  arr.push(value);
+  if (arr.length > SAMPLE_CAP) arr.shift();
+}
+
+function pct(arr, p) {
+  if (arr.length === 0) return 0;
+  const sorted = [...arr].sort((a, b) => a - b);
+  const idx = Math.min(sorted.length - 1, Math.floor(sorted.length * p));
+  return sorted[idx];
+}
+
+function histogram(arr, buckets) {
+  // buckets: [[label, min, max], ...]; max=Infinity for last bucket
+  const out = {};
+  for (const [label] of buckets) out[label] = 0;
+  for (const v of arr) {
+    for (const [label, min, max] of buckets) {
+      if (v >= min && v <= max) { out[label] += 1; break; }
+    }
+  }
+  return out;
+}
+
+// Public: snapshot per-agent stats for the /ops/stream/stats endpoint.
+function getStreamStats() {
+  const agents = [];
+  for (const [agent_id, s] of agentStats.entries()) {
+    agents.push({
+      agent_id,
+      open_count: s.open_count,
+      current_active_count: s.current_active_count,
+      close_count_by_reason: { ...s.close_count_by_reason },
+      replay_rows_histogram: histogram(s.replay_rows_samples, [
+        ['0', 0, 0], ['1-10', 1, 10], ['11-100', 11, 100], ['100+', 101, Infinity],
+      ]),
+      replay_filtered_pct_histogram: histogram(s.replay_filtered_samples, [
+        ['0%', 0, 0], ['1-50%', 1, 50], ['51-99%', 51, 99], ['100%', 100, 100],
+      ]),
+      replay_ms_p50: pct(s.replay_ms_samples, 0.50),
+      replay_ms_p99: pct(s.replay_ms_samples, 0.99),
+      first_byte_ms_p50: pct(s.first_byte_ms_samples, 0.50),
+      first_byte_ms_p99: pct(s.first_byte_ms_samples, 0.99),
+      keepalive_count_total: s.keepalive_count_total,
+      events_dispatched_total: s.events_dispatched_total,
+      duration_s_p50: pct(s.duration_s_samples, 0.50),
+      duration_s_p99: pct(s.duration_s_samples, 0.99),
+      filter_match_count_total: s.filter_match_count_total,
+      // #182: low-traffic-likely-healthy = agent's filter matches nothing
+      // while cluster traffic flows AND agent is receiving keepalives.
+      // Suppresses sse_stream_stale false-positive per pveadmin #8616.
+      low_traffic_likely_healthy:
+        s.filter_match_count_total === 0
+        && clusterEventCount > 0
+        && s.keepalive_count_total > 0,
+    });
+  }
+  return {
+    agents,
+    server_boot_at: SERVER_BOOT_AT,
+    cluster_event_count_since_boot: clusterEventCount,
+  };
+}
+
 function parseCursor(value) {
   if (value === undefined || value === null) return null;
   const parsed = Number.parseInt(value, 10);
@@ -109,6 +230,31 @@ function streamHandler(req, res) {
 
   const filters = { channels, excludeSender, mentions };
 
+  // CP12.x.4 Layer-1 Step 1 (#8949): per-connection instrumentation state.
+  const agentKey = excludeSender || '__anonymous__';
+  const agentStat = getOrInitAgent(agentKey);
+  const openedAt = Date.now();
+  agentStat.open_count += 1;
+  agentStat.current_active_count += 1;
+  let eventsDispatched = 0;
+  let keepalivesSent = 0;
+  let filterMatchCount = 0;
+  let firstByteAt = null;
+  let bytesWritten = 0;
+  let closeReason = null;  // populated by cleanup()
+
+  // Wrap res.write so we capture first-byte timing + byte volume per
+  // connection without touching every call-site.
+  const _rawWrite = res.write.bind(res);
+  res.write = (chunk) => {
+    if (firstByteAt === null) {
+      firstByteAt = Date.now();
+      pushSample(agentStat.first_byte_ms_samples, firstByteAt - openedAt);
+    }
+    bytesWritten += Buffer.byteLength(chunk);
+    return _rawWrite(chunk);
+  };
+
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
@@ -125,15 +271,41 @@ function streamHandler(req, res) {
   let flushTimer = null;
   const pending = [];
 
-  const cleanup = () => {
+  const cleanup = (reason = 'client_close') => {
     if (closed) return;
     closed = true;
+    closeReason = reason;
     if (keepalive) clearInterval(keepalive);
     if (flushTimer) clearTimeout(flushTimer);
     pending.length = 0;
     if (currentListener) messageBus.off('message', currentListener);
+
+    // Lifecycle record per #8949 Step 1 + #181 silent-dead-on-arrival vs
+    // recovery-stall distinguisher fold.
+    agentStat.current_active_count = Math.max(0, agentStat.current_active_count - 1);
+    const durationS = (Date.now() - openedAt) / 1000;
+    pushSample(agentStat.duration_s_samples, durationS);
+    agentStat.keepalive_count_total += keepalivesSent;
+    agentStat.events_dispatched_total += eventsDispatched;
+    agentStat.filter_match_count_total += filterMatchCount;
+
+    // #181: arrival_silent vs recovery_stall fold. select_timeout with
+    // zero events dispatched maps to one of:
+    //   - arrival_silent: this is the agent's first connection post-boot
+    //     AND zero events dispatched
+    //   - recovery_stall: agent has had prior connections-with-events
+    //     AND zero events dispatched this cycle
+    let foldedReason = reason;
+    if (reason === 'select_timeout' && eventsDispatched === 0) {
+      foldedReason = agentStat.last_close_had_events ? 'recovery_stall' : 'arrival_silent';
+    }
+    agentStat.close_count_by_reason[foldedReason] =
+      (agentStat.close_count_by_reason[foldedReason] || 0) + 1;
+    agentStat.last_close_had_events = eventsDispatched > 0;
+
+    console.log(`[stream-close] agent=${agentKey} reason=${foldedReason} bytes=${bytesWritten} keepalives=${keepalivesSent} events=${eventsDispatched} dur=${durationS.toFixed(1)}s`);
   };
-  req.on('close', cleanup);
+  req.on('close', () => cleanup('client_close'));
 
   // Race-free replay: subscribe first (buffer), then replay, then drain buffer.
   const buffered = [];
@@ -141,16 +313,30 @@ function streamHandler(req, res) {
   messageBus.on('message', currentListener);
 
   let highestReplayed = cursor !== null ? cursor : 0;
+  let replayRows = 0;
+  let replayFiltered = 0;
+  const replayStart = Date.now();
   if (cursor !== null && !closed) {
     const channelsArr = channels ? Array.from(channels) : null;
     const rows = listMessagesAfter({ afterId: cursor, channels: channelsArr, excludeSender, mentions });
+    replayRows = rows.length;
     for (const msg of rows) {
       if (closed) break;
-      if (!dmVisible(msg, req)) continue;
+      if (!dmVisible(msg, req)) { replayFiltered += 1; continue; }
       res.write(formatEvent(msg));
+      eventsDispatched += 1;
       highestReplayed = Math.max(highestReplayed, msg.id);
     }
   }
+  const replayMs = Date.now() - replayStart;
+  pushSample(agentStat.replay_rows_samples, replayRows);
+  // replay_filtered samples = % of rows filtered out (0-100); guard /0.
+  pushSample(
+    agentStat.replay_filtered_samples,
+    replayRows > 0 ? Math.round((replayFiltered / replayRows) * 100) : 0,
+  );
+  pushSample(agentStat.replay_ms_samples, replayMs);
+  console.log(`[stream-open] agent=${agentKey} since=${cursor ?? 'none'} replay_rows=${replayRows} replay_filtered=${replayFiltered} replay_ms=${replayMs}`);
 
   const seen = new Set();
   for (const msg of buffered) {
@@ -161,6 +347,7 @@ function streamHandler(req, res) {
     if (seen.has(msg.id)) continue;
     seen.add(msg.id);
     res.write(formatEvent(msg));
+    eventsDispatched += 1;
   }
   buffered.length = 0;
 
@@ -173,6 +360,7 @@ function streamHandler(req, res) {
     if (closed) return;
     for (const msg of pending) {
       res.write(formatEvent(msg));
+      eventsDispatched += 1;
     }
     pending.length = 0;
   };
@@ -180,12 +368,15 @@ function streamHandler(req, res) {
   if (minQuietMs === 0) {
     currentListener = (msg) => {
       if (!messageMatches(msg, filters)) return;
+      filterMatchCount += 1;
       if (!dmVisible(msg, req)) return;
       res.write(formatEvent(msg));
+      eventsDispatched += 1;
     };
   } else {
     currentListener = (msg) => {
       if (!messageMatches(msg, filters)) return;
+      filterMatchCount += 1;
       if (!dmVisible(msg, req)) return;
       pending.push(msg);
       if (flushTimer) clearTimeout(flushTimer);
@@ -196,7 +387,8 @@ function streamHandler(req, res) {
 
   keepalive = setInterval(() => {
     res.write(`: keepalive\n\n`);
+    keepalivesSent += 1;
   }, KEEPALIVE_MS);
 }
 
-module.exports = { streamHandler };
+module.exports = { streamHandler, getStreamStats };
