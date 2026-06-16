@@ -129,11 +129,16 @@
      CC clients fire `Stop` on rate-limit (admin #8737 empirical) → daemon
      writes session_state='idle' (sticky terminal per v0.5.2 design).
      Without this hint a rate-limited CC session stays online_idle (green)
-     forever. Override at presentation layer: when last_hook is > 30min
-     stale, flip border to yellow + dim the label-badge. The canonical
-     API label is preserved; this is dashboard-only semantic surfacing.
+     forever. Original v0.5.57 ship flipped the border to yellow; Jon-direct
+     2026-06-16 caught the semantic collision: yellow is reserved for the
+     runtime_state quota_exhausted signal (gemini Google-quota, aieng3
+     OpenAI-quota) — gemini going yellow because of out-of-quota carries
+     a different meaning from CC going yellow because of "idle a long time".
+     v0.5.63 revision: stale-idle keeps the label-badge dim + italic + the
+     "(stale)" text suffix + tooltip explanation, but does NOT touch the
+     border. Border stays at status-derived color. Yellow border now ONLY
+     fires for stalled/unknown/quota-exhausted — the "needs attention" band.
      F1 server-side age-aware deriveLabel is queued post-defensive-freeze. */
-  .agent-card.stale-idle                 { border-left-color: var(--yellow); }
   .agent-card.stale-idle .label-badge    { opacity: 0.75; font-style: italic; }
   /* CP14.1 (2026-06-13): runtime-class right-edge accent. Status owns the
      left border (4px); runtime gets a thin right border-color tint that's
