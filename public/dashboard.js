@@ -1530,9 +1530,12 @@
       this.el.className = 'agent-card';
       if (r.label) this.el.classList.add('status-' + r.label);
       if (r.label === 'offline') this.el.classList.add('is-offline');
-      // F4 (parch #8743): stale-idle class flips the border-left to yellow
-      // and the label-badge to muted (CSS in dashboard.html). Computed
-      // above in the labelTitle block; mirrored here for the card itself.
+      // F4 (parch #8743) + v0.5.63 (Jon-direct 2026-06-16): stale-idle class
+      // adds the label-badge dim+italic CSS only. Border-left stays at the
+      // status-derived color — yellow now reserved exclusively for the
+      // quota_exhausted runtime_state signal (gemini Google-quota,
+      // aieng3 OpenAI-quota) + stalled/unknown "needs attention" band.
+      // Computed above in the labelTitle block; mirrored here for the card.
       if (staleIdle) this.el.classList.add('stale-idle');
     }
     rerenderBody() {
