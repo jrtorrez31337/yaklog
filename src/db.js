@@ -766,6 +766,86 @@ function initializeDb() {
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_audit_attest_area_time ON audit_attestation(control_area, occurred_at DESC)`).run();
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_audit_attest_time ON audit_attestation(occurred_at)`).run();
 
+  // ────────────────────────────────────────────────────────────────────────
+  // CP13.1 / ADR-0032 Phase 1.1 — Output-strand substrate (2026-06-17)
+  //
+  // Three first-class tables for cluster bare-git output tracking.
+  // Populated by the bare-git walker (yaklog-output-ingester; Phase 1.2).
+  // Per ADR-0032 §Schema canonical:
+  //   - output_commit: per-commit lineage with agent-attribution
+  //   - output_merge: per-merge lineage (PR-flow + direct-bare-git-push)
+  //   - output_ingester_cursor: per-repo last-walked-ref state
+  //
+  // Phase 2 (GitHub API extension): output_pr + output_pr_review tables
+  // deferred to Phase 2 ratify-cycle; schema authored at that cycle.
+  //
+  // Substrate-by-construction discipline carried forward from ADR-0030 +
+  // ADR-0031: agent_attribution column with NULL fallback per
+  // [[feedback_no_attribution]]; attribution_method classifier surfaces
+  // coverage gaps for /api/v1/output/coverage-gap honesty surface;
+  // runtime_class column ties Co-Authored-By trailer parse to CP14.1 canon.
+  // ────────────────────────────────────────────────────────────────────────
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS output_commit (
+      id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+      repo                  TEXT NOT NULL,
+      commit_sha            TEXT NOT NULL,
+      author_name           TEXT NOT NULL,
+      author_email          TEXT NOT NULL,
+      committer_name        TEXT NOT NULL,
+      committer_email       TEXT NOT NULL,
+      occurred_at           TEXT NOT NULL,
+      branch                TEXT,
+      subject               TEXT NOT NULL,
+      body_digest           TEXT,
+      agent_attribution     TEXT,
+      attribution_method    TEXT,
+      runtime_class         TEXT,
+      files_changed         INTEGER,
+      bytes_delta           INTEGER,
+      UNIQUE(repo, commit_sha)
+    )
+  `).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_output_commit_repo_occurred ON output_commit(repo, occurred_at)`).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_output_commit_agent ON output_commit(agent_attribution, occurred_at)`).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_output_commit_occurred ON output_commit(occurred_at)`).run();
+
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS output_merge (
+      id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+      repo                  TEXT NOT NULL,
+      merge_commit_sha      TEXT NOT NULL,
+      source_branch         TEXT,
+      target_branch         TEXT NOT NULL,
+      pr_number             INTEGER,
+      occurred_at           TEXT NOT NULL,
+      merged_by_agent       TEXT,
+      attribution_method    TEXT,
+      parent_commit_count   INTEGER,
+      child_commit_count    INTEGER,
+      bytes_delta           INTEGER,
+      UNIQUE(repo, merge_commit_sha)
+    )
+  `).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_output_merge_occurred ON output_merge(occurred_at)`).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_output_merge_agent_occurred ON output_merge(merged_by_agent, occurred_at)`).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_output_merge_repo_occurred ON output_merge(repo, occurred_at)`).run();
+
+  // Sister to audit_ingester_cursor (CP12.5). Tracks per-repo last-walked
+  // ref for incremental catchup; attribution_gap_count surfaces parser-miss
+  // volume at substrate without needing API query (operator early-warning
+  // for attribution-canon drift).
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS output_ingester_cursor (
+      repo                  TEXT PRIMARY KEY,
+      last_ref              TEXT NOT NULL,
+      last_walked_at        TEXT NOT NULL,
+      commits_ingested      INTEGER NOT NULL DEFAULT 0,
+      merges_ingested       INTEGER NOT NULL DEFAULT 0,
+      attribution_gap_count INTEGER NOT NULL DEFAULT 0
+    )
+  `).run();
+
   return db;
 }
 
