@@ -75,6 +75,8 @@ Each agent in the Live tab gets a card with 6 clickable view-pills (replaced the
 | **Filter chips** | Live tab + Cost tab | Filter by runtime / status / OTel-emitting / has-DMs |
 | **Update-available pill** | each AgentCard | Compares reported `daemon_version` to manifest canonical version; clears when agent upgrades |
 | **Anomaly highlighting** | Cost tab Anomaly sub-view (CP11.4) | Client-side scan: today's cost-center cost vs prior-6d mean; flag when ratio ≥ 2× |
+| **Stale-idle visual decay** (v0.5.57 F4 / Jon-direct 2026-06-14) | AgentCard label-badge + tooltip | Claude Code agents fire `Stop` on rate-limit, which the daemon writes as `session_state=idle` (sticky terminal per v0.5.2 design). Without a hint, a rate-limited CC session stays online_idle (green) until the next session-start event, sometimes hours. v0.5.57 added a presentation-layer dim+italic on the label-badge plus a "(stale)" suffix when `last_hook_at` is > 30 min ago. Server-side label is preserved; honest dashboard-only hint. v0.5.57 initial ship also flipped the border-left to yellow, which collided with the `runtime_state=quota_exhausted` yellow signal (gemini-cli Google quota, codex-cli OpenAI quota). v0.5.63 (Jon-direct 2026-06-16) drops the border flip; label-badge dim treatment retained. Border-left now stays at status-derived color exclusively. |
+| **Per-vendor cost columns** (v0.5.55 CP11.x.2 / Jon-direct 2026-06-13) | Cost tab + Detail sub-tab | Per-vendor (anthropic / google / openai) columns + additive UX section. Multi-runtime token aggregation at v0.5.58 (CP11.x.1) ensures gemini-cli + codex-cli token-rate panels populate correctly under the same rollup logic CC had had since CP11. |
 
 ### 2.4 Cost-tab three-lens UX (ADR-0029 / CP11.4-7)
 
@@ -203,6 +205,7 @@ State machine: `NEW → SUBMITTED → PARCH_REVIEW → JON_RATIFY → APPROVED_P
 | `GET /api/v1/plexus/public/query_range` | Prom range query proxy (same allowlist) |
 | `GET /api/v1/plexus/public/templates` | Lists available query templates |
 | `GET /api/v1/plexus/public/stream` | SSE push of cost + token metrics for the dashboard Live tab |
+| `GET /ops/stream/stats` (v0.5.59+; ops-key gated) | Per-agent SSE stream lifecycle counters: open_count, current_active_count, close_count_by_reason (client_close / error / select_timeout / server_close / arrival_silent / recovery_stall), replay_rows_histogram, replay_ms_p50/p99, first_byte_ms_p50/p99, keepalive_count_total, events_dispatched_total, filter_match_count_total, duration_s_p50/p99, last_event_dispatched_at + last_keepalive_at (v0.5.63+ live timestamps), low_traffic_likely_healthy flag (#182 false-positive suppression). Surfaced for CP12.x.4 Layer-1 empirical anchor cycles. Per-agent stat reset on server boot. |
 
 ### 3.8 Cost accounting (ADR-0029 / CP11.x)
 
@@ -486,6 +489,8 @@ Post-discipline: most-specific lane-channel first; escalate to `#handoff` for cr
 - Mention parser word-boundary discipline (don't write `@<host>` literals on the bus)
 - Dashboard alerts are human-only (never cross to swarm bus)
 - Audience-tier-transition default check (per bizmodel #7657 CFO-empirical review): when a UI cycle shifts a screen's primary audience tier, every default-value selection in the new code path needs explicit re-evaluation against the new audience question — "first option in the list" and "matches what we had before" silently inherit the prior framing's defaults
+- **Substrate-empirical check before pre-stage** (2026-06-16 canon-fold per feedback_substrate_empirical_check_before_pre_stage): before pre-staging code that depends on the production substrate (server-side schema, deployed binary, container image), sha-compare container vs canonical to confirm what's actually running. "Shipped on main" does not equal "running in production" — Docker BuildKit layer caches + partial rebuilds can leave incoherent mixed-source state. The v0.5.56 CP12.x.4 substrate-detection logic landed on `main` (commit `a78262c`) but was not actually deployed in the live container until the Step 3 rebuild cycle: container `/app/src/db.js` was sha-locked at the v0.5.36 era for the intervening period. Always run `docker exec <ctr> sha256sum /app/src/<file>` against the workspace before building features that depend on the assumed-deployed version.
+- **macdev macOS Claude Code hook gap** (per gamedev-godot-apple-agent #9150 forensic): Claude Code on macOS does not reliably auto-fire session-lifecycle hooks (SessionStart / PreToolUse / PostToolUse / Stop). Mac substrate operators see `session_state` drift to `unknown` → `label=stalled` during normal session activity. Workaround: manual `bash ~/.yaklog/emit-hook-event.sh ... SessionStart` fire on session boot keeps the daemon's view aligned with reality. Not a yaklog substrate bug; not a script bug (canonical `emit-hook-event.sh` verified per `6cc70ba` + set-u XDG fallback). Upstream gap at Claude-Code-on-macOS-hook-invocation-path. Documented caveat for Mac substrate residency until/unless Anthropic addresses.
 
 ---
 
@@ -567,5 +572,5 @@ The `install-plexus.sh` canonical installer enables `YAKLOG_AUTO_UPDATE=1` by de
 ---
 
 **Doc owner**: yaklog-dev-agent
-**Last updated**: 2026-06-05
+**Last updated**: 2026-06-17 (v0.5.57-v0.5.63 era; CP12.x.4 Layer-1 Step 1+2 instrumentation; F4 stale-idle decay + v0.5.63 yellow-border collision fix; substrate-finding canon; macdev macOS Claude Code hook gap caveat)
 **Lives at**: `/srv/git/yaklog.git:PLEXUS-FEATURES.md` (canonical) + `/home/jon/yaklog/PLEXUS-FEATURES.md` (working copy)
