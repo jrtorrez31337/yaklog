@@ -364,6 +364,41 @@
   .cost-tile .mover-row .mover-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
   .cost-tile .mover-row .mover-cost { color: var(--muted); font-variant-numeric: tabular-nums; flex-shrink: 0; }
 
+  /* CP13.4 (2026-06-17): ADR-0032 Effort tab styles. Mirrors cost-tile +
+     cost-hero patterns for visual consistency. Audience-tier picker uses
+     pill-button shape; practitioner-only tiles get hidden via CSS class
+     swap (defense in depth on top of SERVER-SIDE Fold B HARD GATE). */
+  .effort-controls { display: flex; gap: 16px; align-items: center; padding: 12px 18px; background: var(--panel); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  .audience-picker, .lens-picker { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+  .audience-btn, .lens-btn { background: var(--bg); color: var(--muted); border: none; padding: 6px 14px; font-size: 12px; cursor: pointer; border-right: 1px solid var(--border); }
+  .audience-btn:last-child, .lens-btn:last-child { border-right: none; }
+  .audience-btn:hover, .lens-btn:hover { color: var(--text); }
+  .audience-btn.active, .lens-btn.active { background: var(--text); color: var(--bg); font-weight: 600; }
+  .period-picker label { color: var(--muted); font-size: 11px; }
+  .period-picker select { background: var(--bg); color: var(--text); border: 1px solid var(--border); padding: 5px 8px; border-radius: 4px; font-size: 12px; }
+  .effort-hero { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; padding: 16px 18px; background: var(--panel); border-bottom: 1px solid var(--border); }
+  .effort-tile { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; min-height: 100px; }
+  .effort-tile .tile-lbl { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; }
+  .effort-tile .tile-val { color: var(--text); font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.15; }
+  .effort-tile .tile-sub { color: var(--muted); font-size: 11px; line-height: 1.3; }
+  /* Practitioner-only tiles: hidden by default; .audience-practitioner
+     on the tab-panel reveals them. SERVER ALSO ENFORCES THIS via Fold B
+     HARD GATE — even if a user manually toggles the CSS class, the API
+     responses for buyer/investor never contain the activity-numerator
+     ratio data, so the tiles render as "—". Defense in depth. */
+  #tab-effort .effort-tile.practitioner-only { display: none; }
+  #tab-effort.audience-practitioner .effort-tile.practitioner-only { display: flex; }
+  .effort-content { padding: 16px 18px; }
+  .effort-lens-pane { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 14px 18px; }
+  .effort-section-title { color: var(--text); font-size: 16px; font-weight: 600; margin-bottom: 10px; }
+  .effort-section-body { color: var(--text); font-size: 13px; line-height: 1.5; }
+  .effort-muted { color: var(--muted); font-size: 12px; }
+  .effort-composition-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .effort-composition-table th, .effort-composition-table td { padding: 6px 10px; text-align: left; border-bottom: 1px solid var(--border); }
+  .effort-composition-table th { color: var(--muted); font-weight: 500; font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; }
+  .effort-composition-table td { font-variant-numeric: tabular-nums; }
+  .effort-composition-table td:first-child { font-variant-numeric: normal; }
+
   /* CP11.x.2 (2026-06-13): per-vendor totals strip. Colors mirror the
      CP12.x.3 runtime-class accent palette (Anthropic orange, OpenAI teal,
      Google blue) so vendor branding is consistent between AgentCard accent
@@ -935,6 +970,7 @@
   <button class="tab-btn" data-tab="cost">Cost<span class="badge-new">CP3</span></button>
   <button class="tab-btn" data-tab="bus">Channels<span class="badge-new">CP9</span></button>
   <button class="tab-btn" data-tab="audit">Audit<span class="badge-new">CP8.2</span></button>
+  <button class="tab-btn" data-tab="effort">Effort<span class="badge-new">CP13</span></button>
   <button class="tab-btn" data-tab="register">Register<span class="badge-new">CP8.5</span></button>
   <!-- CP10.1 (2026-06-01): alerts bell — human-only, client-only, never crosses
        to bus per feedback_dashboard_alerts_are_human_only. -->
@@ -1346,6 +1382,109 @@
     </div>
   </div>
 </div>
+
+<!-- CP13.4 (2026-06-17): Effort tab — ADR-0032 value-mapping substrate UX.
+     Three orthogonal axes per s345 #9234 CLEAN RATIFY:
+       Lens (data-slicing axis):   Pace / Composition / Anomaly
+       Audience-tier (render axis): Buyer / Practitioner / Investor
+     Default audience = buyer per s345 #9234 Criterion 5.
+     SERVER-SIDE Fold B HARD GATE per s345 #9234 §5.6: activity-numerator
+     ratios (coord_msgs/PR + tool_invocations/PR + agents_engaged/PR) are
+     stripped server-side for buyer + investor. UI also hides their tiles
+     (defense in depth) but the server enforcement is the structural
+     guarantee — even an attacker who forges client-side audience param
+     gets nothing from the API. -->
+<section class="tab-panel" data-tab="effort" id="tab-effort">
+  <div class="audit-banner">
+    📊 <strong>ADR-0032 Phase 1 substrate.</strong> Value-mapping over cost / effort / output strands.
+    7-ratio family per bizmodel #7939; 5 of 7 land at Phase 1 (bare-git walker substrate).
+    Audience-tier render-layer per s345 #9234 CLEAN RATIFY (Fold A 3×3 + Fold B HARD GATE).
+  </div>
+  <div class="effort-controls">
+    <div class="audience-picker" role="radiogroup" aria-label="Audience tier">
+      <button class="audience-btn active" data-audience="buyer">Buyer</button>
+      <button class="audience-btn" data-audience="practitioner">Practitioner</button>
+      <button class="audience-btn" data-audience="investor">Investor</button>
+    </div>
+    <div class="lens-picker" role="radiogroup" aria-label="Data-slicing lens">
+      <button class="lens-btn active" data-lens="pace">Pace</button>
+      <button class="lens-btn" data-lens="composition">Composition</button>
+      <button class="lens-btn" data-lens="anomaly">Anomaly</button>
+    </div>
+    <div class="period-picker">
+      <label>Period:
+        <select id="effort-period">
+          <option value="7d">7d</option>
+          <option value="30d" selected>30d</option>
+          <option value="90d">90d</option>
+        </select>
+      </label>
+    </div>
+  </div>
+
+  <div class="effort-hero">
+    <!-- Cross-tier-safe tiles (always rendered) -->
+    <div class="effort-tile cross-tier-safe" data-tile="dollar_per_merged_pr">
+      <div class="tile-lbl">$ / merged-PR</div>
+      <div class="tile-val" id="tile-dpmpr">—</div>
+      <div class="tile-sub" id="tile-dpmpr-sub">rolling period</div>
+    </div>
+    <div class="effort-tile cross-tier-safe" data-tile="dollar_per_agent_cycle">
+      <div class="tile-lbl">$ / agent-cycle</div>
+      <div class="tile-val" id="tile-dpac">—</div>
+      <div class="tile-sub" id="tile-dpac-sub">cost ÷ commits</div>
+    </div>
+    <div class="effort-tile cross-tier-safe" data-tile="coverage_gap">
+      <div class="tile-lbl">Coverage gap</div>
+      <div class="tile-val" id="tile-cgap">—</div>
+      <div class="tile-sub" id="tile-cgap-sub">null-fallback %</div>
+    </div>
+    <!-- PRACTITIONER-LENS ONLY tiles (hidden at buyer/investor per Fold B) -->
+    <div class="effort-tile practitioner-only" data-tile="coord_messages_per_merged_pr">
+      <div class="tile-lbl">Coord-msgs / merged-PR</div>
+      <div class="tile-val" id="tile-cmpr">—</div>
+      <div class="tile-sub" id="tile-cmpr-sub">cluster coord leverage</div>
+    </div>
+    <div class="effort-tile practitioner-only" data-tile="tool_invocations_per_merged_pr">
+      <div class="tile-lbl">Tool-invocations / PR</div>
+      <div class="tile-val" id="tile-tipr">—</div>
+      <div class="tile-sub" id="tile-tipr-sub">execution work signal</div>
+    </div>
+    <div class="effort-tile practitioner-only" data-tile="agents_engaged_per_merged_pr">
+      <div class="tile-lbl">Agents-engaged / PR</div>
+      <div class="tile-val" id="tile-aepr">—</div>
+      <div class="tile-sub" id="tile-aepr-sub">leverage-multiplier</div>
+    </div>
+  </div>
+
+  <div class="effort-content">
+    <div class="effort-lens-pane" data-lens-pane="pace">
+      <div class="effort-section-title">Pace</div>
+      <div class="effort-section-body" id="effort-pace-body">
+        <p class="effort-muted">Pace lens shows trend over the selected period. Audience-tier render: <span id="effort-audience-readout">buyer-default</span>.</p>
+        <div class="effort-pace-trend" id="effort-pace-trend"></div>
+      </div>
+    </div>
+    <div class="effort-lens-pane" data-lens-pane="composition" style="display:none">
+      <div class="effort-section-title">Composition</div>
+      <div class="effort-section-body" id="effort-composition-body">
+        <table class="effort-composition-table">
+          <thead>
+            <tr><th>Agent</th><th>Coord msgs</th><th>Commits</th><th>Merges</th><th>Cost $</th></tr>
+          </thead>
+          <tbody id="effort-composition-tbody"><tr><td colspan="5" class="effort-muted">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="effort-lens-pane" data-lens-pane="anomaly" style="display:none">
+      <div class="effort-section-title">Anomaly</div>
+      <div class="effort-section-body" id="effort-anomaly-body">
+        <p class="effort-muted">Today's cost vs prior 7-day mean. Spike threshold: 2× by default.</p>
+        <div id="effort-anomaly-readout"></div>
+      </div>
+    </div>
+  </div>
+</section>
 
 <!-- CP8.5 (2026-05-27): Register tab — ADR-0025 agent-registration state machine
      admin surface. Public-mirror endpoint (network-isolation trust); strips
