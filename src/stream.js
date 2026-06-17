@@ -333,7 +333,31 @@ function streamHandler(req, res) {
     'Connection': 'keep-alive',
     'X-Accel-Buffering': 'no'
   });
+  // CP12.x.4 Layer-1 Fix B (per yaklog #8941 PLAN §3 hypothesis H2):
+  // disable Nagle so the initial ': connected' (and every event) lands at
+  // the daemon's read syscall with no kernel TCP-send-buffer batching.
+  // Eliminates first-byte coalesce delay that could make parse_sse()
+  // see an empty socket for up to 200ms post-connect (Linux TCP_NAGLE
+  // default). Per [[feedback_substrate_check_before_routing_claims]]
+  // empirical-anchored fix: H2 testable via first_byte_ms_p99 in the
+  // Step 2 dataset; this fix collapses it to ~0.
+  if (res.socket && typeof res.socket.setNoDelay === 'function') {
+    res.socket.setNoDelay(true);
+  }
   res.write(': connected\n\n');
+  // CP12.x.4 Layer-1 Fix A (per yaklog #8941 PLAN §3 hypothesis H1):
+  // arm keepalive IMMEDIATELY (before the synchronous replay+drain
+  // phase) rather than after at the historical line ~197. If replay
+  // is slow (heavily-lagging agent) OR all replay rows filter-out
+  // (DM-filter or filter-mismatch), the daemon-side select.select()
+  // watchdog (STREAM_RECV_TIMEOUT_S=30) would otherwise fire before
+  // any byte arrives, triggering silent reconnect-loop. Pre-arming
+  // here guarantees a keepalive within KEEPALIVE_MS (default 15s)
+  // regardless of replay state. Fix A target.
+  let keepaliveEarly = setInterval(() => {
+    res.write(`: keepalive\n\n`);
+    keepalivesSent += 1;
+  }, KEEPALIVE_MS);
 
   // Register close handler early so listeners are always cleaned up,
   // even if the client disconnects during the synchronous replay/drain phase.
@@ -348,6 +372,7 @@ function streamHandler(req, res) {
     closed = true;
     closeReason = reason;
     if (keepalive) clearInterval(keepalive);
+    if (keepaliveEarly) clearInterval(keepaliveEarly);
     if (flushTimer) clearTimeout(flushTimer);
     pending.length = 0;
     if (currentListener) messageBus.off('message', currentListener);
@@ -457,6 +482,14 @@ function streamHandler(req, res) {
   }
   messageBus.on('message', currentListener);
 
+  // CP12.x.4 Layer-1 Fix A: hand off from the early keepalive (armed
+  // pre-replay) to the canonical post-drain keepalive. Clearing the
+  // early one + arming the canonical preserves the v1 cadence
+  // (KEEPALIVE_MS per interval) without doubling keepalive frequency.
+  if (keepaliveEarly) {
+    clearInterval(keepaliveEarly);
+    keepaliveEarly = null;
+  }
   keepalive = setInterval(() => {
     res.write(`: keepalive\n\n`);
     keepalivesSent += 1;
