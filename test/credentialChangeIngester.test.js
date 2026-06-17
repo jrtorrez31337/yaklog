@@ -237,3 +237,41 @@ test('Phase B e2e: envDiffBootDetector emits unbind when binding removed', () =>
   const after = listAuditCredentialChanges({}).length;
   assert.equal(after, before + 2);
 });
+
+// ─── CP12.7 Phase C: .env file-watcher (per parch #8690 (b) + secops #8666) ─
+
+// Phase C wires fs.watch on .env → dotenv.parse(fresh-read) → envDiffBootDetector
+// with the freshly-parsed values + actor='env-file-watcher'. Tests verify the
+// integration-shape: envDiffBootDetector responds correctly when called with
+// dotenv-parsed values, and the actor field flows through to audit rows.
+
+test('Phase C e2e: envDiffBootDetector called via simulated file-watcher fire emits actor=env-file-watcher', () => {
+  const dotenv = require('dotenv');
+  // Simulate the file-watcher fire path: dotenv.parse of a fresh .env body
+  const rawEnv = `YAKLOG_API_KEYS=tok-a,tok-c,tok-NEW,tok-PHASE-C\nYAKLOG_TOKEN_BINDINGS=alice:tok-1\nYAKLOG_HOST_INGESTER_BINDINGS=\n`;
+  const reloaded = dotenv.parse(rawEnv);
+  const before = listAuditCredentialChanges({}).length;
+  const r = envDiffBootDetector({
+    apiKeysString: reloaded.YAKLOG_API_KEYS,
+    tokenBindingsString: reloaded.YAKLOG_TOKEN_BINDINGS,
+    hostIngesterBindingsString: reloaded.YAKLOG_HOST_INGESTER_BINDINGS,
+    actor: 'env-file-watcher',
+  });
+  assert.equal(r.mints, 1);  // tok-PHASE-C added
+  assert.equal(r.first_boot, false);
+  const after = listAuditCredentialChanges({}).length;
+  assert.equal(after, before + 1);
+  // verify actor flowed through to the audit row
+  const latest = listAuditCredentialChanges({ limit: 1 })[0];
+  assert.equal(latest.actor, 'env-file-watcher',
+    'Phase C actor field flows through to audit_credential_change row');
+});
+
+test('Phase C: dotenv.parse handles editor-class atomic-write format correctly', () => {
+  const dotenv = require('dotenv');
+  // Editor atomic-write workflows can produce CRLF + trailing whitespace.
+  const rawEnv = `# comment\r\nYAKLOG_API_KEYS=tok-a,tok-c,tok-NEW,tok-PHASE-C\r\n\r\n`;
+  const reloaded = dotenv.parse(rawEnv);
+  assert.equal(reloaded.YAKLOG_API_KEYS, 'tok-a,tok-c,tok-NEW,tok-PHASE-C',
+    'dotenv parses CRLF + comments cleanly so file-watcher works with editor output');
+});

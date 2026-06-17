@@ -41,6 +41,75 @@ if (process.env.NODE_ENV !== 'test' && process.env.YAKLOG_ENV_DIFF_DETECTOR_DISA
   }
 }
 
+// CP12.7 Phase C: .env file-watcher per parch #8690 (b) RATIFY + secops
+// #8666 cleared snippet shape. Eliminates the temporal lag in Phase B
+// (which captures operator-class .env mutations only at next yaklog
+// server boot) by re-running envDiffBootDetector immediately when .env
+// changes on disk. Per secops #8666 standing-authorization: server-side
+// only; zero yaklog-sub touch; respects defensive-freeze posture.
+//
+// Operational invariant per PLEXUS-FEATURES.md audit_credential_change
+// canon (secops-ratified): operators MUST still pair .env mutations
+// with a server restart in the same ship cycle for transactional safety;
+// the file-watcher is an additional layer that captures mutations even
+// when restart is delayed. A mutation reverted before this watcher fires
+// won't be captured (matches Phase B semantics).
+//
+// Opt-out via env (default ON): YAKLOG_ENV_FILE_WATCHER_DISABLED=1
+if (process.env.NODE_ENV !== 'test'
+    && process.env.YAKLOG_ENV_FILE_WATCHER_DISABLED !== '1') {
+  const fs = require('fs');
+  const dotenv = require('dotenv');
+  const envPath = process.env.YAKLOG_DOTENV_PATH || '/app/.env';
+  let debounceTimer = null;
+  const DEBOUNCE_MS = 500;  // editors do atomic-write = rename + write;
+                            // collapse a burst of fs.watch events into one fire
+  try {
+    if (!fs.existsSync(envPath)) {
+      console.log(`[env-file-watcher] ${envPath} not found; watcher disabled (set YAKLOG_DOTENV_PATH to point elsewhere or YAKLOG_ENV_FILE_WATCHER_DISABLED=1 to silence)`);
+    } else {
+      const fire = () => {
+        try {
+          const raw = fs.readFileSync(envPath, 'utf8');
+          const reloaded = dotenv.parse(raw);
+          const result = envDiffBootDetector({
+            apiKeysString: reloaded.YAKLOG_API_KEYS,
+            tokenBindingsString: reloaded.YAKLOG_TOKEN_BINDINGS,
+            hostIngesterBindingsString: reloaded.YAKLOG_HOST_INGESTER_BINDINGS,
+            actor: 'env-file-watcher',
+          });
+          if (result.first_boot) {
+            // Should not happen — Phase B already persisted baseline at boot.
+            // Defensive log only.
+            console.log('[env-file-watcher] unexpected first_boot=true; baseline now persisted');
+          } else if (result.total_emitted > 0) {
+            console.log(`[env-file-watcher] diff captured: mints=${result.mints} revokes=${result.revokes} ` +
+              `binds=${result.binds} unbinds=${result.unbinds} total_emitted=${result.total_emitted}`);
+          }
+        } catch (e) {
+          console.error('[env-file-watcher] fire failed:', e.message);
+        }
+      };
+      const onChange = () => {
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(fire, DEBOUNCE_MS);
+      };
+      const watcher = fs.watch(envPath, { persistent: false }, (eventType) => {
+        // 'change' = in-place edit; 'rename' = atomic-write swap (editor
+        // workflow). Both indicate the file content may have changed;
+        // debounce + re-read.
+        if (eventType === 'change' || eventType === 'rename') onChange();
+      });
+      watcher.on('error', (err) => {
+        console.error('[env-file-watcher] watcher error:', err.message);
+      });
+      console.log(`[env-file-watcher] armed on ${envPath} (debounce=${DEBOUNCE_MS}ms)`);
+    }
+  } catch (e) {
+    console.error('[env-file-watcher] setup failed:', e.message);
+  }
+}
+
 // CP11.2 (2026-06-04): cost-history rollup scheduling per ratified ADR-0029.
 // Skipped in test env (tests mock Prom; don't want timer-noise interfering).
 // Backfill runs after a short delay to let the server come up cleanly first;
