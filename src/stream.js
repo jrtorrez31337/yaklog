@@ -40,6 +40,7 @@ messageBus.on('message', () => { clusterEventCount += 1; });
 //   duration_s_samples: [],
 //   filter_match_count_total,
 //   last_close_had_events,  // for #181 recovery_stall distinguishing
+//   last_event_dispatched_at, last_keepalive_at,  // CP12.x.4 Step 1.1 live
 // }
 const agentStats = new Map();
 
@@ -62,6 +63,8 @@ function getOrInitAgent(agentId) {
     duration_s_samples: [],
     filter_match_count_total: 0,
     last_close_had_events: false,
+    last_event_dispatched_at: null,
+    last_keepalive_at: null,
   };
   agentStats.set(agentId, s);
   return s;
@@ -94,7 +97,10 @@ function histogram(arr, buckets) {
 // Public: snapshot per-agent stats for the /ops/stream/stats endpoint.
 function getStreamStats() {
   const agents = [];
+  const nowMs = Date.now();
   for (const [agent_id, s] of agentStats.entries()) {
+    const lastEvMs = s.last_event_dispatched_at ? Date.parse(s.last_event_dispatched_at) : null;
+    const lastKaMs = s.last_keepalive_at ? Date.parse(s.last_keepalive_at) : null;
     agents.push({
       agent_id,
       open_count: s.open_count,
@@ -115,6 +121,13 @@ function getStreamStats() {
       duration_s_p50: pct(s.duration_s_samples, 0.50),
       duration_s_p99: pct(s.duration_s_samples, 0.99),
       filter_match_count_total: s.filter_match_count_total,
+      // CP12.x.4 Step 1.1 (#9033 self-flagged): live timestamps + derived
+      // seconds-since fields so /ops/stream/stats reflects activity on
+      // long-lived connections without waiting for cleanup() to flush.
+      last_event_dispatched_at: s.last_event_dispatched_at,
+      last_keepalive_at: s.last_keepalive_at,
+      seconds_since_last_event: lastEvMs !== null ? Math.round((nowMs - lastEvMs) / 1000) : null,
+      seconds_since_last_keepalive: lastKaMs !== null ? Math.round((nowMs - lastKaMs) / 1000) : null,
       // #182: low-traffic-likely-healthy = agent's filter matches nothing
       // while cluster traffic flows AND agent is receiving keepalives.
       // Suppresses sse_stream_stale false-positive per pveadmin #8616.
@@ -382,9 +395,9 @@ function streamHandler(req, res) {
     agentStat.current_active_count = Math.max(0, agentStat.current_active_count - 1);
     const durationS = (Date.now() - openedAt) / 1000;
     pushSample(agentStat.duration_s_samples, durationS);
-    agentStat.keepalive_count_total += keepalivesSent;
-    agentStat.events_dispatched_total += eventsDispatched;
-    agentStat.filter_match_count_total += filterMatchCount;
+    // CP12.x.4 Step 1.1: counters now flushed live at each call-site, so
+    // cleanup() must NOT re-accumulate (would double-count). Locals retained
+    // for the per-connection forensic log line below.
 
     // #181: arrival_silent vs recovery_stall fold. select_timeout with
     // zero events dispatched maps to one of:
@@ -422,6 +435,8 @@ function streamHandler(req, res) {
       if (!dmVisible(msg, req)) { replayFiltered += 1; continue; }
       res.write(formatEvent(msg));
       eventsDispatched += 1;
+      agentStat.events_dispatched_total += 1;
+      agentStat.last_event_dispatched_at = new Date().toISOString();
       highestReplayed = Math.max(highestReplayed, msg.id);
     }
   }
@@ -445,6 +460,8 @@ function streamHandler(req, res) {
     seen.add(msg.id);
     res.write(formatEvent(msg));
     eventsDispatched += 1;
+    agentStat.events_dispatched_total += 1;
+    agentStat.last_event_dispatched_at = new Date().toISOString();
   }
   buffered.length = 0;
 
@@ -458,6 +475,10 @@ function streamHandler(req, res) {
     for (const msg of pending) {
       res.write(formatEvent(msg));
       eventsDispatched += 1;
+      agentStat.events_dispatched_total += 1;
+    }
+    if (pending.length > 0) {
+      agentStat.last_event_dispatched_at = new Date().toISOString();
     }
     pending.length = 0;
   };
@@ -466,14 +487,18 @@ function streamHandler(req, res) {
     currentListener = (msg) => {
       if (!messageMatches(msg, filters)) return;
       filterMatchCount += 1;
+      agentStat.filter_match_count_total += 1;
       if (!dmVisible(msg, req)) return;
       res.write(formatEvent(msg));
       eventsDispatched += 1;
+      agentStat.events_dispatched_total += 1;
+      agentStat.last_event_dispatched_at = new Date().toISOString();
     };
   } else {
     currentListener = (msg) => {
       if (!messageMatches(msg, filters)) return;
       filterMatchCount += 1;
+      agentStat.filter_match_count_total += 1;
       if (!dmVisible(msg, req)) return;
       pending.push(msg);
       if (flushTimer) clearTimeout(flushTimer);
@@ -493,6 +518,8 @@ function streamHandler(req, res) {
   keepalive = setInterval(() => {
     res.write(`: keepalive\n\n`);
     keepalivesSent += 1;
+    agentStat.keepalive_count_total += 1;
+    agentStat.last_keepalive_at = new Date().toISOString();
   }, KEEPALIVE_MS);
 }
 
