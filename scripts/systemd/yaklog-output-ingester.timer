@@ -1,0 +1,19 @@
+# yaklog-output-ingester timer — CP13 / ADR-0032 Phase 1.2
+# Hourly cadence per ADR-0032 §2.3 "simple cron walker sufficient at
+# Phase 1 scale" (modest substrate volume: ~12 commits/day cluster-wide).
+
+[Unit]
+Description=Plexus CP13/ADR-0032 output-strand ingester (hourly)
+Requires=yaklog-output-ingester.service
+
+[Timer]
+# Hourly at minute-15 ± 5 min randomized. Offset from minute-0 keeps the
+# top-of-hour clear for higher-cadence jobs (presence sweeps + cost rollups).
+OnCalendar=hourly
+RandomizedDelaySec=300
+# Catch up on missed firings after devel restart/network outage
+Persistent=true
+Unit=yaklog-output-ingester.service
+
+[Install]
+WantedBy=timers.target
