@@ -7,8 +7,18 @@
 # (Codex CLI / Gemini CLI) which use entirely different config-file shapes.
 #
 # Usage:
-#   bash install-plexus-otel-runtime.sh --runtime codex             # current $HOME
-#   bash install-plexus-otel-runtime.sh --runtime gemini            # current $HOME
+#   bash install-plexus-otel-runtime.sh --runtime codex             # current $HOME (OVERWRITES)
+#   bash install-plexus-otel-runtime.sh --runtime codex --merge-preserve
+#                                                                  # preserves existing
+#                                                                  # model/personality/project
+#                                                                  # settings; only writes [otel]
+#                                                                  # block. Required for seats
+#                                                                  # with existing config per
+#                                                                  # aieng3 #9707 substrate-truth.
+#   bash install-plexus-otel-runtime.sh --runtime gemini            # current $HOME (OVERWRITES)
+#   bash install-plexus-otel-runtime.sh --runtime gemini --merge-preserve
+#                                                                  # JSON deep-merge; preserves
+#                                                                  # all keys outside `telemetry`.
 #   bash install-plexus-otel-runtime.sh --runtime codex --home /home/aieng3
 #   bash install-plexus-otel-runtime.sh --runtime gemini --collector-endpoint http://192.168.122.76:4327
 #   bash install-plexus-otel-runtime.sh --runtime codex --dry-run
@@ -29,6 +39,7 @@ RUNTIME=""
 HOME_DIR="${HOME}"
 ENDPOINT="http://localhost:4327"
 DRY_RUN=false
+MERGE_PRESERVE=false
 TEMPLATE_DIR="/home/jon/yaklog/otel"
 
 while [[ $# -gt 0 ]]; do
@@ -41,8 +52,9 @@ while [[ $# -gt 0 ]]; do
     --collector-endpoint=*) ENDPOINT="${1#--collector-endpoint=}"; shift ;;
     --template-dir)        TEMPLATE_DIR="$2"; shift 2 ;;
     --dry-run)             DRY_RUN=true; shift ;;
+    --merge-preserve)      MERGE_PRESERVE=true; shift ;;
     --help|-h)
-      sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,35p' "$0" | sed 's/^# \{0,1\}//'
       exit 0 ;;
     *) echo "[ERR] unknown flag: $1" >&2; exit 1 ;;
   esac
@@ -81,13 +93,18 @@ echo "[install] template=$TEMPLATE"
 echo "[install] target=$TARGET"
 echo "[install] collector endpoint=$ENDPOINT"
 echo "[install] dry-run=$DRY_RUN"
+echo "[install] merge-preserve=$MERGE_PRESERVE"
 
 if [[ "$DRY_RUN" == "true" ]]; then
   echo ""
   echo "[dry-run] would create $TARGET_DIR if missing"
   echo "[dry-run] would back up $TARGET → ${TARGET}.bak-${TS} (if exists)"
   echo "[dry-run] would substitute endpoint $ENDPOINT into template"
-  echo "[dry-run] would write template content to $TARGET"
+  if [[ "$MERGE_PRESERVE" == "true" ]]; then
+    echo "[dry-run] would MERGE [otel]/telemetry block into $TARGET (preserves other settings)"
+  else
+    echo "[dry-run] would OVERWRITE $TARGET with template content"
+  fi
   echo "[dry-run] would validate $TARGET parses cleanly"
   exit 0
 fi
@@ -98,7 +115,74 @@ if [[ -f "$TARGET" ]]; then
   echo "[install] backed up existing $TARGET → ${TARGET}.bak-${TS}"
 fi
 
-sed "s|http://localhost:4327|${ENDPOINT}|g" "$TEMPLATE" > "$TARGET"
+# Generate the endpoint-substituted template into a temp file (used by both
+# overwrite + merge-preserve paths).
+TMP_RENDERED=$(mktemp)
+trap 'rm -f "$TMP_RENDERED"' EXIT
+sed "s|http://localhost:4327|${ENDPOINT}|g" "$TEMPLATE" > "$TMP_RENDERED"
+
+if [[ "$MERGE_PRESERVE" == "true" && -s "${TARGET}.bak-${TS}" ]]; then
+  # Merge-preserve mode (per aieng3 #9707 substrate-truth): existing seat
+  # config has non-otel settings (model/personality/project) that must
+  # survive. Only replace the otel/telemetry section.
+  case "$RUNTIME" in
+    codex)
+      # TOML merge via python tomllib (read) + custom serializer (write only
+      # the [otel] section + preserve everything outside it).
+      python3 - "${TARGET}.bak-${TS}" "$TMP_RENDERED" "$TARGET" <<'PYEOF'
+import sys, tomllib, re
+existing_path, rendered_path, target_path = sys.argv[1:4]
+# Read rendered template's [otel] block as plain text (preserves formatting)
+with open(rendered_path) as f:
+    rendered = f.read()
+# Extract the [otel] section + all subsections from rendered template
+otel_block_match = re.search(r'^\[otel\][\s\S]*?(?=^\[(?!otel)|\Z)', rendered, re.MULTILINE)
+if not otel_block_match:
+    print('[ERR] merge-preserve: template missing [otel] section', file=sys.stderr)
+    sys.exit(4)
+otel_block = otel_block_match.group(0).rstrip() + '\n'
+# Read existing config + strip its [otel] section (and all [otel.*] subsections)
+with open(existing_path) as f:
+    existing = f.read()
+# Match [otel] + all subsequent [otel.X.Y...] sections until next non-otel section
+existing_without_otel = re.sub(
+    r'^\[otel(?:\.[^\]]+)?\][\s\S]*?(?=^\[(?!otel(\.|\]))|\Z)',
+    '',
+    existing,
+    flags=re.MULTILINE,
+)
+existing_without_otel = existing_without_otel.rstrip() + '\n'
+# Combine: preserved sections + new otel block
+merged = existing_without_otel + '\n' + otel_block
+with open(target_path, 'w') as f:
+    f.write(merged)
+print(f'[merge-preserve] wrote merged config; preserved {len(existing_without_otel)} bytes of non-otel content')
+PYEOF
+      if [[ $? -ne 0 ]]; then
+        echo "[ERR] merge-preserve TOML merge failed; rolling back" >&2
+        mv "${TARGET}.bak-${TS}" "$TARGET"
+        exit 4
+      fi
+      ;;
+    gemini)
+      # JSON merge via jq (deep merge; existing keys outside telemetry preserved).
+      if ! command -v jq >/dev/null 2>&1; then
+        echo "[ERR] merge-preserve requires jq for gemini JSON merge" >&2
+        mv "${TARGET}.bak-${TS}" "$TARGET"
+        exit 4
+      fi
+      jq -s '.[0] * .[1]' "${TARGET}.bak-${TS}" "$TMP_RENDERED" > "$TARGET" || {
+        echo "[ERR] merge-preserve JSON merge failed; rolling back" >&2
+        mv "${TARGET}.bak-${TS}" "$TARGET"
+        exit 4
+      }
+      ;;
+  esac
+  echo "[install] MERGED [otel]/telemetry block; preserved non-managed settings"
+else
+  # Default overwrite path (no existing file OR --merge-preserve not requested)
+  cp "$TMP_RENDERED" "$TARGET"
+fi
 
 # Validate parses
 case "$RUNTIME" in
