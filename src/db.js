@@ -3321,6 +3321,7 @@ function processChannelSubscriptionScan({ subscriptions, actor, scan_at } = {}) 
 
 module.exports = {
   initializeDb,
+  getDb,
   insertMessage,
   listMessages,
   listMessagesAfter,
