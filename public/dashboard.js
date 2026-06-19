@@ -1997,7 +1997,10 @@
   const cardFilter = {
     search: '',
     statuses: new Set(['online', 'stalled', 'offline']),
-    runtimes: new Set(['claude_code', 'gemini', 'codex']),
+    // 2026-06-19: 'ptah' added per ADR-0032 Phase 0-Ptah sister-cycle
+    // (CP14.1 runtime_class enum extension Jon-ratified #9643). Keep in
+    // sync with filter-chip UI in dashboard.html + reset handler below.
+    runtimes: new Set(['claude_code', 'gemini', 'codex', 'ptah']),
   };
   function statusBucket(label) {
     if (!label) return 'offline';
@@ -5272,7 +5275,7 @@
     resetBtn.addEventListener('click', () => {
       cardFilter.search = '';
       cardFilter.statuses = new Set(['online', 'stalled', 'offline']);
-      cardFilter.runtimes = new Set(['claude_code', 'gemini', 'codex']);
+      cardFilter.runtimes = new Set(['claude_code', 'gemini', 'codex', 'ptah']);
       if (searchEl) searchEl.value = '';
       document.querySelectorAll('.cards-chip').forEach(c => c.classList.add('on'));
       rerenderCardsWithFilter();

@@ -14,11 +14,16 @@ const REGISTRY = new Map([
   // techmark was Codex; switched to Claude Code per Jon-direct 2026-05-26.
   // No entry needed; default covers it.
   ['aieng3-agent', 'codex'],   // Codex; currently paused (funding) per Jon-direct 2026-05-27 — will return
+  // Ptah — custom Rust(Tauri)+TS BDI agent per ADR-0032 Phase 0-Ptah sister-cycle
+  // (Jon-direct ratify 2026-06-19 #9640 routing; parch CONCUR sister-cycle (b) +
+  // 'ptah' enum value #9643). Runs on Win11 VM 110 (ptah-win11; host dude).
+  // Cross-runtime cohort-coverage validation per Ptah PRIMARY pivot #9560.
+  ['ptah-agent', 'ptah'],
 ]);
 
 const DEFAULT_RUNTIME = 'claude_code';
 
-const VALID_RUNTIMES = new Set(['claude_code', 'gemini', 'codex']);
+const VALID_RUNTIMES = new Set(['claude_code', 'gemini', 'codex', 'ptah']);
 
 function runtimeOf(agentId) {
   return REGISTRY.get(agentId) || DEFAULT_RUNTIME;

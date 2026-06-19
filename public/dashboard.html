@@ -149,6 +149,10 @@
   .agent-card[data-runtime="claude_code"] { border-right: 2px solid rgba(204,120,92,0.45); }
   .agent-card[data-runtime="gemini"]      { border-right: 2px solid rgba(66,133,244,0.45); }
   .agent-card[data-runtime="codex"]       { border-right: 2px solid rgba(16,163,127,0.45); }
+  /* Ptah: placeholder color until canonical badge design lands (#9649 +
+     pings #9661-#9664 coord-cycle). Muted lapis evoke; swap when
+     RUNTIME_META.ptah hex is ratified. */
+  .agent-card[data-runtime="ptah"]        { border-right: 2px solid rgba(107,138,179,0.45); }
   .agent-card-head { padding: 9px 12px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-height: 38px; }
   .agent-card-head .name { font-weight: 600; color: var(--text); font-size: 12px; word-break: break-all; line-height: 1.3; flex: 1 1 140px; min-width: 0; }
   .agent-card-head .label-badge { padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 500; white-space: nowrap; flex-shrink: 0; }
@@ -305,6 +309,17 @@
   .label-stalled .badge,
   .label-unknown .badge { background: var(--yellow-bg); color: var(--yellow); }
   .label-offline .badge { background: var(--red-bg); color: var(--red); }
+  /* 2026-06-19: pre-emission state. Agent is token-bound (registered)
+     but has not yet POSTed a /presence/event heartbeat. Muted blue
+     ("awaiting first heartbeat") — distinct from offline (red, daemon was
+     up and is now down) and stalled (yellow, daemon up but session
+     unknown). Sister-shape to .label-daemon_only muted treatment. */
+  .label-pre_emission .badge,
+  .label-badge.label-pre_emission { background: #1e2935; color: #6b8aa3; font-style: italic; border: 1px dashed #3a4856; }
+  /* Pre-emission AgentCard: dim the card itself to signal placeholder
+     state until first heartbeat lands. status-pre_emission class is
+     applied via this.el.classList.add('status-' + r.label) at line ~1531. */
+  .agent-card.status-pre_emission { opacity: 0.72; }
   td.ts { color: var(--muted); font-size: 12px; white-space: nowrap; }
   td.ts.recent { color: var(--text); }
   td.ts.stale { color: var(--yellow); }
@@ -1037,6 +1052,7 @@
       <span class="cards-chip on" data-runtime="claude_code">CC</span>
       <span class="cards-chip on" data-runtime="gemini">Gemini</span>
       <span class="cards-chip on" data-runtime="codex">Codex</span>
+      <span class="cards-chip on" data-runtime="ptah">Ptah</span>
     </div>
     <button id="cards-filter-reset" class="audit-btn audit-btn-ghost cards-filter-reset">reset</button>
   </div>
