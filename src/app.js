@@ -14,6 +14,7 @@ const auditRoutes = require('./auditRoutes');           // CP12.2 (ADR-0030 §5.
 const auditOpsRoutes = require('./auditOpsRoutes');     // CP12.2 (ADR-0030 §5.2)
 const auditIngesterRoutes = require('./auditIngesterRoutes'); // CP12.5 (ADR-0030 Phase 1.5.S)
 const auditOtelIngesterRoutes = require('./auditOtelIngesterRoutes'); // ADR-0032 Phase 0 Item B
+const outputApiRoutes = require('./outputApiRoutes');   // CP13.3 (ADR-0032 Phase 1.3)
 const auth = require('./middleware/auth');
 const { opsKeyAuditMiddleware } = require('./middleware/opsKeyAudit'); // CP12.2 admin R1 fold
 const { initializeDb, listPresence, getGlobalHwm, envDiffBootDetector } = require('./db');
@@ -461,6 +462,14 @@ app.use('/api/v1/plexus/public', plexusRoutes.publicRouter);
 // under same `/api/v1/plexus/public` namespace; reads from db.js helpers
 // only (no mutations). Network-isolation trust model — same as cost/.
 app.use('/api/v1/plexus/public', auditRoutes);
+// CP13.3 (ADR-0032 Phase 1.3): output ratios + composition + coverage-gap
+// + anomalies + merges public reads. Mounted BEFORE the /api/v1 auth
+// middleware so network-isolation trust model applies (mirrors
+// auditRoutes pattern). SERVER-SIDE Fold B HARD GATE enforcement per
+// s345 #9234 §5.6 is inside src/outputRatios.js — activity-numerator
+// ratios stripped at substrate level for buyer/investor audience
+// regardless of client request.
+app.use('/api/v1/output', outputApiRoutes.publicRouter);
 // Plexus query proxy (auth'd): server-to-server callers (other agents,
 // scripts) use this with a Bearer YAKLOG_TOKEN.
 app.use('/api/v1/plexus', auth, plexusRoutes);
@@ -477,6 +486,11 @@ app.use('/api/v1/ingester', auth, auditIngesterRoutes);
 // audit_tool_invocation rows. Ops-key gated per feedback_secrets_no_yaklog
 // (enforced in-router by enforceOpsKey middleware).
 app.use('/api/v1/audit/ingest', auditOtelIngesterRoutes);
+// CP13.3 (ADR-0032 Phase 1.3): ops-key gated output mutations. Public
+// /api/v1/output is mounted above the auth middleware (network-isolation
+// trust). This ops-key gated surface mounts under /api/v1/ops/output;
+// enforceOpsKey middleware applied at router level inside outputApiRoutes.
+app.use('/api/v1/ops/output', outputApiRoutes.opsRouter);
 
 app.get('/', (req, res) => {
   res.json({

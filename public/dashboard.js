@@ -278,7 +278,7 @@
   // CP2: tab navigation (URL-fragment-persisted; #live default / #cost).
   // ────────────────────────────────────────────────────────────────────
   function activateTab(name) {
-    if (!['live', 'cost', 'bus', 'audit', 'register'].includes(name)) name = 'live';
+    if (!['live', 'cost', 'bus', 'audit', 'effort', 'register'].includes(name)) name = 'live';
     document.querySelectorAll('.tab-btn').forEach(b => {
       b.classList.toggle('active', b.dataset.tab === name);
     });
@@ -297,6 +297,8 @@
     if (name === 'audit') mountAuditTab();
     // CP8.5: lazy-mount the Register tab.
     if (name === 'register') mountRegisterTab();
+    // CP13.4: lazy-mount the Effort tab (ADR-0032 Phase 1.4 UX).
+    if (name === 'effort' && typeof ensureEffortView === 'function') ensureEffortView();
   }
   document.querySelectorAll('.tab-btn').forEach(b => {
     b.addEventListener('click', () => activateTab(b.dataset.tab));
@@ -4072,12 +4074,177 @@
     b.addEventListener('click', () => {
       if (b.dataset.tab === 'cost') ensureCostView();
       if (b.dataset.tab === 'audit') ensureAuditView();
+      if (b.dataset.tab === 'effort') ensureEffortView();
     });
   });
   window.addEventListener('hashchange', () => {
     if (location.hash === '#cost') ensureCostView();
     if (location.hash === '#audit') ensureAuditView();
+    if (location.hash === '#effort') ensureEffortView();
   });
+
+  // ────────────────────────────────────────────────────────────────────
+  // CP13.4 / ADR-0032 Phase 1.4: /dashboard#effort three-lens UX
+  //
+  // Two orthogonal axes per s345 #9234 CLEAN RATIFY:
+  //   Lens (data-slicing): pace / composition / anomaly
+  //   Audience-tier (render):  buyer / practitioner / investor
+  // Default audience = buyer per s345 #9234 Criterion 5.
+  //
+  // SERVER-SIDE Fold B HARD GATE: activity-numerator ratios stripped at
+  // /api/v1/output/ratios for buyer + investor. UI also hides those
+  // tiles (defense in depth) via the CSS class `audience-practitioner`
+  // on the tab-panel. Even if a user toggles the CSS class, the API
+  // responses for buyer/investor never contain the activity-numerator
+  // data so the tiles render as '—'.
+  // ────────────────────────────────────────────────────────────────────
+  let effortInitialized = false;
+  const effortState = {
+    audience: 'buyer',
+    lens: 'pace',
+    period: '30d',
+  };
+
+  function ensureEffortView() {
+    if (effortInitialized) {
+      refreshEffortData();
+      return;
+    }
+    effortInitialized = true;
+
+    document.querySelectorAll('#tab-effort .audience-btn').forEach((b) => {
+      b.addEventListener('click', () => {
+        effortState.audience = b.dataset.audience;
+        document.querySelectorAll('#tab-effort .audience-btn').forEach((x) => {
+          x.classList.toggle('active', x.dataset.audience === effortState.audience);
+        });
+        const panel = document.getElementById('tab-effort');
+        if (panel) panel.classList.toggle('audience-practitioner', effortState.audience === 'practitioner');
+        refreshEffortData();
+      });
+    });
+
+    document.querySelectorAll('#tab-effort .lens-btn').forEach((b) => {
+      b.addEventListener('click', () => {
+        effortState.lens = b.dataset.lens;
+        document.querySelectorAll('#tab-effort .lens-btn').forEach((x) => {
+          x.classList.toggle('active', x.dataset.lens === effortState.lens);
+        });
+        document.querySelectorAll('#tab-effort .effort-lens-pane').forEach((p) => {
+          p.style.display = p.dataset.lensPane === effortState.lens ? '' : 'none';
+        });
+        refreshEffortData();
+      });
+    });
+
+    const periodSel = document.getElementById('effort-period');
+    if (periodSel) {
+      periodSel.addEventListener('change', () => {
+        effortState.period = periodSel.value;
+        refreshEffortData();
+      });
+    }
+
+    refreshEffortData();
+  }
+
+  function fmtEffortMoney(v) {
+    if (v == null || !Number.isFinite(v)) return '—';
+    return '$' + v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  function fmtEffortNum(v) {
+    if (v == null || !Number.isFinite(v)) return '—';
+    return v.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  }
+
+  async function fetchEffortJson(url) {
+    try {
+      const r = await fetch(url);
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return await r.json();
+    } catch (err) {
+      return { _error: err.message };
+    }
+  }
+
+  function escapeEffortHtml(s) {
+    if (s == null) return '';
+    return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  async function refreshEffortData() {
+    const { audience, lens, period } = effortState;
+    const readout = document.getElementById('effort-audience-readout');
+    if (readout) readout.textContent = audience + '-default';
+
+    const [ratios, coverage] = await Promise.all([
+      fetchEffortJson('/api/v1/output/ratios?period=' + period + '&audience=' + audience),
+      fetchEffortJson('/api/v1/output/coverage-gap?period=' + period),
+    ]);
+
+    const dpmpr = document.getElementById('tile-dpmpr');
+    const dpac = document.getElementById('tile-dpac');
+    const cgap = document.getElementById('tile-cgap');
+    const cgapSub = document.getElementById('tile-cgap-sub');
+    if (dpmpr) dpmpr.textContent = fmtEffortMoney(ratios.dollar_per_merged_pr);
+    if (dpac) dpac.textContent = fmtEffortMoney(ratios.dollar_per_agent_cycle);
+    if (cgap) cgap.textContent = coverage._error ? '—' : coverage.null_fallback_pct + '%';
+    if (cgapSub) cgapSub.textContent = coverage._error
+      ? coverage._error
+      : coverage.null_fallback_count + ' / ' + coverage.total_commits + ' commits';
+
+    const cmpr = document.getElementById('tile-cmpr');
+    const tipr = document.getElementById('tile-tipr');
+    const aepr = document.getElementById('tile-aepr');
+    if (cmpr) cmpr.textContent = fmtEffortNum(ratios.coord_messages_per_merged_pr);
+    if (tipr) tipr.textContent = fmtEffortNum(ratios.tool_invocations_per_merged_pr);
+    if (aepr) aepr.textContent = fmtEffortNum(ratios.agents_engaged_per_merged_pr);
+
+    if (lens === 'composition') {
+      const comp = await fetchEffortJson('/api/v1/output/composition?period=' + period + '&by=agent');
+      renderEffortComposition(comp);
+    } else if (lens === 'anomaly') {
+      const anom = await fetchEffortJson('/api/v1/output/anomalies?lookback_days=7&threshold=2.0');
+      renderEffortAnomaly(anom);
+    }
+  }
+
+  function renderEffortComposition(comp) {
+    const tbody = document.getElementById('effort-composition-tbody');
+    if (!tbody) return;
+    if (comp._error || !comp.rows) {
+      tbody.innerHTML = '<tr><td colspan="5" class="effort-muted">' + escapeEffortHtml(comp._error || 'no data') + '</td></tr>';
+      return;
+    }
+    if (comp.rows.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="5" class="effort-muted">no agent activity in period</td></tr>';
+      return;
+    }
+    tbody.innerHTML = comp.rows.slice(0, 30).map((r) =>
+      '<tr><td>' + escapeEffortHtml(r.agent_id) + '</td>'
+      + '<td>' + r.coord_msgs + '</td>'
+      + '<td>' + r.commits + '</td>'
+      + '<td>' + r.merges + '</td>'
+      + '<td>' + fmtEffortMoney(r.cost_usd) + '</td></tr>'
+    ).join('');
+  }
+
+  function renderEffortAnomaly(anom) {
+    const readout = document.getElementById('effort-anomaly-readout');
+    if (!readout) return;
+    if (anom._error) {
+      readout.innerHTML = '<p class="effort-muted">error: ' + escapeEffortHtml(anom._error) + '</p>';
+      return;
+    }
+    const ratio = anom.ratio == null ? '—' : anom.ratio.toFixed(2) + '×';
+    const status = anom.is_spike ? '🔴 SPIKE' : '🟢 normal';
+    readout.innerHTML = '<div class="effort-section-body">'
+      + '<p>Today\'s cost: <strong>' + fmtEffortMoney(anom.today_cost_usd) + '</strong></p>'
+      + '<p>Prior ' + anom.lookback_days + '-day mean: <strong>' + fmtEffortMoney(anom.prior_mean_usd) + '</strong></p>'
+      + '<p>Ratio: <strong>' + ratio + '</strong> · threshold: ' + anom.threshold + '× · <strong>' + status + '</strong></p>'
+      + '</div>';
+  }
   if (location.hash === '#cost') ensureCostView();
   if (location.hash === '#audit') ensureAuditView();
 

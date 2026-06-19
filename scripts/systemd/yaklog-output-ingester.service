@@ -1,0 +1,50 @@
+# yaklog-output-ingester service — CP13 / ADR-0032 Phase 1.2 cron-driven
+# output-strand ingester. Hourly cadence per ADR-0032 §2.3.
+#
+# Pattern: mirrors audit-anchor-publisher.service hardening shape.
+# Reads ops-key path from EnvironmentFile per feedback_secrets_no_yaklog
+# discipline (NEVER argv; file-only transit).
+#
+# Per-host install (admin or ssw-devops coord):
+#   1. cp scripts/systemd/yaklog-output-ingester.service /etc/systemd/system/
+#   2. cp scripts/systemd/yaklog-output-ingester.timer   /etc/systemd/system/
+#   3. cp scripts/systemd/yaklog-output-ingester.env.example /etc/plexus/yaklog-output-ingester.env
+#      + edit to set PLEXUS_OPS_KEY_FILE path
+#   4. systemctl daemon-reload
+#   5. systemctl enable --now yaklog-output-ingester.timer
+
+[Unit]
+Description=Plexus CP13/ADR-0032 output-strand ingester
+After=network-online.target docker.service
+Wants=docker.service
+
+[Service]
+Type=oneshot
+
+# Dedicated unprivileged runner per secops least-privilege canon.
+# Operator creates with:
+#   useradd --system --no-create-home --shell /usr/sbin/nologin plexus-output-ingester
+User=plexus-output-ingester
+Group=plexus-output-ingester
+
+# EnvironmentFile provides PLEXUS_OPS_KEY_FILE path (mode-600 owned by
+# this service user); never argv per feedback_secrets_no_yaklog.
+EnvironmentFile=/etc/plexus/yaklog-output-ingester.env
+
+# Prom textfile collector directory (mirrors audit-anchor-publisher).
+Environment=TEXTFILE_DIR=/var/lib/yaklog/textfile
+
+ExecStart=/home/jon/yaklog/scripts/yaklog-output-ingester.sh \
+  --yaklog-url http://localhost:3100 \
+  --ops-key-file ${PLEXUS_OPS_KEY_FILE}
+
+# Hardening (mirror plexus-audit-ingester + audit-anchor-publisher pattern)
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/yaklog/textfile
+PrivateTmp=true
+
+# Single-shot per timer firing
+StandardOutput=journal
+StandardError=journal
