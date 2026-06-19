@@ -13,6 +13,7 @@ const plexusRoutes = require('./plexusRoutes');
 const auditRoutes = require('./auditRoutes');           // CP12.2 (ADR-0030 §5.1)
 const auditOpsRoutes = require('./auditOpsRoutes');     // CP12.2 (ADR-0030 §5.2)
 const auditIngesterRoutes = require('./auditIngesterRoutes'); // CP12.5 (ADR-0030 Phase 1.5.S)
+const auditOtelIngesterRoutes = require('./auditOtelIngesterRoutes'); // ADR-0032 Phase 0 Item B
 const auth = require('./middleware/auth');
 const { opsKeyAuditMiddleware } = require('./middleware/opsKeyAudit'); // CP12.2 admin R1 fold
 const { initializeDb, listPresence, getGlobalHwm, envDiffBootDetector } = require('./db');
@@ -287,6 +288,74 @@ app.get('/api/v1/presence/public', (req, res) => {
       row.sse_stream_stale_class = null;
     }
   }
+  // 2026-06-19 (Jon-direct urgent): pre-emission AgentCards. Cluster has
+  // token-bound agents (per YAKLOG_TOKEN_BINDINGS) that may not yet have
+  // emitted a /presence/event heartbeat (e.g., ptah-agent — provisioned at
+  // .env + REGISTRY but daemon not yet wired on the Win11 VM). Dashboard
+  // renders cards from this endpoint's `presence` array, so these agents
+  // were invisible. Substrate-honest fix: append synthetic placeholder
+  // rows for token-bound agents missing from `presence`, marked
+  // `pre_emission: true` so the dashboard can render a distinct minimal
+  // card ("Awaiting first heartbeat"). Sister-shape to existing offline
+  // rendering; daemon_state='down' + session_state='unknown' + label
+  // 'pre_emission' makes the card honest about the absent emission.
+  //
+  // Dedupe by token-group (per `feedback_one_to_many_binding_data_structure`
+  // Map<token, Set<agentId>> shape since v0.5.2): if ANY agent_id in the
+  // token-group is present in /presence, skip the WHOLE group. Otherwise
+  // pick one representative id per group (the canonical longest-suffix
+  // form when an `<n>-agent` alias exists, else the first iter-order id).
+  // Prevents alias noise (e.g., ssw-devops-agent ↔ ssw-devops shared token
+  // surfacing both as separate pre-emission cards when ssw-devops is live).
+  const presentIds = new Set(presence.map((r) => r.agent_id));
+  const tokenGroups = new Set();   // dedupe across both binding maps
+  for (const set of config.tokenBindings.values()) tokenGroups.add(set);
+  for (const set of config.daemonBindings.values()) tokenGroups.add(set);
+  const preEmissionIds = new Set();
+  for (const group of tokenGroups) {
+    const ids = [...group];
+    // Skip entire group if any of its aliases is already presence-emitting.
+    if (ids.some((id) => presentIds.has(id))) continue;
+    // Pick canonical representative: prefer `-agent` suffix if present,
+    // else longest id, else first iter-order.
+    const canonical = ids.find((id) => id.endsWith('-agent'))
+      || ids.slice().sort((a, b) => b.length - a.length)[0]
+      || ids[0];
+    if (canonical) preEmissionIds.add(canonical);
+  }
+  for (const agent_id of preEmissionIds) {
+    presence.push({
+      agent_id,
+      daemon_state: 'down',
+      session_state: 'unknown',
+      label: 'pre_emission',
+      runtime: runtimeOf(agent_id),
+      pre_emission: true,
+      // Standard fields nulled — dashboard's existing offline-render path
+      // tolerates missing values. Explicit null over undefined for ETag
+      // determinism + frontend dot-equality clarity.
+      cursor_position: null,
+      lock_held: false,
+      sse_connected: false,
+      events_consumer_count: null,
+      last_heartbeat_at: null,
+      last_hook_at: null,
+      last_state_change_at: null,
+      current_model: null, current_tool: null,
+      last_tool_name: null, last_tool_status: null,
+      last_compaction_reason: null, last_compaction_at: null,
+      last_stop_reason: null, last_session_source: null,
+      subagent_active_count: null,
+      runtime_uid: null, runtime_gid: null, runtime_hostname: null, current_cwd: null,
+      daemon_pid: null, daemon_version: null, daemon_started_at: null,
+      runtime_state: null, runtime_blocked_until: null,
+      last_cursor_advance_at: null,
+      canonical_daemon_version: canonicalDaemonVersion,
+      update_available: null,
+      sse_stream_stale: null,
+      sse_stream_stale_class: null,
+    });
+  }
   const etag = publicPresenceEtag(presence, globalHwm);
   res.set('ETag', etag);
   res.set('Cache-Control', 'no-cache');
@@ -403,6 +472,11 @@ app.use('/api/v1/ops', auditOpsRoutes);
 // CP12.5 (ADR-0030 Phase 1.5.S): per-host file-access ingester intake.
 // Mounts under `/api/v1/ingester` (auth'd; host-binding enforced per-route).
 app.use('/api/v1/ingester', auth, auditIngesterRoutes);
+// ADR-0032 Phase 0 Item B (cross-runtime telemetry parity): OTel collector
+// forwards Codex/Gemini tool events here; mapper translates them into
+// audit_tool_invocation rows. Ops-key gated per feedback_secrets_no_yaklog
+// (enforced in-router by enforceOpsKey middleware).
+app.use('/api/v1/audit/ingest', auditOtelIngesterRoutes);
 
 app.get('/', (req, res) => {
   res.json({
