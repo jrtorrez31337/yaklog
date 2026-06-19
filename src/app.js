@@ -17,6 +17,12 @@ const auth = require('./middleware/auth');
 const { opsKeyAuditMiddleware } = require('./middleware/opsKeyAudit'); // CP12.2 admin R1 fold
 const { initializeDb, listPresence, getGlobalHwm, envDiffBootDetector } = require('./db');
 
+// CP12.x.4.3 (parch canonical `c5b331c` 2026-06-19): session-state-aware
+// stale predicate. Exclusion-list fail-open shape per Option A — treats
+// unknown enum values as "maybe consuming, run the check". Extends naturally
+// when CP14.x in_flight enum (task #174) lands.
+const SESSION_STATES_NOT_CONSUMING = new Set(['idle', 'stop_failure', 'unknown']);
+
 initializeDb();
 
 // CP12.7 Phase B: env-diff boot detector. Compares current env state
@@ -252,19 +258,19 @@ app.get('/api/v1/presence/public', (req, res) => {
     // heartbeat fresh BUT cursor hasn't advanced AND cluster traffic IS
     // flowing. Catches the case where the daemon process is alive but its
     // SSE stream is stuck (sleuth's #8464→#8534 21h gap signature).
-    // Thresholds chosen conservatively to avoid false-positives during
-    // legitimate low-traffic windows:
-    //   - heartbeat must be within 90s (daemon publishes every 30s)
-    //   - cursor must be stale > 5min (above the 30s server keepalive +
-    //     STREAM_RECV_TIMEOUT_S 30s reconnect cycle budget, with margin)
-    //   - cluster traffic flowing = cursor_position < globalHwm - 10
-    //     (agent is meaningfully behind, not just briefly during a quiet)
+    // CP12.x.4.3 (parch canonical c5b331c): session-state-aware predicate.
+    // Excludes session_state ∈ {idle, stop_failure, unknown} — operator-idle
+    // CC seats where the SSE socket eventually goes silent are NOT
+    // silent-dead-needs-fix (yaklog-dev #9446 empirical: 14/18 stale rows
+    // were session=idle; 9-agent freeze cohort at #9287 all idle/unknown).
     // null when prerequisites can't be evaluated (preserves null-as-unknown
     // semantics established for update_available + runtime_state fields).
+    const isActivelyConsuming = !SESSION_STATES_NOT_CONSUMING.has(row.session_state);
     if (row.daemon_state === 'up'
         && row.last_heartbeat_at
         && row.last_cursor_advance_at
-        && row.cursor_position != null) {
+        && row.cursor_position != null
+        && isActivelyConsuming) {
       const nowMs = Date.now();
       const hbAgeMs = nowMs - new Date(row.last_heartbeat_at).getTime();
       const cursorAgeMs = nowMs - new Date(row.last_cursor_advance_at).getTime();
@@ -272,8 +278,13 @@ app.get('/api/v1/presence/public', (req, res) => {
       row.sse_stream_stale = (hbAgeMs < 90_000)
         && (cursorAgeMs > 300_000)
         && (cursorLag >= 3);
+      row.sse_stream_stale_class = null;
+    } else if (row.daemon_state === 'up' && !isActivelyConsuming) {
+      row.sse_stream_stale = false;
+      row.sse_stream_stale_class = 'session_inactive_expected';
     } else {
       row.sse_stream_stale = null;
+      row.sse_stream_stale_class = null;
     }
   }
   const etag = publicPresenceEtag(presence, globalHwm);
