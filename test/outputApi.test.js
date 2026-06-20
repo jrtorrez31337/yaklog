@@ -60,20 +60,29 @@ test.after(() => {
 
 // ── GET /ratios with Fold B HARD GATE ─────────────────────────────────────
 
-test('GET /api/v1/output/ratios?audience=buyer returns ONLY cross-tier-safe ratios', async () => {
+test('GET /api/v1/output/ratios?audience=buyer returns NO output-strand ratios (CP13.6 Phase 2.3 Fold-B canon)', async () => {
+  // Per parch #9799 ratify + s345 #9792 Fold-B authority correction:
+  // buyer-tier surfaces value-delivered-to-buyer (audit, governance, trace),
+  // NOT internal velocity/cost. All output-strand ratios are practitioner+
+  // investor only. Buyer gets metadata-only (period, totals).
   const res = await request(app).get('/api/v1/output/ratios?audience=buyer');
   assert.equal(res.status, 200);
   assert.equal(res.body._audience, 'buyer');
-  // Cross-tier-safe present
-  assert.ok('dollar_per_merged_pr' in res.body);
-  assert.ok('dollar_per_agent_cycle' in res.body);
-  // PRACTITIONER-ONLY stripped at substrate level
+  // ALL output-strand ratios stripped at substrate level for buyer
+  assert.ok(!('dollar_per_merged_pr' in res.body),
+    'Fold B HARD GATE: dollar_per_merged_pr is internal-cost; NOT buyer per parch #9799');
+  assert.ok(!('dollar_per_agent_cycle' in res.body),
+    'Fold B HARD GATE: dollar_per_agent_cycle is internal-cost; NOT buyer');
+  assert.ok(!('pr_merge_rate' in res.body),
+    'Fold B HARD GATE: pr_merge_rate is activity-numerator; NOT buyer');
+  assert.ok(!('time_to_merge_hours' in res.body),
+    'Fold B HARD GATE: time_to_merge_hours is internal-velocity; NOT buyer');
+  assert.ok(!('dollar_per_pr_merged' in res.body),
+    'Fold B HARD GATE: dollar_per_pr_merged is internal-cost; NOT buyer');
   assert.ok(!('coord_messages_per_merged_pr' in res.body),
-    'Fold B HARD GATE: coord_messages_per_merged_pr MUST NOT emit at buyer');
-  assert.ok(!('tool_invocations_per_merged_pr' in res.body),
-    'Fold B HARD GATE: tool_invocations_per_merged_pr MUST NOT emit at buyer');
-  assert.ok(!('agents_engaged_per_merged_pr' in res.body),
-    'Fold B HARD GATE: agents_engaged_per_merged_pr MUST NOT emit at buyer');
+    'Fold B HARD GATE: coord_messages_per_merged_pr is activity-numerator; NOT buyer');
+  // Metadata fields preserved
+  assert.ok('_period_days' in res.body);
 });
 
 test('GET /api/v1/output/ratios?audience=investor strips activity-numerator (Fold B HARD GATE)', async () => {

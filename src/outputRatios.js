@@ -19,16 +19,44 @@
 
 const AUDIENCE_TIERS = new Set(['buyer', 'practitioner', 'investor']);
 
-// Cross-tier-safe ratios: pure-outcome divided by pure-outcome.
-// Renderable at any audience-tier default.
-const CROSS_TIER_SAFE_RATIOS = new Set([
-  'dollar_per_merged_pr',
-  'dollar_per_agent_cycle',
+// CP13.6 Phase 2.3 audience-tier canon per parch #9799 ratify + s345 Fold-B
+// authority correction at #9792 (banked `feedback_activity_metrics_no_marketing_value_buyer_tier_default`):
+//
+// - BUYER tier surfaces value-delivered-to-buyer (audit, governance, trace);
+//   activity-numerator + internal-velocity/cost ratios are NOT buyer-visible
+//   (inside-baseball anti-marketing-value; self-incriminating signal-shape).
+//   Buyer-tier substantively-smaller surface than pre-Phase-2.3 — substrate-
+//   honest correction per Fold-B HARD GATE.
+//
+// - PRACTITIONER tier sees all 7 ratios (operator/dev-discipline lens).
+// - INVESTOR tier sees value-ratios + cycle-ratios (capital-discipline lens)
+//   but NOT activity-numerator (which is operator-only).
+//
+// Per parch ratify #9799 per-ratio canonical table:
+// | ratio                          | P | I | B |
+// |--------------------------------|---|---|---|
+// | dollar_per_merged_pr (P1)      | ✓ | ✓ | ✗ |  (revisit retroactively per ratify * footnote)
+// | dollar_per_pr_merged (P2 new)  | ✓ | ✓ | ✗ |  Q4 Option C additive
+// | pr_merge_rate (P2 cohort)      | ✓ | ✓ | ✗ |  Q5 corrected
+// | time_to_merge_hours (P2)       | ✓ | ✓ | ✗ |  Q5 corrected
+// | dollar_per_agent_cycle (P1)    | ✓ | ✓ | ✗ |  (consistent with P1 dollar_* class — applied same canon for substrate-honest coherence)
+// | coord_messages_per_merged_pr   | ✓ | ✗ | ✗ |  PRACTITIONER_ONLY (activity-numerator)
+// | tool_invocations_per_merged_pr | ✓ | ✗ | ✗ |  PRACTITIONER_ONLY
+// | agents_engaged_per_merged_pr   | ✓ | ✗ | ✗ |  PRACTITIONER_ONLY
+//
+// Buyer tier post-Phase-2.3: NO output-strand ratios (per Fold-B canon —
+// buyer-narrative load-bearing on AUDIT substrate, NOT effort substrate).
+
+// PRACTITIONER + INVESTOR (cost/value ratios + outcome-rate ratios)
+const PRACTITIONER_INVESTOR_RATIOS = new Set([
+  'dollar_per_merged_pr',        // P1 retained (Q4 Option C; merge-commit denominator)
+  'dollar_per_pr_merged',        // P2 additive (Q4 Option C; PR-merge denominator)
+  'dollar_per_agent_cycle',      // P1 retained
+  'pr_merge_rate',               // P2 cohort
+  'time_to_merge_hours',         // P2 median
 ]);
 
-// Activity-numerator ratios: activity-count (messages, tool-invocations,
-// agents-engaged) divided by outcome. Practitioner-lens ONLY per Fold B
-// HARD GATE.
+// PRACTITIONER ONLY (activity-numerator ratios per Fold B HARD GATE)
 const PRACTITIONER_ONLY_RATIOS = new Set([
   'coord_messages_per_merged_pr',
   'tool_invocations_per_merged_pr',
@@ -101,6 +129,49 @@ function computeRatios(db, opts = {}) {
   ).get();
   const agentsEngaged = distinctAgentsRow.n;
 
+  // CP13.6 Phase 2.3 — output_pr substrate (GitHubWalker per Q1+Q2 ratify)
+  //
+  // pr_merge_rate (cohort-based per sub-OQ unanimous ratify #9799): of the
+  // PRs OPENED in the period, what % have been merged AT ANY TIME?
+  // Honest computation; never exceeds 1.0 by-construction; lags by review-
+  // cycle-time. Per s345 #9792: "honest-computation over flattering-computation."
+  let prOpenedInPeriodCohortSize = 0;
+  let prCohortMergedCount = 0;
+  let prMergedInPeriodCount = 0;
+  let timeToMergeHours = null;
+  try {
+    prOpenedInPeriodCohortSize = db.prepare(
+      `SELECT COUNT(*) AS n FROM output_pr WHERE opened_at >= ${bound}`,
+    ).get().n;
+    prCohortMergedCount = db.prepare(
+      `SELECT COUNT(*) AS n FROM output_pr WHERE opened_at >= ${bound} AND merged_at IS NOT NULL`,
+    ).get().n;
+    prMergedInPeriodCount = db.prepare(
+      `SELECT COUNT(*) AS n FROM output_pr WHERE merged_at >= ${bound}`,
+    ).get().n;
+    // time_to_merge_hours = median for PRs merged in period.
+    // SQLite has no native MEDIAN; use ROW_NUMBER + COUNT to pick middle row(s).
+    const timingRow = db.prepare(`
+      WITH ranked AS (
+        SELECT (julianday(merged_at) - julianday(opened_at)) * 24.0 AS hours,
+               ROW_NUMBER() OVER (ORDER BY (julianday(merged_at) - julianday(opened_at))) AS rn,
+               COUNT(*) OVER () AS total
+        FROM output_pr
+        WHERE merged_at >= ${bound} AND opened_at IS NOT NULL
+      )
+      SELECT AVG(hours) AS p50
+      FROM ranked
+      WHERE rn IN ((total + 1) / 2, (total + 2) / 2)
+    `).get();
+    timeToMergeHours = timingRow.p50;
+  } catch {
+    // output_pr table may not exist in some fixtures (pre-CP13.6 schema)
+    prOpenedInPeriodCohortSize = 0;
+    prCohortMergedCount = 0;
+    prMergedInPeriodCount = 0;
+    timeToMergeHours = null;
+  }
+
   // Ratios (NULL when denominator is 0 — honest "insufficient data")
   function safeDivide(num, denom) {
     if (denom === 0) return null;
@@ -113,9 +184,10 @@ function computeRatios(db, opts = {}) {
     coord_messages_per_merged_pr: safeDivide(messagesCount, mergeCount),
     tool_invocations_per_merged_pr: safeDivide(toolInvocationsCount, mergeCount),
     agents_engaged_per_merged_pr: safeDivide(agentsEngaged, mergeCount),
-    // Phase 2 ratios (deferred):
-    pr_merge_rate: null,
-    time_to_merge_hours: null,
+    // Phase 2.3 ratios (output_pr substrate; GitHubWalker per CP13.6):
+    pr_merge_rate: safeDivide(prCohortMergedCount, prOpenedInPeriodCohortSize),
+    time_to_merge_hours: timeToMergeHours,
+    dollar_per_pr_merged: safeDivide(costUsd, prMergedInPeriodCount),
     // metadata
     _period_days: periodDays,
     _merges: mergeCount,
@@ -124,6 +196,9 @@ function computeRatios(db, opts = {}) {
     _messages: messagesCount,
     _tool_invocations: toolInvocationsCount,
     _agents_engaged: agentsEngaged,
+    _pr_opens_cohort_size: prOpenedInPeriodCohortSize,
+    _pr_cohort_merged: prCohortMergedCount,
+    _pr_merges_in_period: prMergedInPeriodCount,
   };
 }
 
@@ -140,9 +215,21 @@ function filterRatiosByAudience(ratios, audience) {
   if (!AUDIENCE_TIERS.has(audience)) {
     throw new Error(`invalid audience: ${audience}. Must be buyer/practitioner/investor`);
   }
-  const allowed = audience === 'practitioner'
-    ? new Set([...CROSS_TIER_SAFE_RATIOS, ...PRACTITIONER_ONLY_RATIOS, 'pr_merge_rate', 'time_to_merge_hours'])
-    : new Set([...CROSS_TIER_SAFE_RATIOS, 'pr_merge_rate', 'time_to_merge_hours']);
+  // CP13.6 Phase 2.3 audience-tier canon per parch #9799 ratify:
+  //   - buyer: NO output-strand ratios (buyer-narrative load-bearing on
+  //     AUDIT substrate per Fold-B canon; internal velocity/cost is
+  //     inside-baseball + self-incriminating per s345 #9792 correction)
+  //   - investor: PRACTITIONER_INVESTOR (cost/value + outcome-rate ratios)
+  //   - practitioner: PRACTITIONER_INVESTOR + PRACTITIONER_ONLY (activity-numerator)
+  let allowed;
+  if (audience === 'practitioner') {
+    allowed = new Set([...PRACTITIONER_INVESTOR_RATIOS, ...PRACTITIONER_ONLY_RATIOS]);
+  } else if (audience === 'investor') {
+    allowed = new Set(PRACTITIONER_INVESTOR_RATIOS);
+  } else {
+    // buyer
+    allowed = new Set();
+  }
   const filtered = {};
   for (const [key, value] of Object.entries(ratios)) {
     // Always preserve metadata fields (prefixed with _)
@@ -151,7 +238,8 @@ function filterRatiosByAudience(ratios, audience) {
       filtered[key] = value;
     }
     // Else: omit (Fold B HARD GATE — server NEVER emits practitioner-only
-    // ratios at buyer/investor regardless of client request)
+    // ratios at buyer/investor regardless of client request; per parch
+    // #9799 ratify + s345 #9792 Fold-B authority correction)
   }
   filtered._audience = audience;
   return filtered;
@@ -314,7 +402,7 @@ function detectAnomalies(db, opts = {}) {
 
 module.exports = {
   AUDIENCE_TIERS,
-  CROSS_TIER_SAFE_RATIOS,
+  PRACTITIONER_INVESTOR_RATIOS,
   PRACTITIONER_ONLY_RATIOS,
   computeRatios,
   filterRatiosByAudience,
