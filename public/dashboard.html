@@ -401,8 +401,19 @@
      HARD GATE — even if a user manually toggles the CSS class, the API
      responses for buyer/investor never contain the activity-numerator
      ratio data, so the tiles render as "—". Defense in depth. */
+  /* CP13.6 Phase 2.4 audience-tier visibility per parch #9799 + s345 #9792 Fold-B:
+     - cross-tier-safe: visible all tiers (substrate-honesty class; e.g., coverage_gap)
+     - tile-investor-plus: visible practitioner + investor (cost/value/rate ratios; NOT buyer)
+     - practitioner-only: visible practitioner only (activity-numerator ratios)
+     Buyer-tier sees only cross-tier-safe (no output-strand ratios per Fold-B canon). */
+  #tab-effort .effort-tile.tile-investor-plus { display: none; }
+  #tab-effort.audience-investor .effort-tile.tile-investor-plus,
+  #tab-effort.audience-practitioner .effort-tile.tile-investor-plus { display: flex; }
   #tab-effort .effort-tile.practitioner-only { display: none; }
   #tab-effort.audience-practitioner .effort-tile.practitioner-only { display: flex; }
+  /* Buyer-tier banner explains the Fold-B canon scope */
+  #tab-effort .effort-buyer-banner { display: none; padding: 14px 18px; background: var(--panel); border-bottom: 1px solid var(--border); color: var(--muted); font-size: 12px; line-height: 1.5; }
+  #tab-effort.audience-buyer .effort-buyer-banner { display: block; }
   .effort-content { padding: 16px 18px; }
   .effort-lens-pane { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 14px 18px; }
   .effort-section-title { color: var(--text); font-size: 16px; font-weight: 600; margin-bottom: 10px; }
@@ -1438,24 +1449,45 @@
     </div>
   </div>
 
+  <!-- CP13.6 Phase 2.4 buyer-tier banner per parch #9799 + s345 #9792 Fold-B canon -->
+  <div class="effort-buyer-banner">
+    <strong>Buyer-tier scope:</strong> output-strand ratios (cost/PR, merge-rate, etc.) are practitioner + investor tier per Fold-B canon — buyer-narrative load-bearing is on the <a href="#audit">Audit tab</a> (substrate-by-construction discipline + governance attestation). Substrate-honesty signal below.
+  </div>
+
   <div class="effort-hero">
-    <!-- Cross-tier-safe tiles (always rendered) -->
-    <div class="effort-tile cross-tier-safe" data-tile="dollar_per_merged_pr">
-      <div class="tile-lbl">$ / merged-PR</div>
-      <div class="tile-val" id="tile-dpmpr">—</div>
-      <div class="tile-sub" id="tile-dpmpr-sub">rolling period</div>
-    </div>
-    <div class="effort-tile cross-tier-safe" data-tile="dollar_per_agent_cycle">
-      <div class="tile-lbl">$ / agent-cycle</div>
-      <div class="tile-val" id="tile-dpac">—</div>
-      <div class="tile-sub" id="tile-dpac-sub">cost ÷ commits</div>
-    </div>
+    <!-- Cross-tier-safe tile (always rendered): substrate-honesty signal -->
     <div class="effort-tile cross-tier-safe" data-tile="coverage_gap">
       <div class="tile-lbl">Coverage gap</div>
       <div class="tile-val" id="tile-cgap">—</div>
       <div class="tile-sub" id="tile-cgap-sub">null-fallback %</div>
     </div>
-    <!-- PRACTITIONER-LENS ONLY tiles (hidden at buyer/investor per Fold B) -->
+    <!-- PRACTITIONER + INVESTOR tiles (hidden at buyer per Fold-B canon) -->
+    <div class="effort-tile tile-investor-plus" data-tile="dollar_per_merged_pr">
+      <div class="tile-lbl">$ / merge-commit (P1)</div>
+      <div class="tile-val" id="tile-dpmpr">—</div>
+      <div class="tile-sub" id="tile-dpmpr-sub">bare-git denominator</div>
+    </div>
+    <div class="effort-tile tile-investor-plus" data-tile="dollar_per_pr_merged">
+      <div class="tile-lbl">$ / PR-merged (P2)</div>
+      <div class="tile-val" id="tile-dppm">—</div>
+      <div class="tile-sub" id="tile-dppm-sub">GitHub PR denominator</div>
+    </div>
+    <div class="effort-tile tile-investor-plus" data-tile="dollar_per_agent_cycle">
+      <div class="tile-lbl">$ / agent-cycle</div>
+      <div class="tile-val" id="tile-dpac">—</div>
+      <div class="tile-sub" id="tile-dpac-sub">cost ÷ commits</div>
+    </div>
+    <div class="effort-tile tile-investor-plus" data-tile="pr_merge_rate">
+      <div class="tile-lbl">PR merge-rate</div>
+      <div class="tile-val" id="tile-pmr">—</div>
+      <div class="tile-sub" id="tile-pmr-sub">cohort: opened → merged</div>
+    </div>
+    <div class="effort-tile tile-investor-plus" data-tile="time_to_merge_hours">
+      <div class="tile-lbl">Time-to-merge</div>
+      <div class="tile-val" id="tile-ttm">—</div>
+      <div class="tile-sub" id="tile-ttm-sub">p50 hours</div>
+    </div>
+    <!-- PRACTITIONER-LENS ONLY tiles (hidden at buyer/investor per Fold-B) -->
     <div class="effort-tile practitioner-only" data-tile="coord_messages_per_merged_pr">
       <div class="tile-lbl">Coord-msgs / merged-PR</div>
       <div class="tile-val" id="tile-cmpr">—</div>

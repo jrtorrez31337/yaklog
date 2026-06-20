@@ -4133,7 +4133,13 @@
           x.classList.toggle('active', x.dataset.audience === effortState.audience);
         });
         const panel = document.getElementById('tab-effort');
-        if (panel) panel.classList.toggle('audience-practitioner', effortState.audience === 'practitioner');
+        if (panel) {
+          // CP13.6 Phase 2.4: 3-way audience-tier class toggle for Fold-B
+          // canon-compliant tile visibility (buyer = cross-tier-safe only)
+          panel.classList.toggle('audience-buyer', effortState.audience === 'buyer');
+          panel.classList.toggle('audience-investor', effortState.audience === 'investor');
+          panel.classList.toggle('audience-practitioner', effortState.audience === 'practitioner');
+        }
         refreshEffortData();
       });
     });
@@ -4159,6 +4165,15 @@
       });
     }
 
+    // CP13.6 Phase 2.4 init-time audience-tier class application
+    // (effortState defaults to 'buyer'; click handler only fires on user-change)
+    const initPanel = document.getElementById('tab-effort');
+    if (initPanel) {
+      initPanel.classList.toggle('audience-buyer', effortState.audience === 'buyer');
+      initPanel.classList.toggle('audience-investor', effortState.audience === 'investor');
+      initPanel.classList.toggle('audience-practitioner', effortState.audience === 'practitioner');
+    }
+
     refreshEffortData();
   }
 
@@ -4170,6 +4185,18 @@
   function fmtEffortNum(v) {
     if (v == null || !Number.isFinite(v)) return '—';
     return v.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  }
+
+  // CP13.6 Phase 2.4 format helpers for Phase 2.3 ratios.
+  function fmtEffortPct(v) {
+    if (v == null || !Number.isFinite(v)) return '—';
+    return (v * 100).toFixed(1) + '%';
+  }
+  function fmtEffortHours(v) {
+    if (v == null || !Number.isFinite(v)) return '—';
+    if (v < 1) return (v * 60).toFixed(0) + 'm';
+    if (v < 24) return v.toFixed(1) + 'h';
+    return (v / 24).toFixed(1) + 'd';
   }
 
   async function fetchEffortJson(url) {
@@ -4197,16 +4224,40 @@
       fetchEffortJson('/api/v1/output/coverage-gap?period=' + period),
     ]);
 
+    // Tier-aware tile population (Phase 2.4): all tiles always populated; CSS
+    // controls visibility per audience-tier class on #tab-effort. Hidden tiles
+    // still get values written so audience-switching is instant (no re-fetch).
     const dpmpr = document.getElementById('tile-dpmpr');
+    const dppm = document.getElementById('tile-dppm');
     const dpac = document.getElementById('tile-dpac');
+    const pmr = document.getElementById('tile-pmr');
+    const ttm = document.getElementById('tile-ttm');
     const cgap = document.getElementById('tile-cgap');
     const cgapSub = document.getElementById('tile-cgap-sub');
     if (dpmpr) dpmpr.textContent = fmtEffortMoney(ratios.dollar_per_merged_pr);
+    if (dppm) dppm.textContent = fmtEffortMoney(ratios.dollar_per_pr_merged);
     if (dpac) dpac.textContent = fmtEffortMoney(ratios.dollar_per_agent_cycle);
+    if (pmr) pmr.textContent = fmtEffortPct(ratios.pr_merge_rate);
+    if (ttm) ttm.textContent = fmtEffortHours(ratios.time_to_merge_hours);
     if (cgap) cgap.textContent = coverage._error ? '—' : coverage.null_fallback_pct + '%';
     if (cgapSub) cgapSub.textContent = coverage._error
       ? coverage._error
       : coverage.null_fallback_count + ' / ' + coverage.total_commits + ' commits';
+
+    // Phase 2.3 ratio sub-text: cohort size for pr_merge_rate (substrate-honesty
+    // discipline — show the denominator so operator sees data density).
+    const pmrSub = document.getElementById('tile-pmr-sub');
+    if (pmrSub && ratios._pr_opens_cohort_size != null) {
+      pmrSub.textContent = ratios._pr_cohort_merged + ' / ' + ratios._pr_opens_cohort_size + ' opened';
+    }
+    const ttmSub = document.getElementById('tile-ttm-sub');
+    if (ttmSub && ratios._pr_merges_in_period != null) {
+      ttmSub.textContent = 'p50 (n=' + ratios._pr_merges_in_period + ')';
+    }
+    const dppmSub = document.getElementById('tile-dppm-sub');
+    if (dppmSub && ratios._pr_merges_in_period != null) {
+      dppmSub.textContent = ratios._pr_merges_in_period + ' GitHub PR-merges';
+    }
 
     const cmpr = document.getElementById('tile-cmpr');
     const tipr = document.getElementById('tile-tipr');
