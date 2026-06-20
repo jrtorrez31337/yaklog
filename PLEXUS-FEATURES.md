@@ -148,27 +148,34 @@ The Audit tab implements a GRC-tier three-lens architecture mirroring the Cost-t
 
 **Anti-features deliberately omitted** (ADR-0030 §8, 10 items): no AI-generated compliance narrative, no automated GDPR DSAR fulfillment, no auto-triage on risk score, no closed-form policy-violation severity scoring, no real-time enforcement actions, no risk-score-driven UI prioritization, no free-text NLP search on audit log, ~~no audit-log integrity self-attestation~~ (RESOLVED by Phase 3 (A) external-anchor per ADR-0030 v1.2 — `audit_anchor` table + S3 Object Lock + Reading-2 verify; CISO-audience tamper-detection now operational), no retention bypass for "operational reasons", no auto-fix on external-system reconciliation.
 
-### 2.6 Effort-tab three-lens UX (ADR-0032 CP13 Phase 1 / s345 #9234 CLEAN RATIFY)
+### 2.6 Effort-tab three-lens UX (ADR-0032 CP13 Phase 1 + CP13.6 Phase 2)
 
-The Effort tab implements a buyer-tier three-lens value-mapping architecture mirroring the Cost-tab + Audit-tab shape. The audience-tier default is **buyer** (per s345 #9234 Criterion 5 — externally-facing valuation surface); practitioner + investor renders available via picker. Substrate: ADR-0032 Phase 1 output-strand (bare-git walker over `/srv/git/*.git` → `output_commit` + `output_merge` + `output_ingester_cursor` tables).
+The Effort tab implements a three-lens value-mapping architecture mirroring the Cost-tab + Audit-tab shape. The audience-tier default is **buyer** (per s345 #9234 Criterion 5 — externally-facing valuation surface); practitioner + investor renders available via picker. Substrate: bare-git walker over `/srv/git/*.git` (Phase 1 `output_commit` + `output_merge` + `output_ingester_cursor`) + GitHubWalker over enrolled GitHub repos (CP13.6 Phase 2 `output_pr` + `output_pr_cursor` + `output_repo`).
 
 **Three orthogonal axes**:
 - **Lens** (data-slicing axis): Pace / Composition / Anomaly — sister-shape to Cost-tab Pace/Composition/Anomaly
 - **Audience-tier** (render axis): Buyer (default) / Practitioner / Investor
 - **Period** (Composition + Pace selector): 7d / 30d (default) / 90d
 
-**Hero strip — 6 tiles** (3 cross-tier-safe + 3 practitioner-only):
+**Hero strip — 9 tiles + buyer-banner** (CP13.6 Phase 2.4):
 
-| Tile | Category | Source |
+| Tile | Tier class | Source |
 |---|---|---|
-| **$ / merged-PR** | cross-tier-safe (pure-outcome ÷ pure-outcome) | `/output/ratios?audience=...` `dollar_per_merged_pr` |
-| **$ / agent-cycle** | cross-tier-safe | `dollar_per_agent_cycle` (cost ÷ commits) |
-| **Coverage gap** | cross-tier-safe | `/output/coverage-gap` `null_fallback_pct` |
-| **Coord-msgs / merged-PR** | **practitioner-only** (activity-numerator) | `coord_messages_per_merged_pr` — Fold B HARD GATE stripped at buyer/investor |
-| **Tool-invocations / merged-PR** | **practitioner-only** | `tool_invocations_per_merged_pr` — Fold B HARD GATE stripped at buyer/investor |
-| **Agents-engaged / merged-PR** | **practitioner-only** | `agents_engaged_per_merged_pr` — Fold B HARD GATE stripped at buyer/investor |
+| **Coverage gap** | `cross-tier-safe` | `/output/coverage-gap` `null_fallback_pct` |
+| **$ / merge-commit (P1)** | `tile-investor-plus` | `dollar_per_merged_pr` (bare-git denominator) |
+| **$ / PR-merged (P2)** | `tile-investor-plus` | `dollar_per_pr_merged` (GitHub-PR denominator) |
+| **$ / agent-cycle** | `tile-investor-plus` | `dollar_per_agent_cycle` (cost ÷ commits) |
+| **PR merge-rate** | `tile-investor-plus` | `pr_merge_rate` (cohort: opened → merged) — `XX.X%` |
+| **Time-to-merge** | `tile-investor-plus` | `time_to_merge_hours` (p50; adaptive m/h/d format) |
+| **Coord-msgs / merged-PR** | `practitioner-only` | `coord_messages_per_merged_pr` (activity-numerator) |
+| **Tool-invocations / merged-PR** | `practitioner-only` | `tool_invocations_per_merged_pr` |
+| **Agents-engaged / merged-PR** | `practitioner-only` | `agents_engaged_per_merged_pr` |
 
-**SERVER-SIDE Fold B HARD GATE** (per s345 #9234 §5.6, `src/outputRatios.js` `filterRatiosByAudience`): activity-numerator ratios are stripped server-side at buyer + investor audience-tier regardless of client request. Defense-in-depth: UI also hides practitioner-only tiles via `.practitioner-only` CSS gate, but the server enforcement is the structural guarantee — even a forged client `audience=practitioner` query from a buyer-tier viewer gets nothing extra from the API.
+Substrate-honest sub-text per tile shows the denominator (cohort size + sample N + PR-merge count) so the operator sees what the ratio is actually computed over.
+
+**Buyer-tier Fold-B canon (CP13.6 Phase 2.3 correction)**: Buyer audience sees **no output-strand ratios** — only Coverage gap (substrate-honesty signal) + an `.effort-buyer-banner` explaining the Fold-B scope (buyer-narrative load-bearing on AUDIT substrate per Fold-B; internal velocity/cost is inside-baseball + self-incriminating per s345 banked `feedback_activity_metrics_no_marketing_value`). Investor tier sees 5 cost/value + outcome-rate ratios. Practitioner tier adds the 3 activity-numerator ratios.
+
+**SERVER-SIDE Fold B HARD GATE** (per s345 #9234 §5.6, `src/outputRatios.js` `filterRatiosByAudience`): the tier-strip is enforced server-side regardless of client request. Defense-in-depth: UI hides tiles per `.tile-investor-plus` + `.practitioner-only` CSS gates driven by `audience-{buyer,investor,practitioner}` class on `#tab-effort`. The set `PRACTITIONER_INVESTOR_RATIOS` replaced the retired `CROSS_TIER_SAFE_RATIOS` set (no ratio is buyer-safe by Phase 2.3 canon).
 
 **Three lenses**:
 
@@ -178,11 +185,15 @@ The Effort tab implements a buyer-tier three-lens value-mapping architecture mir
 | **Composition** | Group-by `agent`/`repo` table — coord_msgs, commits, merges, cost $ per row. Honest per-agent-attribution surface. 100-row cap. | `/output/composition?period=&by=` |
 | **Anomaly** | Today's cost vs prior 7d mean; spike threshold 2× default. | `/output/anomalies?lookback_days=&threshold=` |
 
-**7-ratio family substrate-coverage** (per bizmodel #7939): 5 of 7 land at Phase 1 (bare-git walker substrate covers commit + merge counts; cost + activity from existing substrate). Phase 2 ratios `pr_merge_rate` + `time_to_merge_hours` return `null` until GitHubWalker Phase 2 lands (requires GitHub API substrate for PR-open-to-merge timing — bare-git lacks PR metadata).
+**8-ratio family substrate-coverage** (Phase 2.3 additive ratio per Q4 Option C — `dollar_per_pr_merged` is additive sister to `dollar_per_merged_pr`; preserves divergence-from-Phase-1 at substrate-honest tier):
+- Phase 1 (bare-git denominator): `dollar_per_merged_pr`, `dollar_per_agent_cycle`, `coord_messages_per_merged_pr`, `tool_invocations_per_merged_pr`, `agents_engaged_per_merged_pr`
+- Phase 2.3 (output_pr denominator via GitHubWalker): `pr_merge_rate` (cohort-based; ≤ 1.0 by-construction), `time_to_merge_hours` (p50 median via SQLite `ROW_NUMBER + COUNT OVER ()` — no native MEDIAN), `dollar_per_pr_merged`
 
-**Per-agent attribution** (Phase 0 Item C + 2026-06-20 per-agent refactor): `parseCoAuthoredBy` resolves SPECIFIC agent_id from email/name BEFORE collapsing to runtime class. Parser ordering: `co_authored_by` → `author_email_direct` → `body_pattern` → `null_fallback`. `EMAIL_TO_AGENT_ID` reverse-index in `src/agentRuntimes.js` covers 37 canonical email/agent_id mappings (16 unique agents); `agentIdByName` resolver handles `<stem>-agent` naming convention. Empirical post-walker fire (period=30d, all bare-git canon): **33 specific agents resolved** + 1 generic `claude-code` bucket (57 commits with `Co-Authored-By: noreply@anthropic.com` trailers unrecoverable to specific agent_id — irreducible at the substrate-shape level); 152 of 354 commits remain `null_fallback` (43%).
+**Phase 2 ratios may return NULL on live deploy** even though substrate is fully functional — current data-density is one enrolled repo (`jrtorrez31337/yaklog`) + few PRs outside 30d window. Distinction per ssw-devops #9899 framing: substrate-correctness is structural (computation honest when data present); data-density is operator/policy concern (more repos enrolled + new PR-flow → ratios populate).
 
-**Anti-features deliberately omitted** (ADR-0032 §8): no GitHubWalker until Phase 2 (PR/merge-timing substrate trigger-gated); no quality-judgment ratios (test-coverage-per-PR, defect-rate, etc. — semantic-class-2 — beyond Phase 1 scope); no AI-narrative summaries; no per-agent value-judgment renders (single-agent attribution is operator-visible via Composition lens, NOT keyed-on-agent valuation).
+**Per-agent attribution** (Phase 0 Item C + 2026-06-20 per-agent refactor): `parseCoAuthoredBy` resolves SPECIFIC agent_id from email/name BEFORE collapsing to runtime class. Parser ordering: `co_authored_by` → `author_email_direct` → `body_pattern` → `null_fallback`. `EMAIL_TO_AGENT_ID` reverse-index in `src/agentRuntimes.js` covers canonical email/agent_id mappings (post-`28adc8a` 4 entries `aieng-*@*` redirect to `s345-aieng-agent` per Jon-direct #7894 rename + ssw-devops #10001 stale-binding-removal coord; preserves attribution-by-current-identity for historical commits). `agentIdByName` resolver handles `<stem>-agent` naming convention.
+
+**Anti-features deliberately omitted** (ADR-0032 §8 + CP13.6 Phase 2.1 Q3 unanimous-quorum): `output_pr_review` table DELIBERATELY DROPPED (semantic-class-2 quality-measurement anti-feature per ADR-0032 §8); no quality-judgment ratios (test-coverage-per-PR, defect-rate); no AI-narrative summaries; no per-agent value-judgment renders.
 
 ---
 
@@ -409,54 +420,87 @@ Cross-runtime parity surface — accepts OTLP/HTTP from the Plexus collector for
 | `YAKLOG_OPS_API_KEYS` env | Privileged keys for ops-bound endpoints (DELETE /presence, DM body reveal). |
 | Registrations table dual-source | Active registrations' minted tokens are valid Bearer creds alongside the env-static list. |
 
-### 3.11 Output substrate (ADR-0032 CP13 Phase 1 / value-mapping)
+### 3.11 Output substrate (ADR-0032 CP13 Phase 1 + CP13.6 Phase 2)
 
-Engineering value-mapping substrate per ratified ADR-0032 (parch `eec3039`). Bare-git walker ingests commit + merge lineage from `/srv/git/*.git` canonical repos; ratios + composition + anomalies served via 7 endpoints under `/api/v1/output/` + 2 ops-gated under `/api/v1/ops/output/`.
+Engineering value-mapping substrate per ratified ADR-0032 (parch `eec3039`). Phase 1: bare-git walker ingests commit + merge lineage from `/srv/git/*.git` canonical. Phase 2 (CP13.6): GitHubWalker ingests PR-state lineage from GitHub REST API for enrolled repos. Ratios + composition + anomalies served via 6 public endpoints under `/api/v1/output/` + 4 ops-gated under `/api/v1/ops/output/`.
 
-#### 3.11.1 Substrate (3 tables, `src/db.js`)
+#### 3.11.1 Substrate (6 tables, `src/db.js`)
 
-| Table | Purpose |
-|---|---|
-| **`output_commit`** | Per-commit lineage with agent-attribution. Columns include `repo`, `commit_sha`, `occurred_at`, `subject`, `agent_attribution` (resolved agent_id OR runtime-class fallback OR null), `attribution_method` ∈ `{co_authored_by, author_email_direct, body_pattern, null_fallback}`, `runtime_class` (CC/codex/gemini/ptah). Indexed on (repo, occurred_at), (agent_attribution, occurred_at), occurred_at. |
-| **`output_merge`** | Per-merge lineage (PR-flow + direct-bare-git-push). Tracks `merged_by_agent`, occurred_at, repo. Indexed on (occurred_at), (merged_by_agent, occurred_at), (repo, occurred_at). |
-| **`output_ingester_cursor`** | Per-repo last-walked-ref state (resume token; enables incremental walks). |
+| Table | Phase | Purpose |
+|---|---|---|
+| **`output_commit`** | Phase 1 | Per-commit lineage with agent-attribution. Columns: `repo`, `commit_sha`, `occurred_at`, `subject`, `agent_attribution` (resolved agent_id OR runtime-class fallback OR null), `attribution_method` ∈ `{co_authored_by, author_email_direct, body_pattern, null_fallback}`, `runtime_class`. Indexed on (repo, occurred_at), (agent_attribution, occurred_at), occurred_at. |
+| **`output_merge`** | Phase 1 | Per-merge lineage (PR-flow + direct-bare-git-push). Tracks `merged_by_agent`, occurred_at, repo. Indexed on (occurred_at), (merged_by_agent, occurred_at), (repo, occurred_at). |
+| **`output_ingester_cursor`** | Phase 1 | Per-repo last-walked-ref state (resume token; enables incremental walks). |
+| **`output_pr`** | Phase 2 | Per-PR state from GitHub API. 15 cols: `github_owner_repo`, `pr_number`, `state` ∈ `{open, closed, merged}`, `title`, `author_login`, `author_email` (nullable), `base_ref`, `head_ref`, `opened_at`, `merged_at`, `closed_at`, `merge_commit_sha`, `commit_count` (nullable), `last_synced_at` + `UNIQUE(github_owner_repo, pr_number)` + 4 indexes (opened_at, merged_at, state, github_owner_repo). |
+| **`output_pr_cursor`** | Phase 2 | Per-repo incremental-fetch cursor + rate-limit. 7 cols: `github_owner_repo` PK + `last_pr_updated_at` + `prs_synced_total` + `rate_limit_remaining` + `rate_limit_reset_at` + `last_walk_status` + `last_walk_message`. |
+| **`output_repo`** | Phase 2 | Canonical GitHub repo allowlist (Q1 Option C ratified per parch). 6 cols: `github_owner_repo` PK + `bare_git_path` + `enabled` + `added_at` + `added_by` + `last_walked_at`. `output_pr_review` DELIBERATELY DROPPED (Q3 unanimous-quorum; semantic-class-2 anti-feature per ADR-0032 §8). |
 
-#### 3.11.2 Walker + ingester
+#### 3.11.2 Walker classes + ingester (`src/outputWalker.js`, `src/outputIngester.js`)
 
-`src/outputWalker.js` defines `BareGitWalker` (Phase 1 active; walks `/srv/git/*.git` default root) + `GitHubWalker` stub (Phase 2 forward-track; raises until GitHub API substrate lands). `walkRepo(repo, lastRef) → {commits, merges, newRef}`. Walker-perf empirical smoke: 16.82s first-tick / 285ms incremental against real `/srv/git/*.git` (14 repos, 497 commits) per CP13.2 verify cycle.
+Two walkers conform to a common interface: `walkRepo(repo, ...) → results` + `substrateType() → 'bare-git'|'github'` + `listRepos()`.
 
-`src/outputIngester.js` orchestrates: instantiate walkers → for each known repo, read cursor → walk → insert rows → advance cursor. Atomic per-repo. Designed for cron-driven invocation.
+- **`BareGitWalker`** (Phase 1 active; sync `walkRepo`). Walks `/srv/git/*.git` default root. Walker-perf empirical smoke: 16.82s first-tick / 285ms incremental against 14 repos / 497 commits per CP13.2 verify.
+- **`GitHubWalker`** (CP13.6 Phase 2.2; async `walkRepo`). `_loadPat()` reads mode-600 PAT file (cached); `walkRepo(githubOwnerRepo, cursor)` calls `GET /repos/{owner}/{repo}/pulls?state=all&sort=updated&direction=asc&per_page=100&since={cursor.last_pr_updated_at}` with `Authorization: token ${pat}` + `Accept: application/vnd.github+json` + `X-GitHub-Api-Version: 2022-11-28` + canonical User-Agent. Models 6 substrate-states: `no-pat` / `auth-fail` (401) / `rate-limited` (403+remaining=0) / `server-error` (5xx) / `network-error` (fetch-throw) / `ok`. Captures `X-RateLimit-Remaining` + `X-RateLimit-Reset` → `output_pr_cursor`. `normalizePr()` derives state (closed+merged_at='merged'; closed-only='closed'; open='open'); `author_email` + `commit_count` may be null.
+
+`src/outputIngester.js` `runOnce()` is now **async** (CP13.6 Phase 2.2; network IO). Routes per `walker.substrateType()`:
+- `'bare-git'` → `ingestRepo()` writes `output_commit` + `output_merge`
+- `'github'` → `ingestRepoPrs()` writes `output_pr` + updates `output_pr_cursor`
+
+`maybeAddGitHubWalker()` auto-instantiates GitHubWalker when `GITHUB_PAT_FILE` env present AND `output_repo` has enabled rows; bootstraps from `/etc/plexus/output-repos.txt` (override via `OUTPUT_REPO_CONFIG_FILE`) if `output_repo` empty. Returns `walkersUsed` per run for operator visibility.
 
 #### 3.11.3 Attribution parser (`src/outputAttributionParser.js`)
 
 Resolution-order:
-1. **Co-Authored-By trailer** (`parseCoAuthoredBy`) — walks trailers in reverse (last = most authoritative). Per-trailer: (a) `EMAIL_TO_AGENT_ID` reverse-index for specific agent_id, (b) `agentIdByName` for `<stem>-agent` shape (handles generic-CC-email trailers where the *name* carries identity), (c) fall through to runtime-class via domain or name-pattern. `attribution_method = 'co_authored_by'`.
-2. **Author email direct** (`author_email_direct`, Phase 0 Item C — bundled with CP13 merge) — git author email matched against `EMAIL_TO_AGENT_ID`; closes attribution gap for Codex + Gemini commits which don't use Co-Authored-By trailers.
+1. **Co-Authored-By trailer** (`parseCoAuthoredBy`) — walks trailers in reverse (last = most authoritative). Per-trailer: (a) `EMAIL_TO_AGENT_ID` reverse-index for specific agent_id, (b) `agentIdByName` for `<stem>-agent` shape, (c) fall through to runtime-class via domain or name-pattern. `attribution_method = 'co_authored_by'`.
+2. **Author email direct** (`author_email_direct`, Phase 0 Item C — bundled with CP13 merge) — git author email matched against `EMAIL_TO_AGENT_ID`; closes attribution gap for Codex + Gemini commits without Co-Authored-By trailers.
 3. **Body pattern** (`body_pattern`) — `Authored-by: <agent>` style fallback (rare).
-4. **null fallback** — no attribution recoverable; row inserted with `agent_attribution=null` + `attribution_method='null_fallback'`. Counted in coverage-gap honesty surface.
+4. **null fallback** — `agent_attribution=null` + `attribution_method='null_fallback'`. Counted in coverage-gap honesty surface.
 
-#### 3.11.4 Public read endpoints (5 under `/api/v1/output/`)
+Post-`28adc8a` (2026-06-20): `EMAIL_TO_AGENT_ID` 4 entries redirected `aieng-agent` → `s345-aieng-agent` per Jon-direct #7894 rename (preserves attribution-by-current-identity for historical commits). Companion to ssw-devops #10001 stale-binding-removal cycle.
+
+#### 3.11.4 Ratios computation (`src/outputRatios.js`)
+
+`computeRatios(db, {period})` produces the 8-ratio family. Phase 2.3 ratios (per CP13.6 Q4 Option C):
+- **`pr_merge_rate`** — cohort-based per sub-OQ unanimous ratify #9799: of PRs OPENED in period, what % merged AT ANY TIME? Honest computation (≤ 1.0 by-construction); lags by review-cycle-time. Per s345 #9792: "honest-computation over flattering-computation."
+- **`time_to_merge_hours`** — p50 median for PRs merged in period; SQLite `ROW_NUMBER() OVER (ORDER BY duration) + COUNT(*) OVER ()` picks middle row(s) since SQLite has no native MEDIAN.
+- **`dollar_per_pr_merged`** — additive Phase 2 ratio (preserves divergence from Phase 1 `dollar_per_merged_pr` at substrate-honest tier); cost ÷ output_pr merged-in-period.
+
+3 new metadata fields: `_pr_opens_cohort_size`, `_pr_cohort_merged`, `_pr_merges_in_period`. `output_pr` queries wrapped in try/catch (graceful when schema absent in legacy fixtures).
+
+`filterRatiosByAudience(ratios, audience)` enforces the Fold-B canon (per parch #9799 + s345 #9792):
+- **BUYER**: empty allowed-set — NO output-strand ratios returned (only `_meta` fields). Buyer-narrative is on AUDIT substrate per Fold-B.
+- **INVESTOR**: `PRACTITIONER_INVESTOR_RATIOS` set (5 entries): `dollar_per_merged_pr`, `dollar_per_pr_merged`, `dollar_per_agent_cycle`, `pr_merge_rate`, `time_to_merge_hours`.
+- **PRACTITIONER**: above + `PRACTITIONER_ONLY_RATIOS` (3 entries): `coord_messages_per_merged_pr`, `tool_invocations_per_merged_pr`, `agents_engaged_per_merged_pr`.
+
+`CROSS_TIER_SAFE_RATIOS` set retired (no ratio is buyer-safe by current canon); `dollar_per_merged_pr` + `dollar_per_agent_cycle` (Phase 1) moved from cross-tier-safe to practitioner+investor per #9799 footnote for canon-consistency.
+
+#### 3.11.5 Public read endpoints (6 under `/api/v1/output/`)
 
 Network-isolation trust (no per-request auth in v1; mirrors `/cost/*` + `/audit/*` shape).
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /output/ratios?period=7d\|30d\|90d&audience=buyer\|practitioner\|investor` | 7-ratio family computed over the period. **SERVER-SIDE Fold B HARD GATE** (`filterRatiosByAudience`): activity-numerator ratios (`coord_messages_per_merged_pr`, `tool_invocations_per_merged_pr`, `agents_engaged_per_merged_pr`) stripped at buyer + investor regardless of client request. Always returns `dollar_per_merged_pr`, `dollar_per_agent_cycle`, `pr_merge_rate` (null Phase 1), `time_to_merge_hours` (null Phase 1) + metadata (`_period_days`, `_merges`, `_commits`, `_cost_usd`, `_messages`, `_tool_invocations`, `_agents_engaged`, `_audience`). |
-| `GET /output/composition?period=&by=agent\|repo` | Group-by table with `coord_msgs`, `commits`, `merges`, `cost_usd` per row. 100-row cap. Powers Effort-tab Composition lens + honest per-agent-attribution operator surface. |
-| `GET /output/anomalies?lookback_days=7&threshold=2.0` | Today vs prior-N-day mean ratio scan; ratio ≥ threshold flagged. Mirror of cost-anomaly shape. |
+| `GET /output/ratios?period=7d\|30d\|90d&audience=buyer\|practitioner\|investor` | 8-ratio family per audience. **SERVER-SIDE Fold B HARD GATE** (`filterRatiosByAudience`) strips per tier regardless of client request. Buyer returns metadata only; investor 5 ratios; practitioner 8. Metadata: `_period_days`, `_merges`, `_commits`, `_cost_usd`, `_messages`, `_tool_invocations`, `_agents_engaged`, `_pr_opens_cohort_size`, `_pr_cohort_merged`, `_pr_merges_in_period`, `_audience`. |
+| `GET /output/composition?period=&by=agent\|repo` | Group-by table with `coord_msgs`, `commits`, `merges`, `cost_usd` per row. 100-row cap. |
+| `GET /output/anomalies?lookback_days=7&threshold=2.0` | Today vs prior-N-day mean ratio scan. |
 | `GET /output/merges?period=&agent=<id>` | Per-merge detail list, optional agent filter. |
-| `GET /output/coverage-gap?period=30d` | Honesty surface — counts of `co_authored_by` vs `author_email_direct` vs `body_pattern` vs `null_fallback` attribution methods + `null_fallback_pct`. Powers Effort-tab "Coverage gap" hero tile. |
+| `GET /output/coverage-gap?period=30d` | Honesty surface — counts of attribution methods + `null_fallback_pct`. |
+| `GET /output/repos` | CP13.6 Phase 2.2. Operator visibility: returns enrolled GitHub repos with `enabled` + `added_at` + `added_by` + `last_walked_at` for each `github_owner_repo`. |
 
-#### 3.11.5 Ops-key gated mutation endpoints (2 under `/api/v1/ops/output/`)
+#### 3.11.6 Ops-key gated mutation endpoints (4 under `/api/v1/ops/output/`)
 
 | Endpoint | Purpose |
 |---|---|
-| `POST /api/v1/ops/output/ingest` | Manual ingester trigger (cron-equivalent). Used pre-systemd-install + as ops escape valve. |
-| `PUT /api/v1/ops/output/attribution` | Manual attribution correction (operator-curated override for edge cases the parser misses). |
+| `POST /api/v1/ops/output/ingest` | Manual ingester trigger (cron-equivalent / ops escape valve). |
+| `PUT /api/v1/ops/output/attribution` | Manual attribution correction. |
+| `POST /api/v1/ops/output/repos` | CP13.6 Phase 2.2. Upsert allowlist entry. Body: `{github_owner_repo, bare_git_path?, enabled?}`. Validates "owner/repo" form. `added_by` derived from `X-Ops-Key-Id` header or defaults to `ops-endpoint`. |
+| `DELETE /api/v1/ops/output/repos/:github_owner_repo(*)` | CP13.6 Phase 2.2. **Soft-disable** per parch ratify (sets `enabled=0`); hard-delete is forward-track. Path param uses `(*)` to accept the `owner/repo` slash. |
 
-#### 3.11.6 Cron driver (NOT YET INSTALLED on devel host)
+`src/db.js` exports 8 new helpers for the Phase 2 substrate: `upsertOutputPr`, `getOutputPrCursor`, `upsertOutputPrCursor`, `listEnabledOutputRepos`, `listAllOutputRepos`, `upsertOutputRepo`, `disableOutputRepo`, `bootstrapOutputReposFromConfig`.
 
-`scripts/yaklog-output-ingester.sh` + systemd unit/timer at `scripts/systemd/yaklog-output-ingester.{service,timer}`. Timer: `OnCalendar=hourly` + `RandomizedDelaySec=300` + `Persistent=true` (catch-up after outage). **Status**: shipped to repo but NOT installed on devel — substrate-prep coord with ssw-devops pending. Until then: manual `POST /api/v1/ops/output/ingest` is the only ingester trigger.
+#### 3.11.7 Cron driver (CP13.5 INSTALLED + ACTIVE)
+
+`scripts/yaklog-output-ingester.sh` + systemd unit/timer at `/usr/local/bin/yaklog-output-ingester.sh` (per secops #9768 ExecStart canonical-path) + `yaklog-output-ingester.{service,timer}`. Timer: `OnCalendar=hourly` + `RandomizedDelaySec=300` + `Persistent=true` (catch-up after outage). Textfile sub-dir `/var/lib/yaklog/textfile/output-ingester/` (per secops sister-shape to plexus-audit-publisher canonical ownership). System uid `plexus-output-ingester` (no-home, no-shell). 24h cron-cadence empirically observed healthy. Installed per CP13.5 4-gate serial install-discipline (per parch #9786 banking).
 
 ---
 
@@ -540,6 +584,14 @@ What's NEVER captured: raw tool_response content, raw user prompt text, file con
 Both server-side compute + frontend `SERVICE_TO_RUNTIME` translation accept all three canonical values + `claude-code` → `claude_code` normalization for internal RUNTIME_META keys.
 
 **Per-vendor cost rollup** (CP11.x.1 forward-track): `plexus.tokens.input` / `plexus.tokens.output` / `plexus.tokens.total` (unified-namespace per s345-aieng #8539 schema) — extends `cost_daily` rollup to ingest non-CC token metrics when emitters land (gemini #8524 + aieng3 codex emitter #8545 + s345-aieng CC token-relabel spec post-Ptah-P0).
+
+### 5.4 GitHub PAT install (CP13.6 Phase 2.2)
+
+Sister-shape to the ops-key install (`/etc/plexus/ops-key`). PAT lives at `/etc/plexus/github-pat.token` mode-600 `plexus-output-ingester:plexus-output-ingester` per ssw-devops #9873. Container reads via bind-mount in `docker-compose.yml` (ro-mount + `GITHUB_PAT_FILE` env). `GitHubWalker._loadPat()` reads + caches.
+
+**Credential reuse** (per parch #9866 ratify + banked `feedback_reuse_existing_cluster_credential_when_scope_adequate`): reused existing cluster jon-PAT from gh CLI cache rather than minting new — scope `repo` is superset of needed `repo:read` + `pull_requests:read`. Preserves cluster-velocity + Jon-no-touch.
+
+**Rate-limit handling**: GitHubWalker captures `X-RateLimit-Remaining` + `X-RateLimit-Reset` headers per request → `output_pr_cursor`; if remaining=0 the walker emits `rate-limited` substrate-state without advancing cursor (resumes at next reset window). Per-walk status + message persisted in `output_pr_cursor.last_walk_status` + `last_walk_message` for operator visibility.
 
 ---
 
@@ -630,6 +682,9 @@ Bearer token in `Authorization` header. Daemon-binding pins each token to a spec
 - **Truncation IS the secret-protector** for inherently-arbitrary inputs (Bash command line, file paths beyond home). Short prefix surfaces "what tool, on what target" without leaking the full secret-bearing argument.
 - **WebFetch URLs** are sanitized to scheme://host/path[:40] — query strings dropped because they often carry API keys.
 - **Settings.local.json env** uses placeholder bearer for OTel; no real-token-at-rest in workspace settings.
+- **Cluster-credential reuse over mint-new** (per parch #9866 banked `feedback_reuse_existing_cluster_credential_when_scope_adequate`): when cluster already holds adequate-scope credential, REUSE via per-agent canonical file-path rather than mint-new. File-substrate isolation (mode-600 + service-uid) ≠ token-isolation (rotation blast-radius); both threat models matter, but reuse preserves the first while accepting cluster-wide shape on the second (per ssw-devops #9873 banking).
+- **Secops pre-emptive substrate review on pre-credential commit** (per parch #9830 banking): secops can pre-clear Gate (1) of substrate-prep 4-gate canon by reviewing exposure-surface at code-substrate-tier ahead of credential mint cycle; accelerates wall-clock without sacrificing security discipline. Used at CP13.6 Phase 2.1 → 2.2 transition.
+- **PAT-surface review-pair discipline**: GitHub PAT install (CP13.6 Phase 2.2) ran the full 4-gate serial install-discipline canon (substrate-prep cycles: sign-off → execute → empirical-verify → ratify-cycle-close) per parch #9786 CP13.5 banking. Reusable template for future credential-introducing substrate changes.
 
 ### 8.5 DM trust model (ADR-0026)
 
@@ -668,12 +723,17 @@ The `install-plexus.sh` canonical installer enables `YAKLOG_AUTO_UPDATE=1` by de
 | ADR-0030 — Audit + governance + policy-as-code | v1.1 RATIFIED 2026-06-04 (parch #7703); Phase 1 SHIPPED end-to-end at v0.5.28 → v0.5.32 (substrate + API + DSL alignment + UX + R-A1 fidelity); parch CP12-closure CONCUR at #7775 + secops at #7776 + bizmodel R-A1 single-pass-fix at #7773/#7774 |
 | Seed policy rule corpus | 7 rules codified per CP12.18 + parch #8012 Jon-ratified Option (d) (v0.5.32); further expansion remains open authoring lane |
 | ADR-0031 — Defensive substrate / silent-dead detection + reconnect | v1.1 RATIFIED 2026-06-14; (a) Layer-1 server-side Fix A+B + (b) Step 1.2 backfill SHIPPED v0.5.64 Step 3; Fix C reconnect-state-machine standing-reactive on substantive trigger gate |
-| ADR-0032 — Engineering value-mapping substrate (CP13) | Phase 0 SHIPPED (Items A + B — cross-runtime OTel templates + per-runtime install script + `/api/v1/audit/ingest/otel` ingester + auditOtelMapper). Phase 1 SHIPPED (CP13 output substrate + walker + ingester + 5 public + 2 ops endpoints + `/dashboard#effort` 3-lens UX + SERVER-SIDE Fold B HARD GATE per s345 #9234). Phase 0 Item C (`author_email_direct` attribution_method + EMAIL_TO_AGENT_ID reverse-index) SHIPPED bundled with CP13 merge. Per-agent attribution refactor (1fa03f1 / 2026-06-20) lifted Composition surface from runtime-class buckets to specific agent_id resolution (33 specific agents resolved post-walker-fire). **Phase 2 forward-track**: GitHubWalker for `pr_merge_rate` + `time_to_merge_hours` ratios (trigger-gated on GitHub API substrate). |
-| CP13.5 systemd cron install | NOT YET INSTALLED on devel — `scripts/systemd/yaklog-output-ingester.{service,timer}` shipped to repo but pending substrate-prep coord with ssw-devops. Until install, output ingester runs only via manual `POST /api/v1/ops/output/ingest` trigger. |
-| Ptah CP14.1 (4th runtime class) | SHIPPED 2026-06-19 — `VALID_RUNTIMES` extends with `ptah` (`ptah-agent` REGISTRY entry); dashboard adds Ptah filter chip + brand-purple `#7c3aed` right-border accent + djed-pillar SVG badge in `RUNTIME_META.ptah` (per gfxartist #9670); `/presence/public` pre-emission union renders synthetic placeholder for token-bound agents missing from `presence` (e.g., ptah-agent on Win11 VM pre-daemon-deploy). Test suite 642/643 PASS (pre-existing audit/coverage-gap flake). |
+| ADR-0032 — Engineering value-mapping substrate (CP13) | Phase 0 + Phase 1 + CP13.6 Phase 2 SHIPPED. Phase 0 (Items A/B/C) — cross-runtime OTel parity + audit ingester + `author_email_direct` attribution. Phase 1 — output substrate + bare-git walker + 5 public + 2 ops endpoints + `/dashboard#effort` 3-lens × 3-audience UX with SERVER-SIDE Fold B HARD GATE per s345 #9234. CP13.6 Phase 2 (2026-06-20): GitHubWalker class + real GitHub REST API integration + 6 substrate-states (commits `ccc3c3f`/`8bf590b`/`41cb2a4`/`1a5b386`); ratios `pr_merge_rate` (cohort) + `time_to_merge_hours` (p50) + additive `dollar_per_pr_merged` (commit `385d4e0`); Fold-B audience-tier canon correction (buyer-tier no output-strand ratios per parch #9799 + s345 #9792 banked `feedback_activity_metrics_no_marketing_value`); Effort tab 3 new tiles + 6 tile re-classification + 3-way audience-class toggle (commit `44727af`). |
+| ADR-0033 — Presence/liveness protocol | RATIFIED 2026-06-20 (parch #9759) — descriptive canonization of the existing presence/liveness substrate (no behavior change; documents what shipped per CP12.x.4). Canonical at `/srv/git/adr-canon.git/`. |
+| CP13.5 systemd cron install | INSTALLED + ACTIVE on devel (2026-06-20). `yaklog-output-ingester.timer` firing hourly + `RandomizedDelaySec=300` + `Persistent=true`; ExecStart `/usr/local/bin/yaklog-output-ingester.sh` per secops #9768; textfile sub-dir `/var/lib/yaklog/textfile/output-ingester/` sister-shape to plexus-audit-publisher canonical; system uid `plexus-output-ingester`; 24h cron-cadence observed healthy. Installed per 4-gate serial install-discipline canon (per parch #9786 banked `feedback_4_gate_serial_install_discipline_canon` + secops blocking-gate substantive value-add `feedback_secops_blocking_gate_substantive_value`). |
+| Ptah CP14.1 (4th runtime class) | SHIPPED 2026-06-19 — `VALID_RUNTIMES` extends with `ptah` (`ptah-agent` REGISTRY entry); dashboard adds Ptah filter chip + brand-purple `#7c3aed` right-border accent + djed-pillar SVG badge in `RUNTIME_META.ptah` (per gfxartist #9670); `/presence/public` pre-emission union renders synthetic placeholder for token-bound agents missing from `presence`. Test suite 642/643 PASS (pre-existing audit/coverage-gap flake). |
+| CP13.6 Phase 2.5 audience-tier UX polish + Phase 2.6 docs | Phase 2.5: wire output-strand tier toggling into broader effort-tab nav state (sticky-on-tab-flip). Phase 2.6: this docs cycle (Wave 4). |
+| Option C pre-emission union substrate-fix | Forward-track. Pre-emission AgentCard renders synthetic placeholder rows; refactor to canonical union substrate planned to remove placeholder special-casing. |
+| Historical re-attribution of 14 output_commit rows | Forward-track. Post-`28adc8a` agentRuntimes redirect surfaces 14 historical rows still tagged `aieng-agent` — backfill UPDATE on `output_commit.agent_attribution` cycle pending. |
+| Ptah ORP dashboard view | Forward-track per Jon-direct #9904. Gated on s345-aieng Track 1 ORP schema + gemini episode-trace contract. |
 
 ---
 
 **Doc owner**: yaklog-dev-agent
-**Last updated**: 2026-06-20 (Wave 3 — ADR-0032 Phase 0 + CP13 Phase 1 + Ptah CP14.1 era: cross-runtime OTel parity ingester `/api/v1/audit/ingest/otel`, output substrate `output_commit`/`output_merge`/`output_ingester_cursor` + 7 endpoints + cron-driven ingester script, `/dashboard#effort` 3-lens × 3-audience UX with SERVER-SIDE Fold B HARD GATE per s345 #9234, per-agent attribution refactor lifting Composition surface from 4 to 33 specific agents, Ptah 4th runtime class + pre-emission AgentCard union, CP12.x.4.3 session-state-aware stale predicate shipped)
+**Last updated**: 2026-06-20 (Wave 4 — CP13.6 Phase 2 + CP13.5-install + ADR-0033 era: GitHubWalker class + GitHub REST API integration + 6 substrate-states + 3 new Phase 2.3 ratios (`pr_merge_rate` cohort, `time_to_merge_hours` p50, additive `dollar_per_pr_merged`), `output_pr`/`output_pr_cursor`/`output_repo` schema (6 tables total), 4 new endpoints (`/output/repos` + ops mutation pair), Fold-B audience-tier canon CORRECTION (buyer-tier NO output-strand ratios per parch #9799 + s345 #9792), Effort tab 3 new tiles + 6 tile re-classification + 3-way audience-class toggle, CP13.5 cron-driver INSTALLED + ACTIVE per 4-gate serial install-discipline canon, GitHub PAT install per cluster-credential-reuse canon + secops pre-emptive substrate review pattern, ADR-0033 presence/liveness ratify, agentRuntimes `aieng-*` → `s345-aieng-agent` redirect post-rename)
 **Lives at**: `/srv/git/yaklog.git:PLEXUS-FEATURES.md` (canonical) + `/home/jon/yaklog/PLEXUS-FEATURES.md` (working copy)

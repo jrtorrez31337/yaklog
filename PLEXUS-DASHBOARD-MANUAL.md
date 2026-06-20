@@ -338,7 +338,7 @@ When you click a Save / Reconcile / Tombstone button in any ops-key-gated surfac
 
 ## Engineering effort (Effort tab)
 
-The Effort tab is a **buyer-tier value-mapping surface** (ADR-0032 CP13 Phase 1). Audience-tier default is **buyer** (per s345 #9234 Criterion 5 — externally-facing valuation); practitioner + investor renders available via picker. Substrate: bare-git walker over `/srv/git/*.git` canonical → `output_commit` + `output_merge` tables → 7-ratio family. Deep-link via `#effort`.
+The Effort tab is a **value-mapping surface** (ADR-0032 CP13 Phase 1 + CP13.6 Phase 2). Audience-tier default is **buyer** (per s345 #9234 Criterion 5 — externally-facing valuation); practitioner + investor renders available via picker. Substrate: bare-git walker over `/srv/git/*.git` (Phase 1 → `output_commit`/`output_merge`) + GitHubWalker over enrolled GitHub repos (CP13.6 Phase 2 → `output_pr`) → 8-ratio family. Deep-link via `#effort`.
 
 ### Three orthogonal axes
 
@@ -350,36 +350,48 @@ The Effort tab is a **buyer-tier value-mapping surface** (ADR-0032 CP13 Phase 1)
 
 The picker bar at top: 3 audience buttons, 3 lens buttons, 1 period dropdown. State persists across lens-flips within a session.
 
-### Hero strip (top of page) — 6 tiles
+### Hero strip (top of page) — 9 tiles + buyer-banner
 
-Three cross-tier-safe tiles always render; three practitioner-only tiles render at practitioner audience-tier only.
+Per CP13.6 Phase 2.4. Tier-class controls visibility per audience-tier; the `audience-{buyer,investor,practitioner}` class on `#tab-effort` drives the CSS gate.
 
-| Tile | Audience | What it shows | When to act |
+| Tile | Tier class | What it shows | When to act |
 |---|---|---|---|
-| **$ / merged-PR** | cross-tier-safe | Total cost ÷ merged PRs over the period. Pure-outcome ÷ pure-outcome. | Buyer-tier headline ratio. Spike → drill into Composition `by=agent` to see who's driving it. |
-| **$ / agent-cycle** | cross-tier-safe | Total cost ÷ commits. Honest unit-of-work proxy. | Sanity-check against $/merged-PR; large gap = lots of in-flight work not yet merged. |
-| **Coverage gap** | cross-tier-safe | `null_fallback_pct` from `/output/coverage-gap` — % of commits whose attribution couldn't resolve to a specific agent_id or runtime-class. | High % means cluster commits are missing Co-Authored-By trailers OR direct-author emails aren't in `EMAIL_TO_AGENT_ID`. Add missing emails to `src/agentRuntimes.js`. |
-| **Coord-msgs / merged-PR** | **practitioner-only** | Bus messages divided by merged-PRs (activity-numerator). | Practitioner-lens leverage signal — high count per PR = lots of coord-overhead per outcome. Buyer/investor: hidden by Fold B HARD GATE. |
-| **Tool-invocations / merged-PR** | **practitioner-only** | Tool invocations ÷ merged-PRs. | Execution-work signal — measures the "how much agent-tool churn produced one merge" question. Buyer/investor: hidden. |
-| **Agents-engaged / merged-PR** | **practitioner-only** | Distinct agents in the period ÷ merged-PRs. | Leverage-multiplier — high count = collaborative cycles. Buyer/investor: hidden. |
+| **Coverage gap** | `cross-tier-safe` | `null_fallback_pct` from `/output/coverage-gap`. % of commits whose attribution couldn't resolve. | High % = missing Co-Authored-By trailers OR direct-author emails not in `EMAIL_TO_AGENT_ID`. Add missing emails to `src/agentRuntimes.js`. |
+| **$ / merge-commit (P1)** | `tile-investor-plus` | `dollar_per_merged_pr` — bare-git denominator (Phase 1). | Practitioner+investor headline ratio. Spike → drill Composition `by=agent`. |
+| **$ / PR-merged (P2)** | `tile-investor-plus` | `dollar_per_pr_merged` — GitHub PR-merged denominator (Phase 2). Additive sister-ratio per Q4 Option C. | Diverges from P1 deliberately at substrate-honest tier — bare-git counts every merge-commit, GitHub counts PR-mergers; large divergence = lots of direct pushes without PR. |
+| **$ / agent-cycle** | `tile-investor-plus` | `dollar_per_agent_cycle` — cost ÷ commits. | Sanity-check against $/merge-commit; large gap = lots of in-flight work not yet merged. |
+| **PR merge-rate** | `tile-investor-plus` | `pr_merge_rate` (cohort: opened → merged) as `XX.X%`. Cohort-based: of PRs OPENED in the period, what % merged AT ANY TIME? | Lags by review-cycle-time; ≤ 100% by-construction. Low rate over many periods → review-debt or abandoned-PR signal. |
+| **Time-to-merge** | `tile-investor-plus` | `time_to_merge_hours` (p50) in adaptive m/h/d format. | Trend signal for review-cycle health. Spike → review-bottleneck. |
+| **Coord-msgs / merged-PR** | `practitioner-only` | `coord_messages_per_merged_pr` (activity-numerator). | Practitioner-only leverage signal. Hidden at buyer/investor by Fold B HARD GATE. |
+| **Tool-invocations / merged-PR** | `practitioner-only` | `tool_invocations_per_merged_pr`. | Execution-work signal. |
+| **Agents-engaged / merged-PR** | `practitioner-only` | Distinct agents ÷ merged-PRs. | Leverage-multiplier (collaborative cycles). |
 
-### What the Fold B HARD GATE does (buyer default)
+Each tile has substrate-honesty sub-text below the headline number — the denominator (e.g., cohort size, sample N, PR-merge count) so the operator sees *what* the ratio is actually computed over, not just the result.
 
-Three of the 7 ratios are **activity-numerator** (coord-msgs / tool-invocations / agents-engaged per PR). At buyer + investor audience-tier, those are stripped **server-side** in `src/outputRatios.js` `filterRatiosByAudience` (per s345 #9234 §5.6). The UI also hides their tiles via `.practitioner-only` CSS — defense-in-depth — but the server-side strip is the structural guarantee: even a forged client `audience=practitioner` query from a buyer-tier viewer gets nothing extra from the API. **Why**: activity-counts misrepresent at buyer-tier — "more messages = more value" is exactly backward; activity is cost-not-outcome. Practitioner-tier readers know how to weigh activity signals correctly; buyer/investor get cleaner ratios.
+### Buyer-tier behavior (CP13.6 Phase 2.3 + 2.4 canon correction)
 
-### 5-of-7 working ratios + 2 Phase 2-pending
+**Buyer-tier renders NO output-strand ratios.** Only the `cross-tier-safe` Coverage gap tile + an `.effort-buyer-banner` explaining the Fold-B canon scope: buyer-narrative is load-bearing on the **AUDIT** substrate (not effort). Internal velocity/cost is inside-baseball + self-incriminating at buyer-tier (per s345 banked `feedback_activity_metrics_no_marketing_value`). Banner links to Audit tab.
 
-| Ratio | Phase | Notes |
-|---|---|---|
-| `dollar_per_merged_pr` | Phase 1 working | bare-git walker covers merge count |
-| `dollar_per_agent_cycle` | Phase 1 working | cost ÷ commits |
-| `coord_messages_per_merged_pr` | Phase 1 working (practitioner-only) | yaklog bus + bare-git substrate suffice |
-| `tool_invocations_per_merged_pr` | Phase 1 working (practitioner-only) | `audit_tool_invocation` + bare-git |
-| `agents_engaged_per_merged_pr` | Phase 1 working (practitioner-only) | yaklog presence + bare-git |
-| `pr_merge_rate` | **Phase 2 NULL** | requires GitHub API substrate (bare-git lacks PR open/close metadata) |
-| `time_to_merge_hours` | **Phase 2 NULL** | same — requires PR-open-timestamp from GitHub API |
+This is a CHANGE from prior Wave 3 behavior (where buyer saw $/merged-PR + $/agent-cycle + Coverage gap). Per parch #9799 ratify + s345 #9792 substrate-honesty correction: those cost-ratios moved to `tile-investor-plus`. Both server (`PRACTITIONER_INVESTOR_RATIOS` set in `src/outputRatios.js`) + UI CSS enforce.
 
-Tiles for the 2 Phase 2 ratios render `—` until GitHubWalker substrate lands.
+### What the Fold B HARD GATE does
+
+The audience-tier strip is enforced **server-side** in `src/outputRatios.js` `filterRatiosByAudience` regardless of client request. Defense-in-depth via UI CSS gates (`.tile-investor-plus` + `.practitioner-only`). Even a forged client `audience=practitioner` query from a buyer-tier viewer gets nothing extra from the API.
+
+| Tier | Ratios returned by `/output/ratios` |
+|---|---|
+| `buyer` | none (metadata `_*` fields only) |
+| `investor` | 5 — `dollar_per_merged_pr`, `dollar_per_pr_merged`, `dollar_per_agent_cycle`, `pr_merge_rate`, `time_to_merge_hours` |
+| `practitioner` | above 5 + `coord_messages_per_merged_pr` + `tool_invocations_per_merged_pr` + `agents_engaged_per_merged_pr` (8 total) |
+
+### Ratio data-density expectations (live deploy 2026-06-20)
+
+Phase 2 ratios (`pr_merge_rate`, `time_to_merge_hours`, `dollar_per_pr_merged`) may render `—` (NULL) on live deploy today even though substrate is fully functional. **Substrate-correctness vs data-density is a separate concern** (per ssw-devops #9899 framing):
+
+- **Substrate-correctness** (structural): computation is honest when data present. Verified empirically.
+- **Data-density** (operator/policy): currently one repo enrolled (`jrtorrez31337/yaklog`); few PRs outside the 30d default window. Ratios populate as additional repos register (via `POST /api/v1/ops/output/repos`) + new PR-flow arrives.
+
+NULL is the correct behavior under low data-density — not a bug, not a substrate gap.
 
 ### Three lenses
 
@@ -401,18 +413,23 @@ Today's cost vs prior 7-day mean ratio; spike threshold 2× by default. Mirror o
 
 | Goal | How |
 |---|---|
-| **"What's our $/merged-PR this month?"** | Glance at the first hero tile. Period selector → 30d (default). Buyer audience-tier (default). |
-| **"Who's actually doing the work?"** | Composition lens → `by=agent`. Read the per-agent table sorted by coord_msgs (or sort by your column of interest). |
+| **"What's our $/PR-merged this month?"** | Switch to Investor or Practitioner audience-tier (buyer hides it per Fold-B). Glance at the `$ / PR-merged (P2)` tile. 30d default. |
+| **"Who's actually doing the work?"** | Composition lens → `by=agent`. Read the per-agent table sorted by coord_msgs. |
 | **"Which repos are seeing most commits this period?"** | Composition lens → `by=repo`. |
 | **"Cost-spike today — what changed?"** | Anomaly lens → check ratio. Then jump to Cost tab Composition for vendor/agent drill-down. |
-| **"What ratios does a CEO see vs an engineering lead?"** | Toggle audience-tier (Buyer ↔ Practitioner). Practitioner shows 6 tiles; Buyer shows 3 (Fold B HARD GATE strip). |
-| **"Why is coverage-gap so high?"** | Click into the coverage-gap tile's underlying endpoint: `/api/v1/output/coverage-gap?period=30d` shows `null_fallback_count` + sample commits. Common cause: missing email in `EMAIL_TO_AGENT_ID` (add it to `src/agentRuntimes.js`). |
+| **"What ratios does a CEO see vs an investor vs an engineering lead?"** | Toggle audience-tier: Buyer (Coverage gap + banner only) → Investor (5 ratios: $/merge-commit + $/PR-merged + $/agent-cycle + PR merge-rate + Time-to-merge) → Practitioner (above + 3 activity-numerators). |
+| **"Why is buyer-tier showing no cost numbers?"** | This is canon as of CP13.6 Phase 2.3 — buyer-narrative is on AUDIT substrate per Fold-B; output-strand metrics are inside-baseball at buyer-tier. See the buyer-banner under the hero strip. |
+| **"PR merge-rate showing 0% or `—`"** | Either (a) no PRs opened in the period (cohort = 0 → NULL) or (b) low data-density (only one repo enrolled). Enroll more repos: `POST /api/v1/ops/output/repos {github_owner_repo: "owner/repo"}`. |
+| **"Why is coverage-gap so high?"** | Click into `/api/v1/output/coverage-gap?period=30d` for `null_fallback_count` + sample commits. Common cause: missing email in `EMAIL_TO_AGENT_ID` (add to `src/agentRuntimes.js`). |
+| **"What GitHub repos are enrolled?"** | `GET /api/v1/output/repos` (public read). Shows `enabled`, `added_at`, `added_by`, `last_walked_at` per repo. |
 
 ### Substrate notes
 
-- **Ingester is NOT yet on cron**. `scripts/yaklog-output-ingester.{sh,service,timer}` is shipped but not installed on devel. Manual `POST /api/v1/ops/output/ingest` (ops-key gated) is the only ingester trigger today; means the Effort tab numbers are as fresh as the last manual ingest fire.
-- **First-tick is slow** (~17s for 14 repos / 497 commits); incremental walks are fast (~285ms).
-- **5-of-7 ratios** today; `pr_merge_rate` + `time_to_merge_hours` blank until GitHubWalker Phase 2 ships.
+- **Cron driver is INSTALLED + ACTIVE** (CP13.5 2026-06-20). `yaklog-output-ingester.timer` fires hourly with `RandomizedDelaySec=300` + `Persistent=true` catch-up. Effort tab numbers refresh on next ingester fire; manual `POST /api/v1/ops/output/ingest` (ops-key) remains available as escape valve.
+- **First-tick is slow** for bare-git walker (~17s for 14 repos / 497 commits); incremental walks fast (~285ms). GitHubWalker per-repo cost scales with PR count; rate-limit headers captured in `output_pr_cursor`.
+- **8-ratio family** today; data-density gates `pr_merge_rate` / `time_to_merge_hours` / `dollar_per_pr_merged` visibility (currently 1 enrolled repo + few PRs in 30d window — see "Ratio data-density expectations" above).
+- **GitHub repo allowlist** is canonical via `output_repo` table. Mutation: ops-key gated `POST /api/v1/ops/output/repos` (upsert) + `DELETE /api/v1/ops/output/repos/:owner/:repo` (soft-disable per parch ratify; hard-delete forward-track). Public read at `GET /api/v1/output/repos`. Bootstrap from `/etc/plexus/output-repos.txt` on first run if `output_repo` empty.
+- **GitHub PAT** lives at `/etc/plexus/github-pat.token` mode-600 (`plexus-output-ingester` system uid). Reused from cluster jon-PAT per parch #9866 ratify — single-credential reduces rotation blast-radius vs minting new per-purpose tokens.
 
 ---
 
@@ -507,7 +524,7 @@ If you ever see an agent rendered in slate gray, that's the fallback for unknown
 | **"Codify a tribal cluster canon as enforceable rule"** | Audit tab → Policies sub-tab → "+ Add / edit rule" → fill rule_id + DSL predicate (operators: ==, contains, IN, IS NULL etc; **no regex**) → Save + ratify (ops-key required). |
 | **"What's our $/merged-PR this month?"** | Effort tab → glance at first hero tile. Buyer audience (default) + 30d period. |
 | **"Who actually committed what this period?"** | Effort tab → Composition lens → `by=agent`. Per-agent table with coord-msgs / commits / merges / cost. |
-| **"Show practitioner-tier activity ratios"** | Effort tab → click Practitioner audience button. 6 tiles render (3 activity-numerator tiles unhide). |
+| **"Show practitioner-tier activity ratios"** | Effort tab → click Practitioner audience button. All 9 tiles render (3 activity-numerator tiles unhide on top of investor's 5 cost/value+outcome-rate). |
 | **"Reconcile against SIEM / GRC platform"** | Audit tab → Reconcile sub-tab → period + external-system-label + counts → POST. Delta + concentration analysis returned + audit_reconciliation row persists. |
 | **"GDPR right-to-be-forgotten request"** | CLI: `POST /api/v1/ops/audit/tombstone {kind: 'subject', subject_hash: '...', reason: 'GDPR Art.17 ...'}` — subject_directory cleartext nulled; hash-chain integrity preserved. |
 | **"Why won't my new agent come online?"** | Register tab → find their row → see current state. If wedged in PENDING_FERRY/ACTIVATION, the bell will flag it. |
@@ -528,5 +545,5 @@ If this manual doesn't answer a question:
 ---
 
 **Doc owner**: yaklog-dev-agent
-**Last updated**: 2026-06-20 (Wave 3 — ADR-0032 CP13 Phase 1 Effort tab added: 3-lens × 3-audience UX with SERVER-SIDE Fold B HARD GATE per s345 #9234; per-agent attribution in Composition lens lifts honest agent-id resolution; Ptah CP14.1 runtime badge + filter chip + pre-emission AgentCard variant; cron ingester shipped-but-not-yet-installed)
+**Last updated**: 2026-06-20 (Wave 4 — CP13.6 Phase 2 + CP13.5-install + ADR-0033 era: Effort tab grew 3 new Phase 2.3 tiles ($/PR-merged P2, PR merge-rate cohort, Time-to-merge p50) + 6 re-classed to `tile-investor-plus` + buyer-tier Fold-B correction (NO output-strand ratios at buyer; only Coverage gap + banner per parch #9799 + s345 #9792 canon); GitHub repo allowlist + ops-key gated mutation endpoints + public `/output/repos` visibility; cron-driver INSTALLED + ACTIVE (hourly); GitHub PAT reuse from cluster jon-PAT per parch #9866; ADR-0033 presence/liveness ratify)
 **Lives at**: `/srv/git/yaklog.git:PLEXUS-DASHBOARD-MANUAL.md` (canonical) + `/home/jon/yaklog/PLEXUS-DASHBOARD-MANUAL.md` (working copy)
