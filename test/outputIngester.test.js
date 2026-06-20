@@ -95,9 +95,9 @@ test.after(() => {
 
 // ── end-to-end run ────────────────────────────────────────────────────────
 
-test('runOnce ingests commits + merges + populates cursor', () => {
+test('runOnce ingests commits + merges + populates cursor', async () => {
   const walker = new BareGitWalker({ root: repoRoot });
-  const result = runOnce({ walkers: [walker], db: initializeDb() });
+  const result = await runOnce({ walkers: [walker], db: initializeDb() });
   // Fixture: 3 plain + 1 feat + 1 merge = 5 commit rows; 1 merge row
   assert.equal(result.totalCommits, 5);
   assert.equal(result.totalMerges, 1);
@@ -124,9 +124,9 @@ test('runOnce attribution parsing populates output_commit columns correctly', ()
   assert.equal(noAttrib.attribution_method, 'null_fallback');
 });
 
-test('runOnce is idempotent — re-run inserts nothing new', () => {
+test('runOnce is idempotent — re-run inserts nothing new', async () => {
   const walker = new BareGitWalker({ root: repoRoot });
-  const second = runOnce({ walkers: [walker], db: initializeDb() });
+  const second = await runOnce({ walkers: [walker], db: initializeDb() });
   assert.equal(second.totalCommits, 0, 're-run should ingest 0 commits (UNIQUE constraint)');
   assert.equal(second.totalMerges, 0);
 });
@@ -149,10 +149,10 @@ test('runOnce merge row populated with merged_by_agent from body-pattern', () =>
   assert.equal(merge.attribution_method, 'body_pattern');
 });
 
-test('runOnce composite walker list (BareGit + GitHub stub) runs both substrates', () => {
+test('runOnce composite walker list (BareGit + GitHub stub) runs both substrates', async () => {
   const { GitHubWalker } = require('../src/outputWalker');
   // Use empty walkers (both no-op) to assert composite shape works
-  const composite = runOnce({
+  const composite = await runOnce({
     walkers: [
       new BareGitWalker({ root: '/nonexistent' }),
       new GitHubWalker({ repos: [] }),

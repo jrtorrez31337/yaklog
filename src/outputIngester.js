@@ -136,35 +136,94 @@ function ingestRepo(walker, repo, stmts, knownAgentIds, opts = {}) {
   return { commitsIngested, mergesIngested, attributionGapCount, substrate: walker.substrateType() };
 }
 
+// ── CP13.6 Phase 2.2: GitHubWalker repo ingest (PR substrate) ─────────────
+
+async function ingestRepoPrs(walker, githubOwnerRepo, opts = {}) {
+  const cursor = dbModule.getOutputPrCursor(githubOwnerRepo);
+  const result = await walker.walkRepo(githubOwnerRepo, cursor);
+
+  let prsIngested = 0;
+  if (!result.skipped && Array.isArray(result.prs)) {
+    for (const pr of result.prs) {
+      dbModule.upsertOutputPr(pr);
+      prsIngested += 1;
+    }
+  }
+  if (result.cursor) {
+    dbModule.upsertOutputPrCursor(githubOwnerRepo, result.cursor);
+  }
+  return {
+    prsIngested,
+    skipped: result.skipped || false,
+    reason: result.reason || null,
+    substrate: walker.substrateType(),
+  };
+}
+
+// ── CP13.6 Phase 2.2: GitHubWalker auto-instantiation per env ─────────────
+
+function maybeAddGitHubWalker(walkers, db) {
+  const patFile = process.env.GITHUB_PAT_FILE;
+  if (!patFile) return walkers;  // no PAT configured → graceful-degradation
+  // Bootstrap output_repo from per-host config if empty + config exists
+  const configPath = process.env.OUTPUT_REPO_CONFIG_FILE || '/etc/plexus/output-repos.txt';
+  dbModule.bootstrapOutputReposFromConfig(configPath);
+  const enabledRepos = dbModule.listEnabledOutputRepos();
+  if (enabledRepos.length === 0) return walkers;  // no repos enabled → skip
+  walkers.push(new GitHubWalker({
+    patFile,
+    repos: enabledRepos.map((r) => r.github_owner_repo),
+  }));
+  return walkers;
+}
+
 // ── runOnce entry point ───────────────────────────────────────────────────
 
 /**
- * Run ingester pass across all configured walkers.
+ * Run ingester pass across all configured walkers. Async per Phase 2.2 —
+ * GitHubWalker requires network IO; BareGitWalker stays sync internally
+ * (its walkRepo() is synchronous; we just await for uniformity).
  *
  * @param {object} [opts]
  * @param {object[]} [opts.walkers] - walker instances; defaults to
- *   [new BareGitWalker()]. Tests pass in fixture-pointing walkers.
+ *   [new BareGitWalker()] + GitHubWalker if GITHUB_PAT_FILE env present +
+ *   output_repo has enabled rows. Tests pass in fixture-pointing walkers.
  * @param {object} [opts.db] - DB handle; defaults to dbModule.initializeDb()
  * @param {string} [opts.now] - ISO-8601 timestamp; defaults to actual now
- * @returns {object} per-repo summary with totals
+ * @returns {Promise<object>} per-repo summary with totals
  */
-function runOnce(opts = {}) {
+async function runOnce(opts = {}) {
   const db = opts.db || dbModule.initializeDb();
-  const walkers = opts.walkers || [new BareGitWalker()];
+  let walkers = opts.walkers;
+  if (!walkers) {
+    walkers = [new BareGitWalker()];
+    walkers = maybeAddGitHubWalker(walkers, db);
+  }
   const stmts = prepareStatements(db);
   const knownAgentIds = loadKnownAgentIds(db);
   const perRepo = {};
   let totalCommits = 0;
   let totalMerges = 0;
   let totalAttributionGaps = 0;
+  let totalPrs = 0;
 
   for (const walker of walkers) {
-    for (const repo of walker.listRepos()) {
-      const result = ingestRepo(walker, repo, stmts, knownAgentIds, opts);
-      perRepo[repo] = result;
-      totalCommits += result.commitsIngested;
-      totalMerges += result.mergesIngested;
-      totalAttributionGaps += result.attributionGapCount;
+    if (walker.substrateType() === 'github') {
+      // Phase 2.2: GitHubWalker uses async walkRepo + output_pr table
+      for (const repo of walker.listRepos()) {
+        const result = await ingestRepoPrs(walker, repo, opts);
+        perRepo[repo] = result;
+        totalPrs += result.prsIngested;
+      }
+    } else {
+      // Phase 1: BareGitWalker (sync walkRepo + output_commit/merge tables)
+      for (const repo of walker.listRepos()) {
+        const result = ingestRepo(walker, repo, stmts, knownAgentIds, opts);
+        perRepo[repo] = result;
+        totalCommits += result.commitsIngested;
+        totalMerges += result.mergesIngested;
+        totalAttributionGaps += result.attributionGapCount;
+      }
     }
   }
 
@@ -173,6 +232,7 @@ function runOnce(opts = {}) {
     totalCommits,
     totalMerges,
     totalAttributionGaps,
+    totalPrs,
     walkersUsed: walkers.map((w) => w.substrateType()),
   };
 }
@@ -181,6 +241,8 @@ module.exports = {
   runOnce,
   // exposed for unit-testing
   ingestRepo,
+  ingestRepoPrs,
   prepareStatements,
   loadKnownAgentIds,
+  maybeAddGitHubWalker,
 };

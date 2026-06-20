@@ -916,6 +916,147 @@ function getDb() {
   return db || initializeDb();
 }
 
+// ── CP13.6 Phase 2.2: output_pr + output_pr_cursor + output_repo helpers ───
+
+const UPSERT_OUTPUT_PR_SQL = `
+  INSERT INTO output_pr (
+    github_owner_repo, pr_number, state, title, author_login, author_email,
+    base_ref, head_ref, opened_at, merged_at, closed_at, merge_commit_sha,
+    commit_count, last_synced_at
+  ) VALUES (
+    @github_owner_repo, @pr_number, @state, @title, @author_login, @author_email,
+    @base_ref, @head_ref, @opened_at, @merged_at, @closed_at, @merge_commit_sha,
+    @commit_count, @last_synced_at
+  )
+  ON CONFLICT(github_owner_repo, pr_number) DO UPDATE SET
+    state            = excluded.state,
+    title            = excluded.title,
+    author_email     = excluded.author_email,
+    merged_at        = excluded.merged_at,
+    closed_at        = excluded.closed_at,
+    merge_commit_sha = excluded.merge_commit_sha,
+    commit_count     = excluded.commit_count,
+    last_synced_at   = excluded.last_synced_at
+`;
+
+function upsertOutputPr(row) {
+  const database = getDb();
+  database.prepare(UPSERT_OUTPUT_PR_SQL).run({
+    github_owner_repo: row.github_owner_repo,
+    pr_number: row.pr_number,
+    state: row.state,
+    title: row.title,
+    author_login: row.author_login,
+    author_email: row.author_email ?? null,
+    base_ref: row.base_ref,
+    head_ref: row.head_ref,
+    opened_at: row.opened_at,
+    merged_at: row.merged_at ?? null,
+    closed_at: row.closed_at ?? null,
+    merge_commit_sha: row.merge_commit_sha ?? null,
+    commit_count: row.commit_count ?? null,
+    last_synced_at: row.last_synced_at,
+  });
+}
+
+function getOutputPrCursor(githubOwnerRepo) {
+  const database = getDb();
+  return database.prepare(
+    `SELECT * FROM output_pr_cursor WHERE github_owner_repo = ?`
+  ).get(githubOwnerRepo) || null;
+}
+
+function upsertOutputPrCursor(githubOwnerRepo, cursor) {
+  const database = getDb();
+  database.prepare(`
+    INSERT INTO output_pr_cursor (
+      github_owner_repo, last_pr_updated_at, prs_synced_total,
+      rate_limit_remaining, rate_limit_reset_at, last_walk_status, last_walk_message
+    ) VALUES (
+      @github_owner_repo, @last_pr_updated_at, @prs_synced_total,
+      @rate_limit_remaining, @rate_limit_reset_at, @last_walk_status, @last_walk_message
+    )
+    ON CONFLICT(github_owner_repo) DO UPDATE SET
+      last_pr_updated_at   = excluded.last_pr_updated_at,
+      prs_synced_total     = excluded.prs_synced_total,
+      rate_limit_remaining = excluded.rate_limit_remaining,
+      rate_limit_reset_at  = excluded.rate_limit_reset_at,
+      last_walk_status     = excluded.last_walk_status,
+      last_walk_message    = excluded.last_walk_message
+  `).run({
+    github_owner_repo: githubOwnerRepo,
+    last_pr_updated_at: cursor.last_pr_updated_at,
+    prs_synced_total: cursor.prs_synced_total ?? 0,
+    rate_limit_remaining: cursor.rate_limit_remaining ?? null,
+    rate_limit_reset_at: cursor.rate_limit_reset_at ?? null,
+    last_walk_status: cursor.last_walk_status ?? null,
+    last_walk_message: cursor.last_walk_message ?? null,
+  });
+}
+
+function listEnabledOutputRepos() {
+  const database = getDb();
+  return database.prepare(
+    `SELECT * FROM output_repo WHERE enabled = 1 ORDER BY github_owner_repo`
+  ).all();
+}
+
+function listAllOutputRepos() {
+  const database = getDb();
+  return database.prepare(
+    `SELECT * FROM output_repo ORDER BY github_owner_repo`
+  ).all();
+}
+
+function upsertOutputRepo({ github_owner_repo, bare_git_path = null, enabled = 1, added_by = null }) {
+  const database = getDb();
+  const nowIso = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
+  database.prepare(`
+    INSERT INTO output_repo (github_owner_repo, bare_git_path, enabled, added_at, added_by)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(github_owner_repo) DO UPDATE SET
+      bare_git_path = COALESCE(excluded.bare_git_path, output_repo.bare_git_path),
+      enabled       = excluded.enabled
+  `).run(github_owner_repo, bare_git_path, enabled, nowIso, added_by);
+}
+
+function disableOutputRepo(githubOwnerRepo) {
+  const database = getDb();
+  const result = database.prepare(
+    `UPDATE output_repo SET enabled = 0 WHERE github_owner_repo = ?`
+  ).run(githubOwnerRepo);
+  return result.changes;
+}
+
+/**
+ * Bootstrap output_repo allowlist from per-host config file at first walk if
+ * table is empty. Config format: one entry per line; either `owner/repo` OR
+ * `owner/repo\t/srv/git/repo.git`. Blank lines + `#` comments skipped.
+ * Per Q1 Option C ratify (parch #9799).
+ */
+function bootstrapOutputReposFromConfig(configPath) {
+  const fs = require('node:fs');
+  const database = getDb();
+  const existing = database.prepare(`SELECT COUNT(*) AS n FROM output_repo`).get();
+  if (existing.n > 0) return { bootstrapped: 0, reason: 'output_repo not empty' };
+  if (!configPath || !fs.existsSync(configPath)) {
+    return { bootstrapped: 0, reason: 'no config file' };
+  }
+  const content = fs.readFileSync(configPath, 'utf8');
+  let count = 0;
+  for (const rawLine of content.split('\n')) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) continue;
+    const parts = line.split(/\s+/);
+    const githubOwnerRepo = parts[0];
+    const bareGitPath = parts[1] || null;
+    if (!githubOwnerRepo.includes('/')) continue;
+    upsertOutputRepo({ github_owner_repo: githubOwnerRepo, bare_git_path: bareGitPath, added_by: 'bootstrap-from-config' });
+    count += 1;
+  }
+  return { bootstrapped: count, reason: count > 0 ? 'bootstrapped from config' : 'config empty' };
+}
+
 function insertMessage({ channel, sender, body, metadata = null, isPrivate = false }) {
   const database = getDb();
   const mentions = parseMentions(body);
@@ -3573,6 +3714,15 @@ module.exports = {
   getIngesterCursor,
   upsertIngesterCursor,
   scanAgentActivityForAudit,
+  // CP13.6 Phase 2.2 (2026-06-20): output_pr + output_pr_cursor + output_repo helpers
+  upsertOutputPr,
+  getOutputPrCursor,
+  upsertOutputPrCursor,
+  listEnabledOutputRepos,
+  listAllOutputRepos,
+  upsertOutputRepo,
+  disableOutputRepo,
+  bootstrapOutputReposFromConfig,
   closeDb,
   messageBus
 };

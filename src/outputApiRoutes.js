@@ -144,17 +144,53 @@ opsRouter.put('/attribution', (req, res) => {
 
 // ── OPS: POST /ingest (manual ingester trigger) ───────────────────────────
 
-opsRouter.post('/ingest', (req, res) => {
+opsRouter.post('/ingest', async (req, res) => {
   // Lazy-require to avoid loading the walker (with its spawn-based git
   // calls) at module-import time. Tests can mock by passing walkers
   // through the request body.
+  // CP13.6 Phase 2.2: runOnce is now async (GitHubWalker requires network IO).
   const { runOnce } = require('./outputIngester');
   try {
-    const result = runOnce({ db: dbModule.initializeDb() });
+    const result = await runOnce({ db: dbModule.initializeDb() });
     return res.json(result);
   } catch (err) {
     return res.status(500).json({ error: 'InternalError', message: err.message });
   }
+});
+
+// ── OPS: output_repo allowlist management (CP13.6 Phase 2.2 / Q1 Option C) ─
+
+opsRouter.post('/repos', (req, res) => {
+  const { github_owner_repo, bare_git_path, enabled } = req.body || {};
+  if (typeof github_owner_repo !== 'string' || !github_owner_repo.includes('/')) {
+    return res.status(400).json({
+      error: 'ValidationError',
+      message: 'github_owner_repo required in "owner/repo" form',
+    });
+  }
+  dbModule.upsertOutputRepo({
+    github_owner_repo,
+    bare_git_path: bare_git_path || null,
+    enabled: enabled === false ? 0 : 1,
+    added_by: req.headers['x-ops-key-id'] || 'ops-endpoint',
+  });
+  return res.json({ ok: true, github_owner_repo });
+});
+
+opsRouter.delete('/repos/:github_owner_repo(*)', (req, res) => {
+  // Soft-disable per parch ratify; hard-delete forward-track
+  const githubOwnerRepo = req.params.github_owner_repo;
+  const changes = dbModule.disableOutputRepo(githubOwnerRepo);
+  if (changes === 0) {
+    return res.status(404).json({ error: 'NotFound', message: 'no matching output_repo row' });
+  }
+  return res.json({ ok: true, disabled: githubOwnerRepo });
+});
+
+publicRouter.get('/repos', (req, res) => {
+  // Read-only listing for operator visibility
+  const repos = dbModule.listAllOutputRepos();
+  return res.json({ repos });
 });
 
 module.exports = {

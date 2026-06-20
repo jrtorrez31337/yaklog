@@ -238,3 +238,73 @@ test('POST /api/v1/ops/output/ingest rejects without ops-key', async () => {
   const res = await request(app).post('/api/v1/ops/output/ingest');
   assert.equal(res.status, 401);
 });
+
+// ── CP13.6 Phase 2.2: output_repo allowlist ops endpoints ─────────────────
+
+test('GET /api/v1/output/repos lists all repos (public read)', async () => {
+  const { upsertOutputRepo, getDb } = require('../src/db');
+  getDb().prepare(`DELETE FROM output_repo`).run();
+  upsertOutputRepo({ github_owner_repo: 'jrtorrez31337/yaklog', enabled: 1, bare_git_path: '/srv/git/yaklog.git' });
+  upsertOutputRepo({ github_owner_repo: 'jrtorrez31337/oss-coder', enabled: 0 });
+  const res = await request(app).get('/api/v1/output/repos');
+  assert.equal(res.status, 200);
+  assert.equal(res.body.repos.length, 2);
+});
+
+test('POST /api/v1/ops/output/repos rejects without ops-key', async () => {
+  const res = await request(app)
+    .post('/api/v1/ops/output/repos')
+    .send({ github_owner_repo: 'foo/bar' });
+  assert.equal(res.status, 401);
+});
+
+test('POST /api/v1/ops/output/repos upserts new repo with valid ops-key', async () => {
+  const res = await request(app)
+    .post('/api/v1/ops/output/repos')
+    .set('Authorization', 'Bearer ops-y')
+    .send({ github_owner_repo: 'jrtorrez31337/test-new', bare_git_path: '/srv/git/test-new.git' });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.ok, true);
+  assert.equal(res.body.github_owner_repo, 'jrtorrez31337/test-new');
+});
+
+test('POST /api/v1/ops/output/repos rejects malformed body (no slash)', async () => {
+  const res = await request(app)
+    .post('/api/v1/ops/output/repos')
+    .set('Authorization', 'Bearer ops-y')
+    .send({ github_owner_repo: 'not-a-repo-shape' });
+  assert.equal(res.status, 400);
+});
+
+test('POST /api/v1/ops/output/repos rejects missing github_owner_repo', async () => {
+  const res = await request(app)
+    .post('/api/v1/ops/output/repos')
+    .set('Authorization', 'Bearer ops-y')
+    .send({});
+  assert.equal(res.status, 400);
+});
+
+test('DELETE /api/v1/ops/output/repos/:repo soft-disables', async () => {
+  const { upsertOutputRepo, getDb } = require('../src/db');
+  upsertOutputRepo({ github_owner_repo: 'jrtorrez31337/soft-disable-me', enabled: 1 });
+  const res = await request(app)
+    .delete('/api/v1/ops/output/repos/jrtorrez31337/soft-disable-me')
+    .set('Authorization', 'Bearer ops-y');
+  assert.equal(res.status, 200);
+  const row = getDb().prepare(`SELECT enabled FROM output_repo WHERE github_owner_repo = ?`)
+    .get('jrtorrez31337/soft-disable-me');
+  assert.equal(row.enabled, 0);
+});
+
+test('DELETE /api/v1/ops/output/repos/:repo returns 404 for nonexistent', async () => {
+  const res = await request(app)
+    .delete('/api/v1/ops/output/repos/never/exists')
+    .set('Authorization', 'Bearer ops-y');
+  assert.equal(res.status, 404);
+});
+
+test('DELETE /api/v1/ops/output/repos/:repo rejects without ops-key', async () => {
+  const res = await request(app)
+    .delete('/api/v1/ops/output/repos/foo/bar');
+  assert.equal(res.status, 401);
+});
