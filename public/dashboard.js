@@ -278,7 +278,21 @@
   // CP2: tab navigation (URL-fragment-persisted; #live default / #cost).
   // ────────────────────────────────────────────────────────────────────
   function activateTab(name) {
-    if (!['live', 'cost', 'bus', 'audit', 'effort', 'register'].includes(name)) name = 'live';
+    // CP14.x: 'orp' tab is conditional (only reachable via Ptah AgentCard
+    // click or direct hash navigation #orp/<agent_id>); not in the default
+    // chrome but accepted as valid tab-name when navigated to.
+    const ORP_HASH_RE = /^orp(\/[a-zA-Z0-9_:@/-]+)?$/;
+    if (ORP_HASH_RE.test(name)) {
+      // Show the conditional tab button when navigated to ORP
+      document.querySelectorAll('.tab-btn-conditional[data-tab="orp"]').forEach((b) => b.hidden = false);
+      // Extract agent_id from hash if present: #orp/<agent_id>
+      const m = name.match(/^orp\/(.+)$/);
+      const orpAgentId = m ? m[1] : null;
+      mountOrpView(orpAgentId);
+      name = 'orp';  // collapse to canonical tab-name for class-toggle below
+    } else if (!['live', 'cost', 'bus', 'audit', 'effort', 'register'].includes(name)) {
+      name = 'live';
+    }
     document.querySelectorAll('.tab-btn').forEach(b => {
       b.classList.toggle('active', b.dataset.tab === name);
     });
@@ -300,10 +314,83 @@
     // CP13.4: lazy-mount the Effort tab (ADR-0032 Phase 1.4 UX).
     if (name === 'effort' && typeof ensureEffortView === 'function') ensureEffortView();
   }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // CP14.x ORP tab substrate-shell (Jon-direct #9904; yaklog-dev #10048)
+  // Author-mode + Live-view mode skeleton; content rendering gated on
+  // s345-aieng ORP schema contract + gemini episode-trace contract.
+  // A11Y-first per [[feedback_accessibility_is_structural_canon_not_polish]].
+  // ─────────────────────────────────────────────────────────────────────
+  let orpInitialized = false;
+  const orpState = { agentId: null, mode: 'author' };
+
+  function mountOrpView(agentId) {
+    if (!orpInitialized) {
+      orpInitialized = true;
+      // Wire mode toggle (Author / Live-view)
+      document.querySelectorAll('#tab-orp .orp-mode-btn').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          orpState.mode = btn.dataset.mode;
+          document.querySelectorAll('#tab-orp .orp-mode-btn').forEach((b) => {
+            const active = b.dataset.mode === orpState.mode;
+            b.classList.toggle('active', active);
+            b.setAttribute('aria-pressed', active ? 'true' : 'false');
+          });
+          document.querySelectorAll('#tab-orp .orp-pane').forEach((p) => {
+            p.style.display = p.dataset.modePane === orpState.mode ? '' : 'none';
+          });
+        });
+      });
+    }
+    if (agentId) orpState.agentId = agentId;
+    // Surface selected instance in the heading + status (live-region for AT)
+    const nameEl = document.getElementById('orp-instance-name');
+    const statusEl = document.getElementById('orp-instance-status');
+    if (orpState.agentId) {
+      if (nameEl) nameEl.textContent = orpState.agentId;
+      if (statusEl) statusEl.textContent = `instance ${orpState.agentId} — author + live-view substrate-shell ready; content rendering pending contracts`;
+    } else {
+      if (nameEl) nameEl.textContent = '(select a Ptah AgentCard)';
+      if (statusEl) statusEl.textContent = 'awaiting instance selection — click a Ptah AgentCard to open its ORP view';
+    }
+  }
+
+  /**
+   * CP14.x: Make Ptah-runtime AgentCards clickable → opens ORP view.
+   * Called by AgentCard render path when runtime=ptah. Adds data-runtime
+   * attribute (CSS hook) + click handler + ARIA semantics (role=link,
+   * aria-label describes destination).
+   */
+  function wirePtahAgentCardClick(cardEl, agentId) {
+    if (!cardEl || cardEl.dataset.runtime === 'ptah') return;  // idempotent
+    cardEl.dataset.runtime = 'ptah';
+    cardEl.setAttribute('role', 'link');
+    cardEl.setAttribute('tabindex', '0');
+    cardEl.setAttribute('aria-label',
+      `${agentId} — Ptah agent. Press Enter to open ORP authoring and live-view.`);
+    const open = () => {
+      location.hash = `#orp/${agentId}`;
+    };
+    cardEl.addEventListener('click', (e) => {
+      // Don't hijack clicks on inner controls (arrows, pills, links)
+      if (e.target.closest('button, a, input, select, textarea')) return;
+      open();
+    });
+    cardEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        if (e.target.closest('button, a, input, select, textarea')) return;
+        e.preventDefault();
+        open();
+      }
+    });
+  }
+  // Expose for AgentCard render path (Live tab + Ptah filter chip cycle)
+  window.wirePtahAgentCardClick = wirePtahAgentCardClick;
   document.querySelectorAll('.tab-btn').forEach(b => {
     b.addEventListener('click', () => activateTab(b.dataset.tab));
   });
   window.addEventListener('hashchange', () => activateTab(location.hash.slice(1)));
+  // CP14.x: support direct #orp/<agent_id> deep-link on initial page load
   activateTab(location.hash.slice(1) || 'live');
 
   // ────────────────────────────────────────────────────────────────────

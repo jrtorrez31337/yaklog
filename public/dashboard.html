@@ -414,6 +414,28 @@
   /* Buyer-tier banner explains the Fold-B canon scope */
   #tab-effort .effort-buyer-banner { display: none; padding: 14px 18px; background: var(--panel); border-bottom: 1px solid var(--border); color: var(--muted); font-size: 12px; line-height: 1.5; }
   #tab-effort.audience-buyer .effort-buyer-banner { display: block; }
+
+  /* CP14.x ORP tab styles (substrate-shell; a11y-first per
+     [[feedback_accessibility_is_structural_canon_not_polish]]) */
+  .orp-header { padding: 16px 18px; background: var(--panel); border-bottom: 1px solid var(--border); }
+  .orp-instance-heading { color: var(--text); font-size: 18px; font-weight: 600; margin: 0 0 6px; }
+  .orp-instance-meta { color: var(--muted); font-size: 12px; margin: 0 0 12px; }
+  .orp-mode-tabs { display: flex; gap: 8px; }
+  .orp-mode-btn { padding: 8px 14px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); font-size: 13px; cursor: pointer; }
+  .orp-mode-btn:focus { outline: 2px solid rgba(96,165,250,0.6); outline-offset: 1px; }
+  .orp-mode-btn.active { background: var(--accent, #7c3aed); border-color: var(--accent, #7c3aed); color: white; }
+  .orp-mode-btn .orp-mode-desc { font-size: 11px; color: var(--muted); margin-left: 4px; font-weight: normal; }
+  .orp-mode-btn.active .orp-mode-desc { color: rgba(255,255,255,0.75); }
+  .orp-content { padding: 16px 18px; }
+  .orp-pane { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 16px 18px; }
+  .orp-pane-heading { color: var(--text); font-size: 16px; font-weight: 600; margin: 0 0 12px; }
+  .orp-pane-body { color: var(--text); font-size: 13px; line-height: 1.5; }
+  .orp-muted { color: var(--muted); font-style: italic; margin: 0 0 12px; }
+  .orp-author-status, .orp-live-trace { display: block; margin-top: 12px; padding: 8px 12px; background: var(--panel); border-left: 3px solid var(--muted); color: var(--muted); font-family: monospace; font-size: 12px; }
+  /* Ptah AgentCard clickability indicator (subtle; full a11y via aria-label + role) */
+  .agent-card[data-runtime="ptah"] { cursor: pointer; }
+  .agent-card[data-runtime="ptah"]:hover { border-left-color: #7c3aed; }
+  .agent-card[data-runtime="ptah"]:focus-within { box-shadow: 0 0 0 2px rgba(124,58,237,0.5); }
   .effort-content { padding: 16px 18px; }
   .effort-lens-pane { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 14px 18px; }
   .effort-section-title { color: var(--text); font-size: 16px; font-weight: 600; margin-bottom: 10px; }
@@ -998,6 +1020,12 @@
   <button class="tab-btn" data-tab="audit">Audit<span class="badge-new">CP8.2</span></button>
   <button class="tab-btn" data-tab="effort">Effort<span class="badge-new">CP13</span></button>
   <button class="tab-btn" data-tab="register">Register<span class="badge-new">CP8.5</span></button>
+  <!-- CP14.x: Ptah ORP authoring + live-view tab (Jon-direct #9904). Hidden
+       in default chrome; only reachable via clickable Ptah AgentCard or
+       direct hash navigation (#orp/<agent_id>). Substrate-shell pre-stage
+       per yaklog-dev #10048; content-tier waits on s345-aieng ORP schema +
+       gemini episode-trace contract surface. -->
+  <button class="tab-btn tab-btn-conditional" data-tab="orp" hidden>ORP<span class="badge-new">CP14</span></button>
   <!-- CP10.1 (2026-06-01): alerts bell — human-only, client-only, never crosses
        to bus per feedback_dashboard_alerts_are_human_only. -->
   <div class="alerts-bell-wrap" id="alerts-bell-wrap">
@@ -1538,6 +1566,85 @@
      admin surface. Public-mirror endpoint (network-isolation trust); strips
      secret-bearing fields (ciphertext_b64, *_token_hash) at source. Operator
      workflow view: 'what's pending my ratify?' / 'what's stuck in ferry?' -->
+<!-- ════════════════════════════════════════════════════════════════════
+     CP14.x ORP tab (Ptah Operator Role Profile authoring + live-view)
+     Per Jon-direct #9904 + s345-aieng IC-reframe doc at agent-specs.git:
+     aieng/specs/2026-06-20-ptah-orp-driven-ic-reframe.md.
+
+     Substrate-shell pre-stage per yaklog-dev #10048 (this commit) —
+     ALL content rendering gated on contracts:
+       - Author-form rendering against ORP schema (s345-aieng Track 1)
+       - Live-view trace rendering (gemini episode-trace contract)
+
+     A11Y CANON per [[feedback_accessibility_is_structural_canon_not_polish]]:
+     primary operator (Jon) uses AT; ARIA-first + landmark structure +
+     keyboard-operable + no color-only state. Sister-shape to s345-aieng
+     Ptah dashboard at s345-aieng/ptah-provider-switch (offered for
+     pairing at #10039).
+     ════════════════════════════════════════════════════════════════════ -->
+<section class="tab-panel" data-tab="orp" id="tab-orp">
+  <header class="orp-header">
+    <h2 id="orp-instance-heading" class="orp-instance-heading">ORP — <span id="orp-instance-name">(select a Ptah AgentCard)</span></h2>
+    <p class="orp-instance-meta">
+      <span id="orp-instance-status" aria-live="polite" role="status">awaiting instance selection</span>
+    </p>
+    <nav class="orp-mode-tabs" aria-label="ORP view mode">
+      <button type="button" class="orp-mode-btn active" data-mode="author"
+              aria-controls="orp-pane-author" aria-pressed="true">
+        Author <span class="orp-mode-desc">(edit role/intents/decision-tree)</span>
+      </button>
+      <button type="button" class="orp-mode-btn" data-mode="live"
+              aria-controls="orp-pane-live" aria-pressed="false">
+        Live-view <span class="orp-mode-desc">(perceive → decide → act trace)</span>
+      </button>
+    </nav>
+  </header>
+
+  <main class="orp-content">
+    <!-- Author mode: form scaffold; field-level rendering waits on s345-aieng
+         JSON Schema 2020-12 + author-save endpoint contract -->
+    <section class="orp-pane orp-pane-author" id="orp-pane-author"
+             data-mode-pane="author" aria-labelledby="orp-pane-author-heading">
+      <h3 id="orp-pane-author-heading" class="orp-pane-heading">Author</h3>
+      <div class="orp-pane-body" id="orp-author-body">
+        <p class="orp-muted">
+          Author-form awaits ORP schema contract from <span lang="en">s345-aieng</span>.
+          Per yaklog-dev #10048: form will render schema-validated fields
+          (role_id, display_name, description, capabilities[], goals[],
+          decision_tree[], queries[], idle_behavior, priorities[], comms_style,
+          command_authority).
+        </p>
+        <output class="orp-author-status" id="orp-author-status"
+                role="alert" aria-live="polite">
+          status: contract-pending
+        </output>
+      </div>
+    </section>
+
+    <!-- Live-view mode: trace-stream container; per-tick rendering waits on
+         gemini episode-trace contract -->
+    <section class="orp-pane orp-pane-live" id="orp-pane-live"
+             data-mode-pane="live" aria-labelledby="orp-pane-live-heading"
+             style="display: none;">
+      <h3 id="orp-pane-live-heading" class="orp-pane-heading">Live-view</h3>
+      <div class="orp-pane-body" id="orp-live-body">
+        <p class="orp-muted">
+          Live-view awaits episode-trace contract from <span lang="en">gemini</span>.
+          Per yaklog-dev #10048: trace stream will render perceive → decide → act
+          events from running ORP-driven instance.
+        </p>
+        <!-- aria-live="polite" container for SSE trace events (browser SSE
+             uses ?token= query-token auth per src/middleware/auth.js shim;
+             [[feedback_browser_eventsource_no_authorization_header_query_token_canonical]]). -->
+        <output class="orp-live-trace" id="orp-live-trace"
+                role="log" aria-live="polite" aria-atomic="false">
+          trace stream pending contract
+        </output>
+      </div>
+    </section>
+  </main>
+</section>
+
 <section class="tab-panel" data-tab="register" id="tab-register">
   <div class="audit-banner">
     🔓 <strong>Network-trust auth only (v1).</strong> Same posture as the Audit tab.

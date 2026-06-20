@@ -22,6 +22,21 @@ function extractToken(req) {
     return String(apiKeyHeader).trim();
   }
 
+  // Browser EventSource cannot set Authorization header (W3C SSE spec
+  // limitation). Accept ?token=<value> ONLY on text/event-stream routes
+  // so browser-side SSE consumption is possible without weakening auth on
+  // other routes. Per [[feedback_browser_eventsource_no_authorization_header_query_token_canonical]]
+  // banked from s345-aieng #10039 Ptah dashboard substrate-finding.
+  //
+  // Defense-in-depth: this shim ONLY accepts query-token when the request
+  // accepts text/event-stream (browser SSE), preventing query-token leak via
+  // standard GET/POST cache layers + URL log surfaces on non-SSE routes.
+  // Sister-shape secret-discipline per [[feedback_secrets_no_yaklog]].
+  const acceptHeader = req.headers.accept || '';
+  if (acceptHeader.includes('text/event-stream') && req.query && req.query.token) {
+    return String(req.query.token).trim();
+  }
+
   return null;
 }
 
