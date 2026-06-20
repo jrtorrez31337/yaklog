@@ -286,25 +286,209 @@ test('walkRepo returns skipped:no-pat when patFile points to missing file', asyn
   assert.deepEqual(result.prs, []);
 });
 
-test('walkRepo returns skipped:phase-2.2-pending when PAT present (Phase 2.1 stub)', async () => {
-  const tmpFile = path.join(os.tmpdir(), `gh-pat-walk-${process.pid}-${Date.now()}.txt`);
-  fs.writeFileSync(tmpFile, 'ghp_walktest1234', { mode: 0o600 });
-  const walker = new GitHubWalker({
-    patFile: tmpFile,
-    repos: ['owner/repo'],
-  });
-  const cursor = { last_pr_updated_at: '2026-06-20T00:00:00Z' };
-  const result = await walker.walkRepo('owner/repo', cursor);
-  assert.equal(result.skipped, true);
-  assert.equal(result.reason, 'phase-2.2-pending');
-  assert.deepEqual(result.prs, []);
-  assert.deepEqual(result.cursor, cursor);
-  fs.unlinkSync(tmpFile);
-});
-
-test('walkRepo handles null cursor without throwing', async () => {
+test('walkRepo handles null cursor without throwing (no-PAT path)', async () => {
   const walker = new GitHubWalker({ repos: ['owner/repo'] });
   const result = await walker.walkRepo('owner/repo', null);
   assert.equal(result.skipped, true);
   assert.equal(result.cursor, null);
+});
+
+// ── walkRepo Phase 2.2: real GitHub API integration ────────────────────────
+// Per parch #9866 ratify + ssw-devops #9873 PAT install: replaces Phase 2.1
+// 'phase-2.2-pending' stub with actual GitHub REST integration. Tests use
+// dependency-injected mock fetcher per [[feedback_substrate_empirical_check_before_pre_stage]]
+// — response shape modeled on empirical probe of actual /repos/{owner}/{repo}/pulls
+// canonical response (PR list with state/title/user.login/base.ref/head.ref/
+// created_at/merged_at/closed_at/merge_commit_sha + Link header + X-RateLimit-* headers).
+
+function makePatWalker(opts) {
+  const tmpFile = path.join(os.tmpdir(), `gh-pat-${process.pid}-${Date.now()}-${Math.random()}.txt`);
+  fs.writeFileSync(tmpFile, 'gho_testpat12345', { mode: 0o600 });
+  const walker = new GitHubWalker({ patFile: tmpFile, ...opts });
+  return { walker, tmpFile };
+}
+
+function makeMockResponse({ status = 200, prs = [], headers = {} } = {}) {
+  const defaultHeaders = {
+    'x-ratelimit-remaining': '4999',
+    'x-ratelimit-reset': String(Math.floor(Date.now() / 1000) + 3600),
+    ...headers,
+  };
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    headers: { get: (k) => defaultHeaders[k.toLowerCase()] || null },
+    json: async () => prs,
+    text: async () => JSON.stringify(prs),
+  };
+}
+
+test('walkRepo Phase 2.2: fetches PRs from GitHub API with auth + accept headers', async () => {
+  let capturedUrl, capturedHeaders;
+  const fetcher = async (url, opts) => {
+    capturedUrl = url;
+    capturedHeaders = opts.headers;
+    return makeMockResponse({ prs: [] });
+  };
+  const { walker, tmpFile } = makePatWalker({ repos: ['owner/repo'], fetcher });
+  await walker.walkRepo('owner/repo', null);
+  assert.ok(capturedUrl.includes('api.github.com/repos/owner/repo/pulls'));
+  assert.ok(capturedUrl.includes('state=all'));
+  assert.ok(capturedUrl.includes('sort=updated'));
+  assert.ok(capturedUrl.includes('direction=asc'));
+  assert.ok(capturedUrl.includes('per_page=100'));
+  assert.equal(capturedHeaders['Authorization'], 'token gho_testpat12345');
+  assert.equal(capturedHeaders['Accept'], 'application/vnd.github+json');
+  fs.unlinkSync(tmpFile);
+});
+
+test('walkRepo Phase 2.2: uses cursor.last_pr_updated_at as ?since= param', async () => {
+  let capturedUrl;
+  const fetcher = async (url) => { capturedUrl = url; return makeMockResponse({ prs: [] }); };
+  const { walker, tmpFile } = makePatWalker({ repos: ['owner/repo'], fetcher });
+  await walker.walkRepo('owner/repo', { last_pr_updated_at: '2026-06-15T00:00:00Z' });
+  assert.ok(capturedUrl.includes('since=2026-06-15T00%3A00%3A00Z'));
+  fs.unlinkSync(tmpFile);
+});
+
+test('walkRepo Phase 2.2: no ?since= when cursor null (first walk)', async () => {
+  let capturedUrl;
+  const fetcher = async (url) => { capturedUrl = url; return makeMockResponse({ prs: [] }); };
+  const { walker, tmpFile } = makePatWalker({ repos: ['owner/repo'], fetcher });
+  await walker.walkRepo('owner/repo', null);
+  assert.ok(!capturedUrl.includes('since='));
+  fs.unlinkSync(tmpFile);
+});
+
+test('walkRepo Phase 2.2: normalizes PR to output_pr-shape row', async () => {
+  const mockPr = {
+    number: 42,
+    state: 'closed',
+    title: 'Test PR',
+    user: { login: 'jrtorrez31337', email: null },
+    base: { ref: 'main' },
+    head: { ref: 'feature/foo' },
+    created_at: '2026-06-15T01:00:00Z',
+    updated_at: '2026-06-15T03:00:00Z',
+    merged_at: '2026-06-15T03:00:00Z',
+    closed_at: '2026-06-15T03:00:00Z',
+    merge_commit_sha: 'abc123def456',
+  };
+  const fetcher = async () => makeMockResponse({ prs: [mockPr] });
+  const { walker, tmpFile } = makePatWalker({ repos: ['owner/repo'], fetcher });
+  const result = await walker.walkRepo('owner/repo', null);
+  assert.equal(result.skipped, false);
+  assert.equal(result.prs.length, 1);
+  const pr = result.prs[0];
+  assert.equal(pr.github_owner_repo, 'owner/repo');
+  assert.equal(pr.pr_number, 42);
+  assert.equal(pr.state, 'merged');  // normalized from closed+merged_at
+  assert.equal(pr.title, 'Test PR');
+  assert.equal(pr.author_login, 'jrtorrez31337');
+  assert.equal(pr.author_email, null);
+  assert.equal(pr.base_ref, 'main');
+  assert.equal(pr.head_ref, 'feature/foo');
+  assert.equal(pr.opened_at, '2026-06-15T01:00:00Z');
+  assert.equal(pr.merged_at, '2026-06-15T03:00:00Z');
+  assert.equal(pr.closed_at, '2026-06-15T03:00:00Z');
+  assert.equal(pr.merge_commit_sha, 'abc123def456');
+  assert.ok(pr.last_synced_at, 'last_synced_at must be set');
+  fs.unlinkSync(tmpFile);
+});
+
+test('walkRepo Phase 2.2: state normalization — open / merged / closed', async () => {
+  const prs = [
+    { number: 1, state: 'open', title: 'A', user: { login: 'u' }, base: { ref: 'main' }, head: { ref: 'a' }, created_at: '2026-06-15T01:00:00Z', updated_at: '2026-06-15T01:00:00Z', merged_at: null, closed_at: null, merge_commit_sha: null },
+    { number: 2, state: 'closed', title: 'B', user: { login: 'u' }, base: { ref: 'main' }, head: { ref: 'b' }, created_at: '2026-06-15T01:00:00Z', updated_at: '2026-06-15T02:00:00Z', merged_at: '2026-06-15T02:00:00Z', closed_at: '2026-06-15T02:00:00Z', merge_commit_sha: 'sha' },
+    { number: 3, state: 'closed', title: 'C', user: { login: 'u' }, base: { ref: 'main' }, head: { ref: 'c' }, created_at: '2026-06-15T01:00:00Z', updated_at: '2026-06-15T02:00:00Z', merged_at: null, closed_at: '2026-06-15T02:00:00Z', merge_commit_sha: null },
+  ];
+  const fetcher = async () => makeMockResponse({ prs });
+  const { walker, tmpFile } = makePatWalker({ repos: ['owner/repo'], fetcher });
+  const result = await walker.walkRepo('owner/repo', null);
+  assert.equal(result.prs[0].state, 'open');
+  assert.equal(result.prs[1].state, 'merged');
+  assert.equal(result.prs[2].state, 'closed');
+  fs.unlinkSync(tmpFile);
+});
+
+test('walkRepo Phase 2.2: cursor advances to max(updated_at) of fetched PRs', async () => {
+  const prs = [
+    { number: 1, state: 'open', title: 'A', user: { login: 'u' }, base: { ref: 'main' }, head: { ref: 'a' }, created_at: '2026-06-15T01:00:00Z', updated_at: '2026-06-15T01:00:00Z', merged_at: null, closed_at: null, merge_commit_sha: null },
+    { number: 2, state: 'closed', title: 'B', user: { login: 'u' }, base: { ref: 'main' }, head: { ref: 'b' }, created_at: '2026-06-15T01:00:00Z', updated_at: '2026-06-15T04:00:00Z', merged_at: '2026-06-15T04:00:00Z', closed_at: '2026-06-15T04:00:00Z', merge_commit_sha: 'sha' },
+  ];
+  const fetcher = async () => makeMockResponse({ prs });
+  const { walker, tmpFile } = makePatWalker({ repos: ['owner/repo'], fetcher });
+  const result = await walker.walkRepo('owner/repo', null);
+  assert.equal(result.cursor.last_pr_updated_at, '2026-06-15T04:00:00Z');
+  assert.equal(result.cursor.prs_synced_total, 2);
+  assert.equal(result.cursor.last_walk_status, 'ok');
+  fs.unlinkSync(tmpFile);
+});
+
+test('walkRepo Phase 2.2: cursor preserved when no new PRs', async () => {
+  const fetcher = async () => makeMockResponse({ prs: [] });
+  const { walker, tmpFile } = makePatWalker({ repos: ['owner/repo'], fetcher });
+  const cursor = { last_pr_updated_at: '2026-06-15T01:00:00Z', prs_synced_total: 5 };
+  const result = await walker.walkRepo('owner/repo', cursor);
+  assert.equal(result.cursor.last_pr_updated_at, '2026-06-15T01:00:00Z');
+  assert.equal(result.cursor.last_walk_status, 'ok');
+  fs.unlinkSync(tmpFile);
+});
+
+test('walkRepo Phase 2.2: rate-limit headers populated on cursor', async () => {
+  const fetcher = async () => makeMockResponse({
+    prs: [],
+    headers: { 'x-ratelimit-remaining': '4500', 'x-ratelimit-reset': '1781999999' },
+  });
+  const { walker, tmpFile } = makePatWalker({ repos: ['owner/repo'], fetcher });
+  const result = await walker.walkRepo('owner/repo', null);
+  assert.equal(result.cursor.rate_limit_remaining, 4500);
+  assert.equal(result.cursor.rate_limit_reset_at, '2026-06-20T23:59:59Z');
+  fs.unlinkSync(tmpFile);
+});
+
+test('walkRepo Phase 2.2: 401 unauthorized → skipped:auth-fail + status preserved on cursor', async () => {
+  const fetcher = async () => makeMockResponse({ status: 401, prs: [] });
+  const { walker, tmpFile } = makePatWalker({ repos: ['owner/repo'], fetcher });
+  const cursor = { last_pr_updated_at: '2026-06-15T01:00:00Z' };
+  const result = await walker.walkRepo('owner/repo', cursor);
+  assert.equal(result.skipped, true);
+  assert.equal(result.reason, 'auth-fail');
+  assert.equal(result.cursor.last_walk_status, 'auth-failed');
+  assert.equal(result.cursor.last_pr_updated_at, '2026-06-15T01:00:00Z');  // preserved
+  fs.unlinkSync(tmpFile);
+});
+
+test('walkRepo Phase 2.2: 403 with X-RateLimit-Remaining 0 → skipped:rate-limited', async () => {
+  const fetcher = async () => makeMockResponse({
+    status: 403,
+    prs: [],
+    headers: { 'x-ratelimit-remaining': '0' },
+  });
+  const { walker, tmpFile } = makePatWalker({ repos: ['owner/repo'], fetcher });
+  const result = await walker.walkRepo('owner/repo', null);
+  assert.equal(result.skipped, true);
+  assert.equal(result.reason, 'rate-limited');
+  assert.equal(result.cursor.last_walk_status, 'rate-limited');
+  fs.unlinkSync(tmpFile);
+});
+
+test('walkRepo Phase 2.2: 5xx server error → skipped:server-error', async () => {
+  const fetcher = async () => makeMockResponse({ status: 503, prs: [] });
+  const { walker, tmpFile } = makePatWalker({ repos: ['owner/repo'], fetcher });
+  const result = await walker.walkRepo('owner/repo', null);
+  assert.equal(result.skipped, true);
+  assert.equal(result.reason, 'server-error');
+  assert.equal(result.cursor.last_walk_status, 'error');
+  fs.unlinkSync(tmpFile);
+});
+
+test('walkRepo Phase 2.2: fetcher throw → skipped:network-error', async () => {
+  const fetcher = async () => { throw new Error('ECONNRESET'); };
+  const { walker, tmpFile } = makePatWalker({ repos: ['owner/repo'], fetcher });
+  const result = await walker.walkRepo('owner/repo', null);
+  assert.equal(result.skipped, true);
+  assert.equal(result.reason, 'network-error');
+  assert.equal(result.cursor.last_walk_status, 'error');
+  fs.unlinkSync(tmpFile);
 });

@@ -323,30 +323,159 @@ class GitHubWalker extends OutputWalker {
   }
 
   /**
-   * Phase 2.1 substrate-honest walker.
+   * Phase 2.2 walker — real GitHub REST API integration.
    *
-   * Three substrate-states:
+   * Substrate-states (in priority order):
    *   - no-pat: patFile missing/unreadable → graceful-degradation; bare-git
    *     walker continues unaffected per Phase 1 substrate
-   *   - phase-2.2-pending: PAT loadable but real API call not yet wired
-   *     (this stub; Phase 2.2 replaces with actual GitHub API integration)
-   *   - real-walk: Phase 2.2+ — actual PRs fetched + cursor advanced
+   *   - auth-fail: 401 from GitHub (PAT invalid/expired/revoked); cursor
+   *     preserved; secops alert-worthy
+   *   - rate-limited: 403 with X-RateLimit-Remaining 0; cursor preserved;
+   *     next-tick retries after reset
+   *   - server-error: 5xx; cursor preserved; transient
+   *   - network-error: fetch throws (ECONNRESET / timeout / DNS); cursor preserved
+   *   - ok: 2xx; PRs normalized + cursor advanced to max(updated_at)
    *
-   * Cursor returned unchanged in skipped paths; only real-walk advances it.
+   * Cursor returned unchanged in all skipped paths; only ok-walk advances.
    *
    * @param {string} githubOwnerRepo - 'owner/repo' canonical key
-   * @param {object|null} cursor - { last_pr_updated_at, rate_limit_*, ... }
-   *   or null on first walk
-   * @returns {Promise<{prs:Array, skipped:boolean, reason?:string, cursor:object|null}>}
+   * @param {object|null} cursor - { last_pr_updated_at, prs_synced_total, ... }
+   * @returns {Promise<{prs:Array, skipped:boolean, reason?:string, cursor:object}>}
    */
   async walkRepo(githubOwnerRepo, cursor) {
     const pat = this._loadPat();
     if (!pat) {
       return { prs: [], skipped: true, reason: 'no-pat', cursor };
     }
-    // Phase 2.2 replaces this stub with real GitHub API integration
-    return { prs: [], skipped: true, reason: 'phase-2.2-pending', cursor };
+
+    const params = new URLSearchParams({
+      state: 'all',
+      sort: 'updated',
+      direction: 'asc',
+      per_page: '100',
+    });
+    if (cursor && cursor.last_pr_updated_at) {
+      params.set('since', cursor.last_pr_updated_at);
+    }
+    const url = `https://api.github.com/repos/${githubOwnerRepo}/pulls?${params}`;
+
+    let resp;
+    try {
+      resp = await this.fetcher(url, {
+        method: 'GET',
+        headers: {
+          'Authorization': `token ${pat}`,
+          'Accept': 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28',
+          'User-Agent': 'yaklog-output-ingester/CP13.6',
+        },
+      });
+    } catch (err) {
+      return {
+        prs: [],
+        skipped: true,
+        reason: 'network-error',
+        cursor: { ...(cursor || {}), last_walk_status: 'error', last_walk_message: String(err.message || err).slice(0, 200) },
+      };
+    }
+
+    const rateLimitRemaining = parseInt(resp.headers.get('x-ratelimit-remaining'), 10);
+    const rateLimitReset = parseInt(resp.headers.get('x-ratelimit-reset'), 10);
+    const rateLimitResetAt = Number.isFinite(rateLimitReset)
+      ? new Date(rateLimitReset * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z')
+      : null;
+
+    if (resp.status === 401) {
+      return {
+        prs: [],
+        skipped: true,
+        reason: 'auth-fail',
+        cursor: { ...(cursor || {}), last_walk_status: 'auth-failed', last_walk_message: 'GitHub PAT rejected (401)' },
+      };
+    }
+    if (resp.status === 403 && rateLimitRemaining === 0) {
+      return {
+        prs: [],
+        skipped: true,
+        reason: 'rate-limited',
+        cursor: {
+          ...(cursor || {}),
+          last_walk_status: 'rate-limited',
+          last_walk_message: `rate-limit exhausted; resets at ${rateLimitResetAt}`,
+          rate_limit_remaining: rateLimitRemaining,
+          rate_limit_reset_at: rateLimitResetAt,
+        },
+      };
+    }
+    if (resp.status >= 500) {
+      return {
+        prs: [],
+        skipped: true,
+        reason: 'server-error',
+        cursor: { ...(cursor || {}), last_walk_status: 'error', last_walk_message: `HTTP ${resp.status}` },
+      };
+    }
+    if (!resp.ok) {
+      return {
+        prs: [],
+        skipped: true,
+        reason: 'server-error',
+        cursor: { ...(cursor || {}), last_walk_status: 'error', last_walk_message: `HTTP ${resp.status}` },
+      };
+    }
+
+    const rawPrs = await resp.json();
+    const now = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
+    const prs = rawPrs.map((pr) => normalizePr(pr, githubOwnerRepo, now));
+
+    // Cursor advances to max(updated_at) of fetched PRs — cohort-cursor
+    // semantic per Q4 sub-OQ ratify (#9799). If no PRs returned, preserve
+    // existing cursor timestamp.
+    let nextLastUpdatedAt = cursor && cursor.last_pr_updated_at;
+    for (const pr of rawPrs) {
+      if (!nextLastUpdatedAt || pr.updated_at > nextLastUpdatedAt) {
+        nextLastUpdatedAt = pr.updated_at;
+      }
+    }
+    const priorTotal = (cursor && cursor.prs_synced_total) || 0;
+
+    return {
+      prs,
+      skipped: false,
+      cursor: {
+        last_pr_updated_at: nextLastUpdatedAt || now,
+        prs_synced_total: priorTotal + prs.length,
+        rate_limit_remaining: Number.isFinite(rateLimitRemaining) ? rateLimitRemaining : null,
+        rate_limit_reset_at: rateLimitResetAt,
+        last_walk_status: 'ok',
+        last_walk_message: null,
+      },
+    };
   }
+}
+
+// Normalize a GitHub API PR response to output_pr-shape row.
+// State derivation: GitHub uses {open, closed}; we expand to {open, merged, closed}
+// based on merged_at presence (closed + merged_at = merged; closed + !merged_at = closed).
+function normalizePr(pr, githubOwnerRepo, lastSyncedAt) {
+  let state = pr.state;
+  if (state === 'closed' && pr.merged_at) state = 'merged';
+  return {
+    github_owner_repo: githubOwnerRepo,
+    pr_number: pr.number,
+    state,
+    title: pr.title,
+    author_login: pr.user && pr.user.login,
+    author_email: (pr.user && pr.user.email) || null,
+    base_ref: pr.base && pr.base.ref,
+    head_ref: pr.head && pr.head.ref,
+    opened_at: pr.created_at,
+    merged_at: pr.merged_at,
+    closed_at: pr.closed_at,
+    merge_commit_sha: pr.merge_commit_sha,
+    commit_count: null,  // Phase 2.x: requires per-PR detail fetch; forward-track
+    last_synced_at: lastSyncedAt,
+  };
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────
