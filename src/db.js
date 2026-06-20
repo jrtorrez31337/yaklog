@@ -846,6 +846,69 @@ function initializeDb() {
     )
   `).run();
 
+  // CP13.6 Phase 2.1 / ADR-0032 Phase 2 ratify (parch #9799):
+  //   - output_pr: per-PR state metadata from GitHub API
+  //     (state/opened_at/merged_at/closed_at + author + branches + merge_sha
+  //     for cross-walker join to output_commit + output_merge).
+  //   - output_pr_cursor: per-repo incremental-fetch cursor + rate-limit
+  //     budget tracking + last-walk diagnostic status.
+  //   - output_repo: GitHub repo allowlist canonical (Q1 Option C ratified
+  //     parch #9799); bare_git_path links to /srv/git/*.git canonical for
+  //     cross-walker correlation; ops-mutable via Phase 2.2 endpoint.
+  //
+  // output_pr_review DELIBERATELY DROPPED (Q3 unanimous-quorum + parch
+  // ratify #9799) — review-substrate is semantic-class-2 anti-feature per
+  // ADR-0032 §8 (quality-measurement class); forward-cycle ADR-amendment
+  // trigger banked for cluster-discipline-signal class if buyer-recognition
+  // gap surfaces (techmark observation #9793 + parch banking #9799).
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS output_pr (
+      id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+      github_owner_repo   TEXT NOT NULL,
+      pr_number           INTEGER NOT NULL,
+      state               TEXT NOT NULL,
+      title               TEXT NOT NULL,
+      author_login        TEXT NOT NULL,
+      author_email        TEXT,
+      base_ref            TEXT NOT NULL,
+      head_ref            TEXT NOT NULL,
+      opened_at           TEXT NOT NULL,
+      merged_at           TEXT,
+      closed_at           TEXT,
+      merge_commit_sha    TEXT,
+      commit_count        INTEGER,
+      last_synced_at      TEXT NOT NULL,
+      UNIQUE(github_owner_repo, pr_number)
+    )
+  `).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_output_pr_opened ON output_pr(opened_at)`).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_output_pr_merged ON output_pr(merged_at)`).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_output_pr_state ON output_pr(state)`).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_output_pr_owner_repo ON output_pr(github_owner_repo)`).run();
+
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS output_pr_cursor (
+      github_owner_repo       TEXT PRIMARY KEY,
+      last_pr_updated_at      TEXT NOT NULL,
+      prs_synced_total        INTEGER NOT NULL DEFAULT 0,
+      rate_limit_remaining    INTEGER,
+      rate_limit_reset_at     TEXT,
+      last_walk_status        TEXT,
+      last_walk_message       TEXT
+    )
+  `).run();
+
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS output_repo (
+      github_owner_repo   TEXT PRIMARY KEY,
+      bare_git_path       TEXT,
+      enabled             INTEGER NOT NULL DEFAULT 1,
+      added_at            TEXT NOT NULL,
+      added_by            TEXT,
+      last_walked_at      TEXT
+    )
+  `).run();
+
   return db;
 }
 
