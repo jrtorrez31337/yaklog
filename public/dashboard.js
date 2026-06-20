@@ -752,6 +752,20 @@
       // hexagonal weave (common geometric primitive)
       svg: '<g stroke-width="2" stroke-linejoin="round" fill="none"><polygon points="12,2 21,7 21,17 12,22 3,17 3,7" stroke="currentColor"/><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/></g>',
     },
+    // Ptah — Subnet345-owned runtime (Phase 0-Ptah sister-cycle). Per
+    // cluster brand-spine convergence cycle 2026-06-19/20:
+    //  - label per writer #9667 ratify
+    //  - color per s345 #9673 FINAL RATIFY (Subnet345-owned palette tier;
+    //    brand-purple distinct from vendor-adjacent CC/Gemini/Codex hues)
+    //  - svg per gfxartist #9670 (djed-pillar; Egyptian creator-deity
+    //    evoke; geometric primitive distinct from existing 3 glyphs)
+    //  - techmark proof-grounding CONCUR #9671
+    //  - parch WIRE-AUTHORIZED #9676
+    ptah: {
+      label: 'Ptah',
+      color: '#7c3aed',
+      svg: '<path d="M10.6 3 h2.8 v18 h-2.8 z M5.5 3.4 h13 v2 h-13 z M6.5 6.4 h11 v2 h-11 z M7.5 9.4 h9 v2 h-9 z M7.5 21 h9 v2.4 h-9 z" />',
+    },
   };
   function runtimeBadge(runtime) {
     const meta = RUNTIME_META[runtime];
