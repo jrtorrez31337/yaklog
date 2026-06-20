@@ -174,7 +174,9 @@ test('BareGitWalker computes body_digest as sha256 hex when body present', () =>
   }
 });
 
-// ── GitHubWalker (Phase 2 stub) ───────────────────────────────────────────
+// ── GitHubWalker (Phase 2.1 skeleton — CP13.6) ────────────────────────────
+// Per parch #9799 canonical ratify: Phase 2.1 ships substrate skeleton +
+// graceful-degradation no-PAT path; Phase 2.2 wires real GitHub API call.
 
 test('GitHubWalker.substrateType returns github', () => {
   const w = new GitHubWalker();
@@ -186,15 +188,123 @@ test('GitHubWalker.listRepos returns configured allowlist', () => {
   assert.deepEqual(w.listRepos(), ['jrtorrez31337/ssw-mmo-alpha']);
 });
 
-test('GitHubWalker.walkRepo Phase-2-stub returns empty walk + preserves lastRef', () => {
-  const w = new GitHubWalker({ repos: ['owner/repo'] });
-  const result = w.walkRepo('owner/repo', 'sha123');
-  assert.equal(result.commits.length, 0);
-  assert.equal(result.merges.length, 0);
-  assert.equal(result.newRef, 'sha123');
-});
-
 test('GitHubWalker.listRepos defaults to empty when no allowlist', () => {
   const w = new GitHubWalker();
   assert.deepEqual(w.listRepos(), []);
+});
+
+test('GitHubWalker.listRepos returns a copy (mutation-safe)', () => {
+  const w = new GitHubWalker({ repos: ['owner/repo'] });
+  const repos = w.listRepos();
+  repos.push('mutation/attempt');
+  assert.deepEqual(w.listRepos(), ['owner/repo']);
+});
+
+test('GitHubWalker constructor accepts patFile + repos + fetcher DI', () => {
+  const mockFetcher = async () => ({ ok: true, status: 200 });
+  const walker = new GitHubWalker({
+    patFile: '/tmp/test-pat',
+    repos: ['jrtorrez31337/yaklog'],
+    fetcher: mockFetcher,
+  });
+  assert.equal(walker.patFile, '/tmp/test-pat');
+  assert.deepEqual(walker.repos, ['jrtorrez31337/yaklog']);
+  assert.equal(walker.fetcher, mockFetcher);
+});
+
+test('GitHubWalker constructor defaults fetcher to globalThis.fetch', () => {
+  const walker = new GitHubWalker({ patFile: '/tmp/x', repos: [] });
+  assert.equal(typeof walker.fetcher, 'function');
+});
+
+test('GitHubWalker constructor handles empty opts (no throw)', () => {
+  const walker = new GitHubWalker();
+  assert.deepEqual(walker.repos, []);
+  assert.equal(walker.patFile, undefined);
+});
+
+// ── _loadPat helper ────────────────────────────────────────────────────────
+
+test('_loadPat returns file content when file exists', () => {
+  const tmpFile = path.join(os.tmpdir(), `gh-pat-load-${process.pid}-${Date.now()}.txt`);
+  fs.writeFileSync(tmpFile, 'ghp_testtoken1234\n', { mode: 0o600 });
+  const walker = new GitHubWalker({ patFile: tmpFile });
+  assert.equal(walker._loadPat(), 'ghp_testtoken1234');
+  fs.unlinkSync(tmpFile);
+});
+
+test('_loadPat returns null when patFile missing on disk', () => {
+  const walker = new GitHubWalker({ patFile: '/tmp/nonexistent-pat-' + Date.now() });
+  assert.equal(walker._loadPat(), null);
+});
+
+test('_loadPat returns null when patFile not provided in opts', () => {
+  const walker = new GitHubWalker();
+  assert.equal(walker._loadPat(), null);
+});
+
+test('_loadPat caches result after first read (Phase 2.1 read-once semantic)', () => {
+  const tmpFile = path.join(os.tmpdir(), `gh-pat-cache-${process.pid}-${Date.now()}.txt`);
+  fs.writeFileSync(tmpFile, 'ghp_cachetest1234', { mode: 0o600 });
+  const walker = new GitHubWalker({ patFile: tmpFile });
+  const first = walker._loadPat();
+  fs.unlinkSync(tmpFile);
+  // File deleted; cached value should still return
+  const second = walker._loadPat();
+  assert.equal(first, second);
+  assert.equal(second, 'ghp_cachetest1234');
+});
+
+test('_loadPat caches null result (no repeated stat on missing file)', () => {
+  const walker = new GitHubWalker({ patFile: '/tmp/never-' + Date.now() });
+  assert.equal(walker._loadPat(), null);
+  assert.equal(walker._loadPat(), null);  // cached null
+});
+
+// ── walkRepo graceful-degradation (no-PAT path + Phase-2.2-pending stub) ──
+
+test('walkRepo returns skipped:no-pat when patFile not provided', async () => {
+  const walker = new GitHubWalker({ repos: ['owner/repo'] });
+  const cursor = { last_pr_updated_at: '2026-06-20T00:00:00Z' };
+  const result = await walker.walkRepo('owner/repo', cursor);
+  assert.deepEqual(result, {
+    prs: [],
+    skipped: true,
+    reason: 'no-pat',
+    cursor,
+  });
+});
+
+test('walkRepo returns skipped:no-pat when patFile points to missing file', async () => {
+  const walker = new GitHubWalker({
+    patFile: '/tmp/missing-pat-' + Date.now(),
+    repos: ['owner/repo'],
+  });
+  const result = await walker.walkRepo('owner/repo', null);
+  assert.equal(result.skipped, true);
+  assert.equal(result.reason, 'no-pat');
+  assert.deepEqual(result.prs, []);
+});
+
+test('walkRepo returns skipped:phase-2.2-pending when PAT present (Phase 2.1 stub)', async () => {
+  const tmpFile = path.join(os.tmpdir(), `gh-pat-walk-${process.pid}-${Date.now()}.txt`);
+  fs.writeFileSync(tmpFile, 'ghp_walktest1234', { mode: 0o600 });
+  const walker = new GitHubWalker({
+    patFile: tmpFile,
+    repos: ['owner/repo'],
+  });
+  const cursor = { last_pr_updated_at: '2026-06-20T00:00:00Z' };
+  const result = await walker.walkRepo('owner/repo', cursor);
+  assert.equal(result.skipped, true);
+  assert.equal(result.reason, 'phase-2.2-pending');
+  assert.deepEqual(result.prs, []);
+  assert.deepEqual(result.cursor, cursor);
+  fs.unlinkSync(tmpFile);
+});
+
+test('walkRepo handles null cursor without throwing', async () => {
+  const walker = new GitHubWalker({ repos: ['owner/repo'] });
+  const result = await walker.walkRepo('owner/repo', null);
+  assert.equal(result.skipped, true);
+  assert.equal(result.cursor, null);
 });

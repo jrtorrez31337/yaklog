@@ -246,23 +246,50 @@ class BareGitWalker extends OutputWalker {
   }
 }
 
-// ── GitHubWalker (Phase 2 stub) ───────────────────────────────────────────
+// ── GitHubWalker (Phase 2.1 skeleton — CP13.6) ────────────────────────────
+//
+// Per parch #9799 canonical ratify on ADR-0032 Phase 2:
+//   - Q1 Option C: output_repo table (canonical allowlist substrate-tier;
+//     bootstrap from per-host config + ops-mutable via Phase 2.2 endpoint)
+//   - Q2 Option A: single canonical PAT at mode-600 file
+//     `~plexus-output-ingester/.config/yaklog/github-pat.token`; scope
+//     `repo:read` + `pull_requests:read` only; EnvironmentFile reference
+//     via `GITHUB_PAT_FILE` env-var; NEVER argv per feedback_secrets_no_yaklog
+//   - Q3 DROP: no output_pr_review table (semantic-class-2 anti-feature)
+//
+// Phase 2.1 (this commit): substrate skeleton + graceful-degradation
+// no-PAT path. With-PAT path stubbed to return skipped:'phase-2.2-pending'
+// for substrate-honesty until Phase 2.2 wires real GitHub API.
+//
+// Phase 2.2 (gated on secops sign-off + Jon-direct PAT mint + ssw-devops
+// install per CP13.5 4-gate canon sister-shape): replaces walkRepo with-PAT
+// stub with GET /repos/{owner}/{repo}/pulls?state=all&sort=updated&
+// since={cursor.last_pr_updated_at} integration + rate-limit handling +
+// X-RateLimit-Remaining/Reset cursor tracking.
 
 class GitHubWalker extends OutputWalker {
   /**
-   * Phase 2 stub. Full implementation gated on Phase 2 ratify which
-   * includes:
-   *   - output_pr + output_pr_review schema migration
-   *   - GitHub PAT credential discipline per feedback_secrets_no_yaklog
-   *   - Repo allowlist canon (per ADR-0031 v1.1 jrtorrez31337/ + cluster-
-   *     external scope arbitration)
+   * Phase 2.1 substrate skeleton.
    *
    * @param {object} opts
-   * @param {string[]} [opts.repos] - GitHub repo allowlist (owner/name)
+   * @param {string} [opts.patFile] - path to GitHub PAT file (mode-600;
+   *   canonical: `~plexus-output-ingester/.config/yaklog/github-pat.token`
+   *   per Q2 Option A ratify). Walker-class agnostic to canonical path
+   *   (caller supplies via constructor).
+   * @param {string[]} [opts.repos] - GitHub owner/repo allowlist (canonical
+   *   source: output_repo table per Q1 Option C ratify; constructor
+   *   accepts pre-resolved list for test mocking).
+   * @param {Function} [opts.fetcher] - dependency-injected fetch for
+   *   test mocking; defaults to globalThis.fetch (Node 18+ built-in).
    */
   constructor(opts = {}) {
     super();
+    this.patFile = opts.patFile;
     this.repos = opts.repos || [];
+    this.fetcher = opts.fetcher || globalThis.fetch.bind(globalThis);
+    // Sentinel: undefined = not yet checked; null = checked + absent;
+    // string = loaded PAT content (cached).
+    this._pat = undefined;
   }
 
   substrateType() { return 'github'; }
@@ -272,18 +299,53 @@ class GitHubWalker extends OutputWalker {
   }
 
   /**
-   * Phase 2 placeholder. Returns empty walk-result + same lastRef so
-   * the ingester sees a no-op without crashing.
+   * Read PAT from file (mode-600 discipline per feedback_secrets_no_yaklog).
+   * Caches result after first call — Phase 2.1 read-once-per-walker-instance
+   * semantic; ssw-devops restarts service if PAT rotates (sister to CP13.5
+   * ops-key rotation discipline). Returns null when patFile missing or
+   * unreadable; caller checks return value for graceful-degradation gate.
    *
-   * Phase 2 implementation will:
-   *   - Auth via repo-scoped PAT (per feedback_secrets_no_yaklog
-   *     credential discipline; PAT at ~/.config/yaklog/github-pat.token)
-   *   - GET /repos/{owner}/{name}/commits since lastRef
-   *   - GET /repos/{owner}/{name}/pulls + .../reviews for PR substrate
-   *   - Webhook-driven mode preferred over polling once stable
+   * @returns {string|null} PAT content (trimmed) or null if absent
    */
-  walkRepo(_repo, lastRef) {
-    return { commits: [], merges: [], newRef: lastRef };
+  _loadPat() {
+    if (this._pat !== undefined) return this._pat;
+    if (!this.patFile) {
+      this._pat = null;
+      return null;
+    }
+    try {
+      this._pat = require('node:fs').readFileSync(this.patFile, 'utf8').trim();
+      return this._pat;
+    } catch (_) {
+      this._pat = null;
+      return null;
+    }
+  }
+
+  /**
+   * Phase 2.1 substrate-honest walker.
+   *
+   * Three substrate-states:
+   *   - no-pat: patFile missing/unreadable → graceful-degradation; bare-git
+   *     walker continues unaffected per Phase 1 substrate
+   *   - phase-2.2-pending: PAT loadable but real API call not yet wired
+   *     (this stub; Phase 2.2 replaces with actual GitHub API integration)
+   *   - real-walk: Phase 2.2+ — actual PRs fetched + cursor advanced
+   *
+   * Cursor returned unchanged in skipped paths; only real-walk advances it.
+   *
+   * @param {string} githubOwnerRepo - 'owner/repo' canonical key
+   * @param {object|null} cursor - { last_pr_updated_at, rate_limit_*, ... }
+   *   or null on first walk
+   * @returns {Promise<{prs:Array, skipped:boolean, reason?:string, cursor:object|null}>}
+   */
+  async walkRepo(githubOwnerRepo, cursor) {
+    const pat = this._loadPat();
+    if (!pat) {
+      return { prs: [], skipped: true, reason: 'no-pat', cursor };
+    }
+    // Phase 2.2 replaces this stub with real GitHub API integration
+    return { prs: [], skipped: true, reason: 'phase-2.2-pending', cursor };
   }
 }
 
