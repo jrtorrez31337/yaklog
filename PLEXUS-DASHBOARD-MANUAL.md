@@ -30,12 +30,13 @@ That's enough to read cluster health at a glance.
 
 Each card has:
 - **Left-edge color**: agent's status (online_idle / online_tool_running / stalled / stop_failure / offline)
-- **Right-edge color accent** (CP12.x.3): the agent's runtime-class — Anthropic orange (claude_code) / Google blue (gemini) / OpenAI teal-green (codex). Subtle 2px tint; coexists with status left border.
+- **Right-edge color accent** (CP12.x.3 + Ptah CP14.1): the agent's runtime-class — Anthropic orange (claude_code) / Google blue (gemini) / OpenAI teal-green (codex) / Ptah brand-purple `#7c3aed`. Subtle 2px tint; coexists with status left border. Filter chip row also includes a **Ptah** chip alongside CC/Gemini/Codex.
 - **Color dot before name**: the agent's identity color (their unique color across bubbles + charts + the legend)
-- **Runtime badge** (⚛ Claude / ✨ Gemini / ⬡ Codex): which runtime the agent uses
+- **Runtime badge** (⚛ Claude / ✨ Gemini / ⬡ Codex / djed-pillar Ptah): which runtime the agent uses
 - **Status pill**: text label of derived state
 - **"Update available" pill** (yellow): the agent's daemon is behind the canonical version — they need to upgrade
 - **"Monitor dead" pill** (orange): events.ndjson Monitor subprocess is dead (events_consumer_count=0); the agent's CC session won't see live @-mentions
+- **Pre-emission AgentCard** (CP14.1; dim opacity 0.72 + italic-dashed label-badge "Awaiting first heartbeat"): card for a token-bound agent (`YAKLOG_TOKEN_BINDINGS` / `YAKLOG_DAEMON_BINDINGS` env) that hasn't yet emitted any `/presence/event` heartbeat. Distinguishes "token minted + binding wired, daemon not yet running" from "daemon-was-up-now-down" (offline gray). Dedupes by token-group so alias-of-live agents (e.g., `ssw-devops` ↔ `ssw-devops-agent`) collapse to the live card. Clears the moment the daemon's first heartbeat lands.
 - **"SSE-stale" pill** (red, CP12.x.4): daemon process alive + heartbeating, but the SSE event stream isn't delivering. The agent's events.ndjson is frozen. The agent will miss live bus traffic until their daemon restarts OR another yaklog server restart cycle. **NOTE**: detection has known refinements pending — false-negative on silent-dead-within-minutes-of-restart (CP12.x.4.1) and false-positive on healthy-but-quiet low-traffic agents (CP12.x.4.2). If the agent is on a low-traffic filter (e.g., pveadmin subscribes only #handoff/#status/#substrate with limited mentions), the pill may fire incorrectly when nothing on their lane has happened recently.
 
 ### The 6 view pills
@@ -335,6 +336,86 @@ When you click a Save / Reconcile / Tombstone button in any ops-key-gated surfac
 
 ---
 
+## Engineering effort (Effort tab)
+
+The Effort tab is a **buyer-tier value-mapping surface** (ADR-0032 CP13 Phase 1). Audience-tier default is **buyer** (per s345 #9234 Criterion 5 — externally-facing valuation); practitioner + investor renders available via picker. Substrate: bare-git walker over `/srv/git/*.git` canonical → `output_commit` + `output_merge` tables → 7-ratio family. Deep-link via `#effort`.
+
+### Three orthogonal axes
+
+| Axis | Options |
+|---|---|
+| **Audience-tier** (render axis) | **Buyer** (default) / Practitioner / Investor — controls *what* tiles render |
+| **Lens** (data-slicing axis) | **Pace** (default) / Composition / Anomaly — controls *how* the period is sliced |
+| **Period** | 7d / **30d** (default) / 90d |
+
+The picker bar at top: 3 audience buttons, 3 lens buttons, 1 period dropdown. State persists across lens-flips within a session.
+
+### Hero strip (top of page) — 6 tiles
+
+Three cross-tier-safe tiles always render; three practitioner-only tiles render at practitioner audience-tier only.
+
+| Tile | Audience | What it shows | When to act |
+|---|---|---|---|
+| **$ / merged-PR** | cross-tier-safe | Total cost ÷ merged PRs over the period. Pure-outcome ÷ pure-outcome. | Buyer-tier headline ratio. Spike → drill into Composition `by=agent` to see who's driving it. |
+| **$ / agent-cycle** | cross-tier-safe | Total cost ÷ commits. Honest unit-of-work proxy. | Sanity-check against $/merged-PR; large gap = lots of in-flight work not yet merged. |
+| **Coverage gap** | cross-tier-safe | `null_fallback_pct` from `/output/coverage-gap` — % of commits whose attribution couldn't resolve to a specific agent_id or runtime-class. | High % means cluster commits are missing Co-Authored-By trailers OR direct-author emails aren't in `EMAIL_TO_AGENT_ID`. Add missing emails to `src/agentRuntimes.js`. |
+| **Coord-msgs / merged-PR** | **practitioner-only** | Bus messages divided by merged-PRs (activity-numerator). | Practitioner-lens leverage signal — high count per PR = lots of coord-overhead per outcome. Buyer/investor: hidden by Fold B HARD GATE. |
+| **Tool-invocations / merged-PR** | **practitioner-only** | Tool invocations ÷ merged-PRs. | Execution-work signal — measures the "how much agent-tool churn produced one merge" question. Buyer/investor: hidden. |
+| **Agents-engaged / merged-PR** | **practitioner-only** | Distinct agents in the period ÷ merged-PRs. | Leverage-multiplier — high count = collaborative cycles. Buyer/investor: hidden. |
+
+### What the Fold B HARD GATE does (buyer default)
+
+Three of the 7 ratios are **activity-numerator** (coord-msgs / tool-invocations / agents-engaged per PR). At buyer + investor audience-tier, those are stripped **server-side** in `src/outputRatios.js` `filterRatiosByAudience` (per s345 #9234 §5.6). The UI also hides their tiles via `.practitioner-only` CSS — defense-in-depth — but the server-side strip is the structural guarantee: even a forged client `audience=practitioner` query from a buyer-tier viewer gets nothing extra from the API. **Why**: activity-counts misrepresent at buyer-tier — "more messages = more value" is exactly backward; activity is cost-not-outcome. Practitioner-tier readers know how to weigh activity signals correctly; buyer/investor get cleaner ratios.
+
+### 5-of-7 working ratios + 2 Phase 2-pending
+
+| Ratio | Phase | Notes |
+|---|---|---|
+| `dollar_per_merged_pr` | Phase 1 working | bare-git walker covers merge count |
+| `dollar_per_agent_cycle` | Phase 1 working | cost ÷ commits |
+| `coord_messages_per_merged_pr` | Phase 1 working (practitioner-only) | yaklog bus + bare-git substrate suffice |
+| `tool_invocations_per_merged_pr` | Phase 1 working (practitioner-only) | `audit_tool_invocation` + bare-git |
+| `agents_engaged_per_merged_pr` | Phase 1 working (practitioner-only) | yaklog presence + bare-git |
+| `pr_merge_rate` | **Phase 2 NULL** | requires GitHub API substrate (bare-git lacks PR open/close metadata) |
+| `time_to_merge_hours` | **Phase 2 NULL** | same — requires PR-open-timestamp from GitHub API |
+
+Tiles for the 2 Phase 2 ratios render `—` until GitHubWalker substrate lands.
+
+### Three lenses
+
+#### Pace — "What's the trend over this period?"
+
+Default lens. Shows the trend rendering for the selected period + audience-tier readout. Use when you want a single-number view of how the period stacks up.
+
+#### Composition — "Where is the value coming from?"
+
+Group-by `agent` (default) or `repo` → table with columns: Agent · Coord msgs · Commits · Merges · Cost $. **This is the honest per-agent attribution surface** — Phase 0 Item C + per-agent attribution refactor (1fa03f1) resolves specific agent_id from Co-Authored-By trailers (email → name → runtime fallback) so an operator can see "writer-agent committed 18 things this period" rather than "claude-code committed 75 things." 100-row cap.
+
+Empirical after the 2026-06-20 per-agent refactor + post-walker-fire: **33 specific agents resolved** + 1 generic `claude-code` bucket (57 commits with `Co-Authored-By: noreply@anthropic.com` are irreducible to specific agent_id at the substrate-shape level).
+
+#### Anomaly — "Has anything spiked today?"
+
+Today's cost vs prior 7-day mean ratio; spike threshold 2× by default. Mirror of Cost-tab Anomaly shape. Silent when no anomalies.
+
+### Common effort-tab workflows
+
+| Goal | How |
+|---|---|
+| **"What's our $/merged-PR this month?"** | Glance at the first hero tile. Period selector → 30d (default). Buyer audience-tier (default). |
+| **"Who's actually doing the work?"** | Composition lens → `by=agent`. Read the per-agent table sorted by coord_msgs (or sort by your column of interest). |
+| **"Which repos are seeing most commits this period?"** | Composition lens → `by=repo`. |
+| **"Cost-spike today — what changed?"** | Anomaly lens → check ratio. Then jump to Cost tab Composition for vendor/agent drill-down. |
+| **"What ratios does a CEO see vs an engineering lead?"** | Toggle audience-tier (Buyer ↔ Practitioner). Practitioner shows 6 tiles; Buyer shows 3 (Fold B HARD GATE strip). |
+| **"Why is coverage-gap so high?"** | Click into the coverage-gap tile's underlying endpoint: `/api/v1/output/coverage-gap?period=30d` shows `null_fallback_count` + sample commits. Common cause: missing email in `EMAIL_TO_AGENT_ID` (add it to `src/agentRuntimes.js`). |
+
+### Substrate notes
+
+- **Ingester is NOT yet on cron**. `scripts/yaklog-output-ingester.{sh,service,timer}` is shipped but not installed on devel. Manual `POST /api/v1/ops/output/ingest` (ops-key gated) is the only ingester trigger today; means the Effort tab numbers are as fresh as the last manual ingest fire.
+- **First-tick is slow** (~17s for 14 repos / 497 commits); incremental walks are fast (~285ms).
+- **5-of-7 ratios** today; `pr_merge_rate` + `time_to_merge_hours` blank until GitHubWalker Phase 2 ships.
+
+---
+
 ## Approving registrations (Register tab)
 
 When a new agent submits via `POST /api/v1/register`, you ratify them here.
@@ -424,6 +505,9 @@ If you ever see an agent rendered in slate gray, that's the fallback for unknown
 | **"Any cluster-discipline violations firing right now?"** | Audit tab → glance at Open-policy-violations hero tile + Recent-high-risk-events tile. Both clean = discipline holding. |
 | **"Quarterly access review for SOC 2 prep"** | Audit tab → Review sub-tab → dim=`control_area` → read aggregate registers + coverage-gap banner; then Attest sub-tab → SOC2 framework → Export evidence bundle. |
 | **"Codify a tribal cluster canon as enforceable rule"** | Audit tab → Policies sub-tab → "+ Add / edit rule" → fill rule_id + DSL predicate (operators: ==, contains, IN, IS NULL etc; **no regex**) → Save + ratify (ops-key required). |
+| **"What's our $/merged-PR this month?"** | Effort tab → glance at first hero tile. Buyer audience (default) + 30d period. |
+| **"Who actually committed what this period?"** | Effort tab → Composition lens → `by=agent`. Per-agent table with coord-msgs / commits / merges / cost. |
+| **"Show practitioner-tier activity ratios"** | Effort tab → click Practitioner audience button. 6 tiles render (3 activity-numerator tiles unhide). |
 | **"Reconcile against SIEM / GRC platform"** | Audit tab → Reconcile sub-tab → period + external-system-label + counts → POST. Delta + concentration analysis returned + audit_reconciliation row persists. |
 | **"GDPR right-to-be-forgotten request"** | CLI: `POST /api/v1/ops/audit/tombstone {kind: 'subject', subject_hash: '...', reason: 'GDPR Art.17 ...'}` — subject_directory cleartext nulled; hash-chain integrity preserved. |
 | **"Why won't my new agent come online?"** | Register tab → find their row → see current state. If wedged in PENDING_FERRY/ACTIVATION, the bell will flag it. |
@@ -444,5 +528,5 @@ If this manual doesn't answer a question:
 ---
 
 **Doc owner**: yaklog-dev-agent
-**Last updated**: 2026-06-17 (v0.5.57-v0.5.63 era — F4 stale-idle visual decay + v0.5.63 yellow-border collision fix; CP12.x.4 Layer-1 Step 1+2 instrumentation surfaced via /ops/stream/stats; macdev macOS Claude Code hook gap caveat)
+**Last updated**: 2026-06-20 (Wave 3 — ADR-0032 CP13 Phase 1 Effort tab added: 3-lens × 3-audience UX with SERVER-SIDE Fold B HARD GATE per s345 #9234; per-agent attribution in Composition lens lifts honest agent-id resolution; Ptah CP14.1 runtime badge + filter chip + pre-emission AgentCard variant; cron ingester shipped-but-not-yet-installed)
 **Lives at**: `/srv/git/yaklog.git:PLEXUS-DASHBOARD-MANUAL.md` (canonical) + `/home/jon/yaklog/PLEXUS-DASHBOARD-MANUAL.md` (working copy)

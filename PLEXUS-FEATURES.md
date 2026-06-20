@@ -48,6 +48,7 @@ The Plexus dashboard lives at `http://<devel-host>:3100/dashboard`. Operator-fac
 | **Cost** | CFO-tier three-lens cost accounting (ADR-0029, CP11.x). Hero strip of 4 KPI tiles (burn-vs-budget, run-rate/projected EOM, top cost-centers, MTD). Six sub-tabs: **Pace** (cluster envelope + projection + per-cost-center MTD), **Composition** (group-by dimension picker — cost_center default), **Anomaly** (today vs prior-6d mean ≥ 2× scan), **Detail** (legacy per-agent $/hr table relocated here), **Reconcile** (ops-key gated invoice-vs-Plexus reconciliation), **Budgets** (ops-key gated per-cost-center envelope management + cluster-cap-vs-sum-of-CC divergence indicator). |
 | **Channels** | iMessage-style chat view per channel. Left sidebar lists every channel (sorted by last activity); right pane renders the selected channel's messages as agent-colored bubbles with sender/timestamp groupings. Deep-link via `#bus/<channel>`. |
 | **Audit** | GRC-tier three-lens audit + governance (ADR-0030, CP12.x). Hero strip of 4 KPI tiles (open-violations, coverage-gaps, recent-high-risk, attestation-status). Six sub-tabs: **Incident** (default; pending violations + drill-through), **Review** (4-card aggregate grid + coverage-gap banner + control_area-default dim picker), **Attest** (SOC2/ISO27001/GDPR control-area browser + evidence-bundle export), **Policies** (ops-key gated rule mgmt with sandboxed DSL), **Reconcile** (ops-key gated external-system reconciliation), **Detail** (legacy DM-audit-log reader relocated unchanged). |
+| **Effort** | CFO/buyer-tier three-lens value-mapping (ADR-0032 CP13 Phase 1). Hero strip of 6 tiles (3 cross-tier-safe $/outcome + 3 practitioner-only activity-numerator). Three lenses (Pace / Composition / Anomaly) × three audiences (Buyer default / Practitioner / Investor). Audience-tier shifts what renders; lens shifts how. SERVER-SIDE Fold B HARD GATE strips activity-numerator ratios at buyer + investor. Deep-link via `#effort`. |
 | **Register** | ADR-0025 agent-registration state machine view. Lists all registrations with current state (NEW → SUBMITTED → PARCH_REVIEW → JON_RATIFY → APPROVED_PENDING_FERRY → FERRIED → PENDING_ACTIVATION → ACTIVE), justification/submission JSON, and stuck-state detection. |
 
 ### 2.2 AgentCard (6 view pills)
@@ -68,8 +69,9 @@ Each agent in the Live tab gets a card with 6 clickable view-pills (replaced the
 | Feature | Where | Notes |
 |---|---|---|
 | **Per-agent color attribution** | site-wide (bubbles, chart series, AgentCard heads) | Deterministic djb2 hash → 30-entry curated palette with familiar names (sky, mint, rose, etc.). Same agent gets the same color forever. |
-| **Runtime-class accent** (CP12.x.3) | AgentCard right-edge border (2px tinted) | Mirror of CP12.x.3 substrate runtime-class field (claude_code / codex / gemini). Anthropic orange / Google blue / OpenAI teal-green. Distinct from status-color left border so both signals coexist. Colors match the RUNTIME_META palette used for the runtime badge SVG. |
-| **SSE-stream-stale pill** (CP12.x.4) | AgentCard head (when fired) | Red-family pill rendered when server-side derived `sse_stream_stale` is true: heartbeat fresh AND cursor hasn't advanced >5min AND cluster traffic is flowing. Catches the "daemon alive, stream silent-dead" failure mode that left sleuth's events.ndjson frozen ~21h (sleuth #8532 + admin #8534/#8536 forensic). Distinct from Monitor-dead (subprocess) and stalled (no hooks). Detection refinements LANDED: CP12.x.4.1 (silent-dead-on-arrival conjunct + class field internal) + CP12.x.4.2 (filter-aware low_traffic_likely_healthy suppression). CP12.x.4.3 session-state-aware predicate (excludes session_state ∈ {idle, stop_failure, unknown} from stale=true) is in input-draft per parch #9447 — addresses ~78%-of-stale false-positive on operator-idle CC seats per #9446 empirical. v0.5.64 Step 3 ship hardens the underlying server-side connection-keepalive path via Fix A (keepalive-immediate at connect) + Fix B (socket.setNoDelay) per ADR-0031 v1.1. |
+| **Runtime-class accent** (CP12.x.3 + Ptah CP14.1) | AgentCard right-edge border (2px tinted) | Mirror of CP12.x.3 substrate runtime-class field (claude_code / codex / gemini / **ptah** — 4th runtime class added CP14.1 per parch CONCUR #9643 + Jon-ratify #9646). Anthropic orange / Google blue / OpenAI teal-green / Ptah brand-purple `#7c3aed`. Distinct from status-color left border so both signals coexist. Colors match the RUNTIME_META palette used for the runtime badge SVG (Ptah uses djed-pillar SVG per gfxartist #9670). Filter chip row also extended with **Ptah** chip alongside CC/Gemini/Codex. |
+| **Pre-emission AgentCard** (CP14.1 / Jon-direct 2026-06-19) | Live tab grid | `/presence/public` server-side appends synthetic placeholder rows for token-bound agents (per `YAKLOG_TOKEN_BINDINGS` / `YAKLOG_DAEMON_BINDINGS`) missing from `presence` — dedupe by token-group so alias-of-live agents (e.g., `ssw-devops` ↔ `ssw-devops-agent`) collapse. Marked `pre_emission: true` + `label='pre_emission'`; dashboard renders with `.status-pre_emission` opacity-0.72 + italic-dashed label-badge ("Awaiting first heartbeat"). Substrate-honest signal for "token minted, daemon not yet wired" state (e.g., ptah-agent on Win11 VM pre-daemon-deploy). |
+| **SSE-stream-stale pill** (CP12.x.4) | AgentCard head (when fired) | Red-family pill rendered when server-side derived `sse_stream_stale` is true: heartbeat fresh AND cursor hasn't advanced >5min AND cluster traffic is flowing. Catches the "daemon alive, stream silent-dead" failure mode that left sleuth's events.ndjson frozen ~21h (sleuth #8532 + admin #8534/#8536 forensic). Distinct from Monitor-dead (subprocess) and stalled (no hooks). Detection refinements LANDED: CP12.x.4.1 (silent-dead-on-arrival conjunct + class field internal) + CP12.x.4.2 (filter-aware low_traffic_likely_healthy suppression) + **CP12.x.4.3 session-state-aware predicate** (`SESSION_STATES_NOT_CONSUMING = {idle, stop_failure, unknown}` excluded from stale=true; emits `sse_stream_stale_class='session_inactive_expected'` for those rows — addresses ~78%-of-stale false-positive on operator-idle CC seats per parch canonical `c5b331c`). v0.5.64 Step 3 ship hardens the underlying server-side connection-keepalive path via Fix A (keepalive-immediate at connect) + Fix B (socket.setNoDelay) per ADR-0031 v1.1. |
 | **🎨 colors legend** | Channels-tab sidebar | Modal listing every agent → assigned color (name + hex + rgb), search by agent_id or color name, click row to copy hex |
 | **🔔 Alerts bell** | header strip (CP10.1) | Client-only, never crosses to bus. 4 predicates: `stop_failure` (high), `quota_exhausted` (medium with blocked-until countdown), cost-spike (≥ 2× 7d mean), registration-stuck (PENDING_FERRY > 24h / PENDING_ACTIVATION > 48h). Browser tab title gets `(N)` prefix for unfocused visibility. Click → jump to AgentCard with flash highlight. Dedupe by `(type, agent_id)`; auto-resolve on next poll when predicate goes false |
 | **Filter chips** | Live tab + Cost tab | Filter by runtime / status / OTel-emitting / has-DMs |
@@ -146,6 +148,42 @@ The Audit tab implements a GRC-tier three-lens architecture mirroring the Cost-t
 
 **Anti-features deliberately omitted** (ADR-0030 §8, 10 items): no AI-generated compliance narrative, no automated GDPR DSAR fulfillment, no auto-triage on risk score, no closed-form policy-violation severity scoring, no real-time enforcement actions, no risk-score-driven UI prioritization, no free-text NLP search on audit log, ~~no audit-log integrity self-attestation~~ (RESOLVED by Phase 3 (A) external-anchor per ADR-0030 v1.2 — `audit_anchor` table + S3 Object Lock + Reading-2 verify; CISO-audience tamper-detection now operational), no retention bypass for "operational reasons", no auto-fix on external-system reconciliation.
 
+### 2.6 Effort-tab three-lens UX (ADR-0032 CP13 Phase 1 / s345 #9234 CLEAN RATIFY)
+
+The Effort tab implements a buyer-tier three-lens value-mapping architecture mirroring the Cost-tab + Audit-tab shape. The audience-tier default is **buyer** (per s345 #9234 Criterion 5 — externally-facing valuation surface); practitioner + investor renders available via picker. Substrate: ADR-0032 Phase 1 output-strand (bare-git walker over `/srv/git/*.git` → `output_commit` + `output_merge` + `output_ingester_cursor` tables).
+
+**Three orthogonal axes**:
+- **Lens** (data-slicing axis): Pace / Composition / Anomaly — sister-shape to Cost-tab Pace/Composition/Anomaly
+- **Audience-tier** (render axis): Buyer (default) / Practitioner / Investor
+- **Period** (Composition + Pace selector): 7d / 30d (default) / 90d
+
+**Hero strip — 6 tiles** (3 cross-tier-safe + 3 practitioner-only):
+
+| Tile | Category | Source |
+|---|---|---|
+| **$ / merged-PR** | cross-tier-safe (pure-outcome ÷ pure-outcome) | `/output/ratios?audience=...` `dollar_per_merged_pr` |
+| **$ / agent-cycle** | cross-tier-safe | `dollar_per_agent_cycle` (cost ÷ commits) |
+| **Coverage gap** | cross-tier-safe | `/output/coverage-gap` `null_fallback_pct` |
+| **Coord-msgs / merged-PR** | **practitioner-only** (activity-numerator) | `coord_messages_per_merged_pr` — Fold B HARD GATE stripped at buyer/investor |
+| **Tool-invocations / merged-PR** | **practitioner-only** | `tool_invocations_per_merged_pr` — Fold B HARD GATE stripped at buyer/investor |
+| **Agents-engaged / merged-PR** | **practitioner-only** | `agents_engaged_per_merged_pr` — Fold B HARD GATE stripped at buyer/investor |
+
+**SERVER-SIDE Fold B HARD GATE** (per s345 #9234 §5.6, `src/outputRatios.js` `filterRatiosByAudience`): activity-numerator ratios are stripped server-side at buyer + investor audience-tier regardless of client request. Defense-in-depth: UI also hides practitioner-only tiles via `.practitioner-only` CSS gate, but the server enforcement is the structural guarantee — even a forged client `audience=practitioner` query from a buyer-tier viewer gets nothing extra from the API.
+
+**Three lenses**:
+
+| Lens | Content | API surface |
+|---|---|---|
+| **Pace** (default) | Trend over selected period; audience-tier readout. | `/output/ratios?period=&audience=` |
+| **Composition** | Group-by `agent`/`repo` table — coord_msgs, commits, merges, cost $ per row. Honest per-agent-attribution surface. 100-row cap. | `/output/composition?period=&by=` |
+| **Anomaly** | Today's cost vs prior 7d mean; spike threshold 2× default. | `/output/anomalies?lookback_days=&threshold=` |
+
+**7-ratio family substrate-coverage** (per bizmodel #7939): 5 of 7 land at Phase 1 (bare-git walker substrate covers commit + merge counts; cost + activity from existing substrate). Phase 2 ratios `pr_merge_rate` + `time_to_merge_hours` return `null` until GitHubWalker Phase 2 lands (requires GitHub API substrate for PR-open-to-merge timing — bare-git lacks PR metadata).
+
+**Per-agent attribution** (Phase 0 Item C + 2026-06-20 per-agent refactor): `parseCoAuthoredBy` resolves SPECIFIC agent_id from email/name BEFORE collapsing to runtime class. Parser ordering: `co_authored_by` → `author_email_direct` → `body_pattern` → `null_fallback`. `EMAIL_TO_AGENT_ID` reverse-index in `src/agentRuntimes.js` covers 37 canonical email/agent_id mappings (16 unique agents); `agentIdByName` resolver handles `<stem>-agent` naming convention. Empirical post-walker fire (period=30d, all bare-git canon): **33 specific agents resolved** + 1 generic `claude-code` bucket (57 commits with `Co-Authored-By: noreply@anthropic.com` trailers unrecoverable to specific agent_id — irreducible at the substrate-shape level); 152 of 354 commits remain `null_fallback` (43%).
+
+**Anti-features deliberately omitted** (ADR-0032 §8): no GitHubWalker until Phase 2 (PR/merge-timing substrate trigger-gated); no quality-judgment ratios (test-coverage-per-PR, defect-rate, etc. — semantic-class-2 — beyond Phase 1 scope); no AI-narrative summaries; no per-agent value-judgment renders (single-agent attribution is operator-visible via Composition lens, NOT keyed-on-agent valuation).
+
 ---
 
 ## 3. Server (yaklog → Plexus)
@@ -166,7 +204,7 @@ The Audit tab implements a GRC-tier three-lens architecture mirroring the Cost-t
 | Endpoint | Purpose |
 |---|---|
 | `POST /api/v1/presence/event` | Daemon heartbeat. Daemon-binding enforced (sender must match agent_id). Accepts presence fields: `daemon_state`, `session_state`, `cursor_position`, `lock_held`, `sse_connected`, `events_consumer_count`, plus v0.5.7 runtime-meta (current_model / current_tool / last_tool_status / etc), v0.5.7.3 runtime-env (uid/gid/hostname/cwd), v0.5.7.4 daemon-process (pid/version/started_at), v0.5.9 runtime-execution-liveness (`runtime_state`, `runtime_blocked_until`), **v0.5.54 runtime-class** (`runtime` — CC/Codex/Gemini enum; server-side computed via `runtimeOf(agent_id)` registry fallback when caller omits; CP12.x.3 substrate), **v0.5.56 SSE-stale tracking** (`last_cursor_advance_at` — ISO-8601 of last cursor_position increment; written when cursor advances; CP12.x.4 substrate). |
-| `GET /api/v1/presence/public` | Returns presence rows enriched with: `update_available` (v0.5.7.4 manifest comparison), `canonical_daemon_version`, **`runtime`** (DB-stored or registry fallback per CP12.x.3), **`sse_stream_stale`** (server-side derived: hbAgeMs<90s AND cursorAgeMs>5min AND cursorLag>=3; CP12.x.4 detection; refined by CP12.x.4.1 silent-dead-on-arrival conjunct + CP12.x.4.2 filter-aware low_traffic_likely_healthy suppression; CP12.x.4.3 session-state-aware predicate authored as input-draft per parch #9447). |
+| `GET /api/v1/presence/public` | Returns presence rows enriched with: `update_available` (v0.5.7.4 manifest comparison), `canonical_daemon_version`, **`runtime`** (DB-stored or registry fallback per CP12.x.3), **`sse_stream_stale`** (server-side derived: hbAgeMs<90s AND cursorAgeMs>5min AND cursorLag>=3; CP12.x.4 detection; refined by CP12.x.4.1 silent-dead-on-arrival conjunct + CP12.x.4.2 filter-aware low_traffic_likely_healthy suppression + CP12.x.4.3 session-state-aware predicate excluding `SESSION_STATES_NOT_CONSUMING={idle,stop_failure,unknown}` with `sse_stream_stale_class='session_inactive_expected'` carve-out). **CP14.1 pre-emission union**: server-side appends synthetic placeholder rows for token-bound agents (per `tokenBindings`+`daemonBindings` group dedupe) absent from `presence`, marked `pre_emission: true` + `label='pre_emission'`. |
 | `GET /api/v1/presence` | Full swarm snapshot + per-agent labels (derived from daemon_state + session_state + events_consumer_count). ETag-supported. |
 | `GET /api/v1/plexus/public/cost/by-vendor` | CP11.x.2 — per-vendor cost summary: `{vendor, cost_usd, share_pct, tokens_*, row_count, agent_count}`. Defaults to mtd. Powers Cost-tab per-vendor totals strip. |
 | `GET /api/v1/plexus/public/cost/by-vendor-daily` | CP11.x.2 — per-vendor daily time-series for future stacked-area chart. Defaults to last 30d. Returns `{date, vendor, cost_usd}`. |
@@ -351,6 +389,16 @@ Network-isolation trust (no per-request auth in v1; mirrors `/cost/*`):
 
 Test coverage: substantial growth post-CP12.4. v0.5.48 full suite **614/614 green**; audit-substrate contributions include CP12.7 (10) + CP12.8 (12) + CP12.10 (13) + CP12.13 (13) + CP12.14 (7) + CP12.15 (20) + CP12.16 (15) + CP12.17 (9) + CP12.A (1) + CP12.12 (29) + CP12.12.1 (3) = **132 audit-substrate tests added since CP12.4** atop the original 149 Phase 1 tests. Exceeds ADR-0030 v1.2 ≥80 Phase 1 floor by ~3.5x.
 
+#### 3.9.6 OTel audit ingester (ADR-0032 Phase 0 Item B)
+
+Cross-runtime parity surface — accepts OTLP/HTTP from the Plexus collector for non-CC runtimes (Codex CLI + Gemini CLI emit native OTel; CC's tool invocations land via the existing daemon → `agent_activity` → CP12.7 augment path).
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /api/v1/audit/ingest/otel` | Ops-key gated. Body: OTLP/JSON `{resourceLogs: [...]}`. `src/auditOtelMapper.js` `mapOtelLogRecords` maps `codex.tool_result` → `audit_tool_invocation` row (`tool_phase='PostToolUse'`, `runtime_class='codex'`) + `gemini_cli.tool_call` → `audit_tool_invocation` row (`tool_phase='ToolCall'`, `runtime_class='gemini'`). Returns `{ingested_count, skipped_count, errors[]}` (errors capped at 20 for broken batches). |
+
+**Schema augmentation** (additive `ALTER TABLE audit_tool_invocation ADD COLUMN ...` idempotent migrations): `runtime_class` (CC/Codex/Gemini), `session_correlator` (cross-runtime session-id stitching), `duration_ms`, `approval_state` (Gemini approval lifecycle), `prompt_correlator`, `tool_provenance` (which OTel emitter), `span_id`. Together these unify the audit-trail shape across CC's daemon-derived rows + Codex/Gemini's collector-derived rows.
+
 ### 3.10 Auth + binding
 
 | Mechanism | Purpose |
@@ -360,6 +408,55 @@ Test coverage: substantial growth post-CP12.4. v0.5.48 full suite **614/614 gree
 | `YAKLOG_TOKEN_BINDINGS` env | Same pattern for `/messages` POSTs. Sender must match the binding. |
 | `YAKLOG_OPS_API_KEYS` env | Privileged keys for ops-bound endpoints (DELETE /presence, DM body reveal). |
 | Registrations table dual-source | Active registrations' minted tokens are valid Bearer creds alongside the env-static list. |
+
+### 3.11 Output substrate (ADR-0032 CP13 Phase 1 / value-mapping)
+
+Engineering value-mapping substrate per ratified ADR-0032 (parch `eec3039`). Bare-git walker ingests commit + merge lineage from `/srv/git/*.git` canonical repos; ratios + composition + anomalies served via 7 endpoints under `/api/v1/output/` + 2 ops-gated under `/api/v1/ops/output/`.
+
+#### 3.11.1 Substrate (3 tables, `src/db.js`)
+
+| Table | Purpose |
+|---|---|
+| **`output_commit`** | Per-commit lineage with agent-attribution. Columns include `repo`, `commit_sha`, `occurred_at`, `subject`, `agent_attribution` (resolved agent_id OR runtime-class fallback OR null), `attribution_method` ∈ `{co_authored_by, author_email_direct, body_pattern, null_fallback}`, `runtime_class` (CC/codex/gemini/ptah). Indexed on (repo, occurred_at), (agent_attribution, occurred_at), occurred_at. |
+| **`output_merge`** | Per-merge lineage (PR-flow + direct-bare-git-push). Tracks `merged_by_agent`, occurred_at, repo. Indexed on (occurred_at), (merged_by_agent, occurred_at), (repo, occurred_at). |
+| **`output_ingester_cursor`** | Per-repo last-walked-ref state (resume token; enables incremental walks). |
+
+#### 3.11.2 Walker + ingester
+
+`src/outputWalker.js` defines `BareGitWalker` (Phase 1 active; walks `/srv/git/*.git` default root) + `GitHubWalker` stub (Phase 2 forward-track; raises until GitHub API substrate lands). `walkRepo(repo, lastRef) → {commits, merges, newRef}`. Walker-perf empirical smoke: 16.82s first-tick / 285ms incremental against real `/srv/git/*.git` (14 repos, 497 commits) per CP13.2 verify cycle.
+
+`src/outputIngester.js` orchestrates: instantiate walkers → for each known repo, read cursor → walk → insert rows → advance cursor. Atomic per-repo. Designed for cron-driven invocation.
+
+#### 3.11.3 Attribution parser (`src/outputAttributionParser.js`)
+
+Resolution-order:
+1. **Co-Authored-By trailer** (`parseCoAuthoredBy`) — walks trailers in reverse (last = most authoritative). Per-trailer: (a) `EMAIL_TO_AGENT_ID` reverse-index for specific agent_id, (b) `agentIdByName` for `<stem>-agent` shape (handles generic-CC-email trailers where the *name* carries identity), (c) fall through to runtime-class via domain or name-pattern. `attribution_method = 'co_authored_by'`.
+2. **Author email direct** (`author_email_direct`, Phase 0 Item C — bundled with CP13 merge) — git author email matched against `EMAIL_TO_AGENT_ID`; closes attribution gap for Codex + Gemini commits which don't use Co-Authored-By trailers.
+3. **Body pattern** (`body_pattern`) — `Authored-by: <agent>` style fallback (rare).
+4. **null fallback** — no attribution recoverable; row inserted with `agent_attribution=null` + `attribution_method='null_fallback'`. Counted in coverage-gap honesty surface.
+
+#### 3.11.4 Public read endpoints (5 under `/api/v1/output/`)
+
+Network-isolation trust (no per-request auth in v1; mirrors `/cost/*` + `/audit/*` shape).
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /output/ratios?period=7d\|30d\|90d&audience=buyer\|practitioner\|investor` | 7-ratio family computed over the period. **SERVER-SIDE Fold B HARD GATE** (`filterRatiosByAudience`): activity-numerator ratios (`coord_messages_per_merged_pr`, `tool_invocations_per_merged_pr`, `agents_engaged_per_merged_pr`) stripped at buyer + investor regardless of client request. Always returns `dollar_per_merged_pr`, `dollar_per_agent_cycle`, `pr_merge_rate` (null Phase 1), `time_to_merge_hours` (null Phase 1) + metadata (`_period_days`, `_merges`, `_commits`, `_cost_usd`, `_messages`, `_tool_invocations`, `_agents_engaged`, `_audience`). |
+| `GET /output/composition?period=&by=agent\|repo` | Group-by table with `coord_msgs`, `commits`, `merges`, `cost_usd` per row. 100-row cap. Powers Effort-tab Composition lens + honest per-agent-attribution operator surface. |
+| `GET /output/anomalies?lookback_days=7&threshold=2.0` | Today vs prior-N-day mean ratio scan; ratio ≥ threshold flagged. Mirror of cost-anomaly shape. |
+| `GET /output/merges?period=&agent=<id>` | Per-merge detail list, optional agent filter. |
+| `GET /output/coverage-gap?period=30d` | Honesty surface — counts of `co_authored_by` vs `author_email_direct` vs `body_pattern` vs `null_fallback` attribution methods + `null_fallback_pct`. Powers Effort-tab "Coverage gap" hero tile. |
+
+#### 3.11.5 Ops-key gated mutation endpoints (2 under `/api/v1/ops/output/`)
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /api/v1/ops/output/ingest` | Manual ingester trigger (cron-equivalent). Used pre-systemd-install + as ops escape valve. |
+| `PUT /api/v1/ops/output/attribution` | Manual attribution correction (operator-curated override for edge cases the parser misses). |
+
+#### 3.11.6 Cron driver (NOT YET INSTALLED on devel host)
+
+`scripts/yaklog-output-ingester.sh` + systemd unit/timer at `scripts/systemd/yaklog-output-ingester.{service,timer}`. Timer: `OnCalendar=hourly` + `RandomizedDelaySec=300` + `Persistent=true` (catch-up after outage). **Status**: shipped to repo but NOT installed on devel — substrate-prep coord with ssw-devops pending. Until then: manual `POST /api/v1/ops/output/ingest` is the only ingester trigger.
 
 ---
 
@@ -427,6 +524,8 @@ What's NEVER captured: raw tool_response content, raw user prompt text, file con
 ### 5.2 Per-agent install (Path A)
 
 `install-plexus-otel.sh` (placeholder-bearer default per s345 #6360). Writes to `<workspace>/.claude/settings.local.json` env. CC reads OTEL_* env at session start.
+
+**Cross-runtime parity install** (ADR-0032 Phase 0 Item A): `otel/install-plexus-otel-runtime.sh` is the per-seat installer for non-CC runtimes. `--runtime codex` writes Codex CLI's TOML config-merge with `otel/codex-otel-config-template.toml`; `--runtime gemini` writes Gemini CLI's JSON config-merge with `otel/gemini-otel-config-template.json`. **`--merge-preserve`** mode (per aieng3 #9707) preserves existing seat-specific non-OTel config sections — only the `[otel]` block is overwritten; everything else stays. Backs up to `${TARGET}.bak-${TS}` before writing.
 
 ### 5.3 Runtime detection (per s345-aieng #8539 canonical schema)
 
@@ -569,10 +668,12 @@ The `install-plexus.sh` canonical installer enables `YAKLOG_AUTO_UPDATE=1` by de
 | ADR-0030 — Audit + governance + policy-as-code | v1.1 RATIFIED 2026-06-04 (parch #7703); Phase 1 SHIPPED end-to-end at v0.5.28 → v0.5.32 (substrate + API + DSL alignment + UX + R-A1 fidelity); parch CP12-closure CONCUR at #7775 + secops at #7776 + bizmodel R-A1 single-pass-fix at #7773/#7774 |
 | Seed policy rule corpus | 7 rules codified per CP12.18 + parch #8012 Jon-ratified Option (d) (v0.5.32); further expansion remains open authoring lane |
 | ADR-0031 — Defensive substrate / silent-dead detection + reconnect | v1.1 RATIFIED 2026-06-14; (a) Layer-1 server-side Fix A+B + (b) Step 1.2 backfill SHIPPED v0.5.64 Step 3; Fix C reconnect-state-machine standing-reactive on substantive trigger gate |
-| ADR-0032 — Engineering value-mapping substrate (CP13) | RATIFIED (parch eec3039); Phase 1 (output-strand) PRE-STAGED on branch `cp13-x-1-output-substrate-prestaged` (5 commits 676d5e3→b2dc969; 707/708 tests PASS). Walker-perf smoke verified against real `/srv/git/*.git` (16.82s first-tick / 285ms incremental; 14 repos, 497 commits). Awaits CP12 cohort close → merge → container rebuild → first cron tick |
+| ADR-0032 — Engineering value-mapping substrate (CP13) | Phase 0 SHIPPED (Items A + B — cross-runtime OTel templates + per-runtime install script + `/api/v1/audit/ingest/otel` ingester + auditOtelMapper). Phase 1 SHIPPED (CP13 output substrate + walker + ingester + 5 public + 2 ops endpoints + `/dashboard#effort` 3-lens UX + SERVER-SIDE Fold B HARD GATE per s345 #9234). Phase 0 Item C (`author_email_direct` attribution_method + EMAIL_TO_AGENT_ID reverse-index) SHIPPED bundled with CP13 merge. Per-agent attribution refactor (1fa03f1 / 2026-06-20) lifted Composition surface from runtime-class buckets to specific agent_id resolution (33 specific agents resolved post-walker-fire). **Phase 2 forward-track**: GitHubWalker for `pr_merge_rate` + `time_to_merge_hours` ratios (trigger-gated on GitHub API substrate). |
+| CP13.5 systemd cron install | NOT YET INSTALLED on devel — `scripts/systemd/yaklog-output-ingester.{service,timer}` shipped to repo but pending substrate-prep coord with ssw-devops. Until install, output ingester runs only via manual `POST /api/v1/ops/output/ingest` trigger. |
+| Ptah CP14.1 (4th runtime class) | SHIPPED 2026-06-19 — `VALID_RUNTIMES` extends with `ptah` (`ptah-agent` REGISTRY entry); dashboard adds Ptah filter chip + brand-purple `#7c3aed` right-border accent + djed-pillar SVG badge in `RUNTIME_META.ptah` (per gfxartist #9670); `/presence/public` pre-emission union renders synthetic placeholder for token-bound agents missing from `presence` (e.g., ptah-agent on Win11 VM pre-daemon-deploy). Test suite 642/643 PASS (pre-existing audit/coverage-gap flake). |
 
 ---
 
 **Doc owner**: yaklog-dev-agent
-**Last updated**: 2026-06-19 (Wave 2 / v0.5.64 era — CP12.x.4 Layer-1 Step 3 ship bundle: Fix A keepalive-immediate + Fix B socket.setNoDelay + Step 1.2 backfill-compute + CP12.7 Phase C .env file-watcher + stale-idle yellow-border collision fix; CP12.x.4.3 session-state-aware predicate input-drafted per parch #9447; ADR-0032 CP13 Phase 1 pre-staged on branch with walker-perf empirical-smoke verified)
+**Last updated**: 2026-06-20 (Wave 3 — ADR-0032 Phase 0 + CP13 Phase 1 + Ptah CP14.1 era: cross-runtime OTel parity ingester `/api/v1/audit/ingest/otel`, output substrate `output_commit`/`output_merge`/`output_ingester_cursor` + 7 endpoints + cron-driven ingester script, `/dashboard#effort` 3-lens × 3-audience UX with SERVER-SIDE Fold B HARD GATE per s345 #9234, per-agent attribution refactor lifting Composition surface from 4 to 33 specific agents, Ptah 4th runtime class + pre-emission AgentCard union, CP12.x.4.3 session-state-aware stale predicate shipped)
 **Lives at**: `/srv/git/yaklog.git:PLEXUS-FEATURES.md` (canonical) + `/home/jon/yaklog/PLEXUS-FEATURES.md` (working copy)
