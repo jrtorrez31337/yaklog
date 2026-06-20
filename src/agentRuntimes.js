@@ -25,13 +25,16 @@ const DEFAULT_RUNTIME = 'claude_code';
 
 const VALID_RUNTIMES = new Set(['claude_code', 'gemini', 'codex', 'ptah']);
 
-// Phase 0 Item C (ADR-0032 cross-runtime telemetry parity) — author_email
-// reverse-index for outputAttributionParser fallback. Per /srv/git/ptah.git
-// empirical: Codex (aieng3-agent@swarm.local + aieng3-agent@devel) and
-// Gemini (gemini-agent@devel) commit as DIRECT authors, NOT via
-// Co-Authored-By trailer. Without this fallback those commits NULL-fallback
-// at attribution-tier — breaks ADR-0032 brand-spine claim per
-// feedback_substrate_check_before_routing_claims.
+// Phase 0 Item C + Jon-direct empirical-expansion 2026-06-20 — author_email
+// reverse-index for outputAttributionParser fallback + Co-Authored-By
+// specific-agent resolver.
+//
+// Empirical anchor: walker first-fire 2026-06-20 against /srv/git/*.git
+// 533 commits surfaced ~20 distinct agent emails. Without registry entries
+// these collapse to 'claude-code' generic runtime label (Co-Authored-By path)
+// or null_fallback (direct-author path). Per Jon-direct: "we should be able
+// to map specific agents via bare-git data" — this registry is the substrate
+// for per-agent attribution.
 //
 // Map<email, agent_id> — explicit; do not auto-derive from REGISTRY
 // because canonical commit emails vary by host (e.g., aieng3-agent@swarm.local
@@ -44,9 +47,59 @@ const EMAIL_TO_AGENT_ID = new Map([
   ['aieng3@swarm.local',       'aieng3-agent'],
   // Gemini
   ['gemini-agent@devel',       'gemini-agent'],
-  // Ptah — preemptive; once Ptah commits start landing in cluster repos
+  // Ptah
   ['ptah-agent@devel',         'ptah-agent'],
   ['ptah-agent@ptah-win11',    'ptah-agent'],
+  // ── CC agents (Jon-direct empirical-expansion 2026-06-20) ─────────────
+  // yaklog-dev (this agent)
+  ['yaklog-dev-agent@devel',   'yaklog-dev-agent'],
+  ['yaklog-dev@devel.local',   'yaklog-dev-agent'],
+  ['yaklog-dev@subnet345.com', 'yaklog-dev-agent'],
+  ['yaklog-dev@devel',         'yaklog-dev-agent'],
+  // s345-aieng (Anthropic Ptah primary)
+  ['s345-aieng-agent@subnet345.com', 's345-aieng-agent'],
+  ['s345-aieng@devel',         's345-aieng-agent'],
+  // ssw-devops
+  ['ssw-devops@devel',         'ssw-devops-agent'],
+  ['ssw-devops-agent@devel',   'ssw-devops-agent'],
+  // aieng (general aieng-agent, distinct from aieng3)
+  ['aieng-agent@subnet345.com',  'aieng-agent'],
+  ['aieng-agent@traptop10k.local', 'aieng-agent'],
+  ['aieng@devel',                'aieng-agent'],
+  // s345 (brand-spine + scope-strand)
+  ['s345-agent@traptop10k.local', 's345-agent'],
+  ['s345-agent@devel',           's345-agent'],
+  // gfxartist
+  ['gfxartist-agent@ssw-cluster',  'gfxartist-agent'],
+  ['gfxartist-agent@ssw.cluster',  'gfxartist-agent'],
+  ['gfxartist-agent@ssw.internal', 'gfxartist-agent'],
+  ['gfxartist@devel',              'gfxartist-agent'],
+  // parch (governance)
+  ['parch@devel',              'parch-agent'],
+  ['parch-agent@devel',        'parch-agent'],
+  ['parch-agent@traptop10k',   'parch-agent'],
+  // writer-agent
+  ['writer-agent@subnet345.com', 'writer-agent'],
+  ['writer-agent@devel',         'writer-agent'],
+  // secops
+  ['secops-agent@devel',       'secops-agent'],
+  // auth-agent
+  ['auth-agent@devel',         'auth-agent'],
+  // ── Second-pass empirical 2026-06-20 (post first walker fire) ──────────
+  // pveadmin (Ptah host substrate provisioning)
+  ['pveadmin-agent@devel',     'pveadmin-agent'],
+  // smm-agent
+  ['smm-agent@devel',          'smm-agent'],
+  // maker-agent (rotated tokens; multi-host)
+  ['maker-agent@traptop10k',   'maker-agent'],
+  ['maker-agent@devel',        'maker-agent'],
+  // additional ssw-devops + secops hostname variants
+  ['ssw-devops@subnet345.com', 'ssw-devops-agent'],
+  ['secops-agent@swarm.internal', 'secops-agent'],
+  // aieng without -agent suffix (legacy short-stem author identity)
+  ['aieng@subnet345.com',      'aieng-agent'],
+  // Jon-direct (intentional non-attribution — author=Jon but no agent context)
+  // Mapped to NULL pseudo-agent NOT included here; null_fallback is honest.
 ]);
 
 function runtimeOf(agentId) {
@@ -61,9 +114,33 @@ function agentIdByEmail(email) {
   return EMAIL_TO_AGENT_ID.get(email.toLowerCase()) || null;
 }
 
+// Jon-direct empirical-expansion 2026-06-20 — name-pattern resolver for
+// Co-Authored-By trailer's display-name portion. When trailer carries
+// `Co-Authored-By: writer-agent <noreply@anthropic.com>` the email is generic
+// CC but the name carries the agent_id. Same shape applies to all agent
+// trailers with `<name>-agent` convention.
+//
+// Returns agent_id if name matches a known agent_id (REGISTRY OR canonical
+// `<name>-agent` cluster-naming-shape); null otherwise (parser falls through
+// to runtime-class resolution). Conservative — does NOT reconstruct from
+// short-stems to avoid catching generic vendor-display-names like 'Gemini'
+// or 'Codex' that should fall through to runtime-class resolution.
+function agentIdByName(name) {
+  if (!name || typeof name !== 'string') return null;
+  const trimmed = name.trim().toLowerCase();
+  // Direct match against REGISTRY (e.g., 'gemini-agent', 'aieng3-agent', 'ptah-agent')
+  if (REGISTRY.has(trimmed)) return trimmed;
+  // Pattern: `<stem>-agent` shape (cluster naming convention).
+  // Catches 'writer-agent', 'parch-agent', 'gfxartist-agent', etc.
+  // when the Co-Authored-By trailer carries the agent_id as display name.
+  if (/^[a-z][a-z0-9_-]*-agent$/.test(trimmed)) return trimmed;
+  return null;
+}
+
 module.exports = {
   runtimeOf,
   agentIdByEmail,
+  agentIdByName,
   REGISTRY,
   EMAIL_TO_AGENT_ID,
   DEFAULT_RUNTIME,

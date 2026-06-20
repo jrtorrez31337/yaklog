@@ -25,7 +25,7 @@
 
 'use strict';
 
-const { agentIdByEmail, runtimeOf } = require('./agentRuntimes');
+const { agentIdByEmail, agentIdByName, runtimeOf } = require('./agentRuntimes');
 
 // Co-Authored-By trailer canonical shape:
 //   Co-Authored-By: <Display Name> <email@example.com>
@@ -59,10 +59,44 @@ function parseCoAuthoredBy(commitMessage) {
   CO_AUTHORED_BY_RE.lastIndex = 0;
   const matches = [...commitMessage.matchAll(CO_AUTHORED_BY_RE)];
   if (matches.length === 0) return null;
+
   // Prefer the LAST Co-Authored-By trailer (convention: trailers at bottom
-  // are most authoritative). If no runtime-class resolves, fall through.
+  // are most authoritative). Walk in reverse.
+  //
+  // Jon-direct empirical-expansion 2026-06-20: resolve SPECIFIC agent_id
+  // from email/name BEFORE collapsing to runtime class. Order:
+  //   1. EMAIL_TO_AGENT_ID reverse-index (most specific; e.g.,
+  //      'writer-agent@subnet345.com' → 'writer-agent' agent_id)
+  //   2. Name-pattern resolver (handles `<name>-agent` shape; covers the
+  //      case where trailer is `Co-Authored-By: writer-agent <noreply@anthropic.com>`
+  //      — email is generic CC but name carries agent_id)
+  //   3. Fall through to runtime-class resolution (legacy path; preserves
+  //      coverage for generic CC trailers like 'Claude Opus 4.7
+  //      <noreply@anthropic.com>' where no specific agent_id exists)
   for (let i = matches.length - 1; i >= 0; i -= 1) {
     const [, name, email] = matches[i];
+
+    // Step 1: specific agent_id via email reverse-index
+    const agentFromEmail = agentIdByEmail(email);
+    if (agentFromEmail) {
+      return {
+        agent_attribution: agentFromEmail,
+        attribution_method: 'co_authored_by',
+        runtime_class: runtimeOf(agentFromEmail),
+      };
+    }
+
+    // Step 2: specific agent_id via name-pattern (`<stem>-agent` shape)
+    const agentFromName = agentIdByName(name);
+    if (agentFromName) {
+      return {
+        agent_attribution: agentFromName,
+        attribution_method: 'co_authored_by',
+        runtime_class: runtimeOf(agentFromName),
+      };
+    }
+
+    // Step 3: fall through to runtime-class only (generic CC trailers)
     const domain = email.split('@')[1]?.toLowerCase();
     let runtimeClass = RUNTIME_CLASS_BY_EMAIL_DOMAIN[domain] || null;
     if (!runtimeClass) {

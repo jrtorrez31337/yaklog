@@ -186,3 +186,40 @@ test('parseAttribution: backward-compat — calling without authorEmail still wo
   const r = parseAttribution(msg);
   assert.equal(r.attribution_method, 'null_fallback');
 });
+
+// ── Jon-direct empirical-expansion 2026-06-20: specific agent_id resolution
+// from Co-Authored-By trailer (replaces collapse-to-runtime behavior). ──────
+
+test('parseCoAuthoredBy: agent-explicit email resolves to specific agent_id (not runtime-class collapse)', () => {
+  // writer-agent@subnet345.com is in EMAIL_TO_AGENT_ID per cluster registry
+  const msg = `Subject\n\nCo-Authored-By: writer-agent <writer-agent@subnet345.com>`;
+  const r = parseCoAuthoredBy(msg);
+  assert.equal(r.agent_attribution, 'writer-agent', 'should resolve to specific agent_id not "claude-code"');
+  assert.equal(r.attribution_method, 'co_authored_by');
+  assert.equal(r.runtime_class, 'claude_code');
+});
+
+test('parseCoAuthoredBy: <stem>-agent name pattern resolves even when email is generic CC', () => {
+  // Empirical pattern from cluster: `Co-Authored-By: writer-agent <noreply@anthropic.com>`
+  // email collapses to claude-code-runtime; name carries the agent_id
+  const msg = `Subject\n\nCo-Authored-By: parch-agent <noreply@anthropic.com>`;
+  const r = parseCoAuthoredBy(msg);
+  assert.equal(r.agent_attribution, 'parch-agent');
+  assert.equal(r.runtime_class, 'claude_code');
+});
+
+test('parseCoAuthoredBy: generic CC trailer still resolves to claude-code runtime (legacy path preserved)', () => {
+  // Vendor-name display + generic email → no specific agent_id available;
+  // falls through to runtime-class resolution
+  const msg = `Subject\n\nCo-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>`;
+  const r = parseCoAuthoredBy(msg);
+  assert.equal(r.agent_attribution, 'claude-code', 'no specific agent → runtime-class');
+  assert.equal(r.runtime_class, 'claude-code');
+});
+
+test('parseCoAuthoredBy: codex direct-author email resolves to aieng3-agent (not generic codex)', () => {
+  const msg = `Subject\n\nCo-Authored-By: aieng3-agent <aieng3-agent@swarm.local>`;
+  const r = parseCoAuthoredBy(msg);
+  assert.equal(r.agent_attribution, 'aieng3-agent');
+  assert.equal(r.runtime_class, 'codex');
+});
