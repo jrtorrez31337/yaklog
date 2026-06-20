@@ -6,12 +6,18 @@
 # discipline (NEVER argv; file-only transit).
 #
 # Per-host install (admin or ssw-devops coord):
+#   0. install -m 0755 -o root -g root scripts/yaklog-output-ingester.sh \
+#      /usr/local/bin/yaklog-output-ingester.sh
+#      (REQUIRED — ProtectHome=true makes /home/* unreachable; see secops
+#      review-pair canon at handoff #9768)
 #   1. cp scripts/systemd/yaklog-output-ingester.service /etc/systemd/system/
 #   2. cp scripts/systemd/yaklog-output-ingester.timer   /etc/systemd/system/
 #   3. cp scripts/systemd/yaklog-output-ingester.env.example /etc/plexus/yaklog-output-ingester.env
 #      + edit to set PLEXUS_OPS_KEY_FILE path
-#   4. systemctl daemon-reload
-#   5. systemctl enable --now yaklog-output-ingester.timer
+#   4. install -d -m 0755 -o plexus-output-ingester -g plexus-output-ingester \
+#      /var/lib/yaklog/textfile/output-ingester
+#   5. systemctl daemon-reload
+#   6. systemctl enable --now yaklog-output-ingester.timer
 
 [Unit]
 Description=Plexus CP13/ADR-0032 output-strand ingester
@@ -31,10 +37,18 @@ Group=plexus-output-ingester
 # this service user); never argv per feedback_secrets_no_yaklog.
 EnvironmentFile=/etc/plexus/yaklog-output-ingester.env
 
-# Prom textfile collector directory (mirrors audit-anchor-publisher).
-Environment=TEXTFILE_DIR=/var/lib/yaklog/textfile
+# Prom textfile collector sub-directory. Sister-shape to existing
+# /var/lib/yaklog/textfile/ (owned by plexus-audit-publisher per ssw-devops
+# #9769 pre-condition empirical) — output-ingester uses its own sub-dir to
+# preserve audit-publisher canonical ownership. node_exporter scrape glob
+# covers the textfile/ tree.
+Environment=TEXTFILE_DIR=/var/lib/yaklog/textfile/output-ingester
 
-ExecStart=/home/jon/yaklog/scripts/yaklog-output-ingester.sh \
+# ExecStart path canonical at /usr/local/bin/ per secops #9768 blocking-gate:
+# ProtectHome=true below makes /home/* unreachable to the service namespace,
+# so the script MUST live under /usr/local/bin/. Operator copies as part of
+# install sequence (mode 0755 root:root).
+ExecStart=/usr/local/bin/yaklog-output-ingester.sh \
   --yaklog-url http://localhost:3100 \
   --ops-key-file ${PLEXUS_OPS_KEY_FILE}
 
@@ -42,7 +56,7 @@ ExecStart=/home/jon/yaklog/scripts/yaklog-output-ingester.sh \
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/lib/yaklog/textfile
+ReadWritePaths=/var/lib/yaklog/textfile/output-ingester
 PrivateTmp=true
 
 # Single-shot per timer firing

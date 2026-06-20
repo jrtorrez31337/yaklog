@@ -23,7 +23,9 @@ set -euo pipefail
 
 YAKLOG_URL="${YAKLOG_URL:-http://localhost:3100}"
 OPS_KEY_FILE=""
-TEXTFILE_DIR="${TEXTFILE_DIR:-/var/lib/yaklog/textfile}"
+# Sub-dir per ssw-devops #9769 disposition (b): preserves existing
+# /var/lib/yaklog/textfile/ canonical ownership by plexus-audit-publisher.
+TEXTFILE_DIR="${TEXTFILE_DIR:-/var/lib/yaklog/textfile/output-ingester}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
