@@ -56,16 +56,19 @@ const EMAIL_TO_AGENT_ID = new Map([
   ['yaklog-dev@devel.local',   'yaklog-dev-agent'],
   ['yaklog-dev@subnet345.com', 'yaklog-dev-agent'],
   ['yaklog-dev@devel',         'yaklog-dev-agent'],
-  // s345-aieng (Anthropic Ptah primary)
+  // s345-aieng (Anthropic Ptah primary; in-place rename from `aieng-agent` per
+  // Jon-direct #7894 dispatch 2026-06-06; historical aieng-* author-emails
+  // are substantively the SAME entity, now canonically s345-aieng-agent.
+  // YAKLOG_ALIASES at /home/jon/agents/s345-aieng/.config/yaklog/...env
+  // preserves `aieng-renamed` audit-trail per migration canon.)
   ['s345-aieng-agent@subnet345.com', 's345-aieng-agent'],
   ['s345-aieng@devel',         's345-aieng-agent'],
+  ['aieng-agent@subnet345.com',     's345-aieng-agent'],  // historical-alias post-rename
+  ['aieng-agent@traptop10k.local',  's345-aieng-agent'],  // historical-alias post-rename
+  ['aieng@devel',                   's345-aieng-agent'],  // historical-alias post-rename
   // ssw-devops
   ['ssw-devops@devel',         'ssw-devops-agent'],
   ['ssw-devops-agent@devel',   'ssw-devops-agent'],
-  // aieng (general aieng-agent, distinct from aieng3)
-  ['aieng-agent@subnet345.com',  'aieng-agent'],
-  ['aieng-agent@traptop10k.local', 'aieng-agent'],
-  ['aieng@devel',                'aieng-agent'],
   // s345 (brand-spine + scope-strand)
   ['s345-agent@traptop10k.local', 's345-agent'],
   ['s345-agent@devel',           's345-agent'],
@@ -96,8 +99,9 @@ const EMAIL_TO_AGENT_ID = new Map([
   // additional ssw-devops + secops hostname variants
   ['ssw-devops@subnet345.com', 'ssw-devops-agent'],
   ['secops-agent@swarm.internal', 'secops-agent'],
-  // aieng without -agent suffix (legacy short-stem author identity)
-  ['aieng@subnet345.com',      'aieng-agent'],
+  // aieng without -agent suffix (legacy short-stem author identity; post-rename
+  // per Jon-direct #7894 2026-06-06 redirects to current canonical identity).
+  ['aieng@subnet345.com',      's345-aieng-agent'],
   // Jon-direct (intentional non-attribution — author=Jon but no agent context)
   // Mapped to NULL pseudo-agent NOT included here; null_fallback is honest.
 ]);
