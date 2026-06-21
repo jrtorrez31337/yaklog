@@ -2580,12 +2580,19 @@ function upsertPresence({
       runtime_gid = COALESCE(excluded.runtime_gid, presence.runtime_gid),
       runtime_hostname = COALESCE(excluded.runtime_hostname, presence.runtime_hostname),
       current_cwd = COALESCE(excluded.current_cwd, presence.current_cwd),
-      -- v0.5.7.4: pid + started_at change on every daemon restart;
-      -- raw-assign so they reflect the CURRENT daemon, not a stale prior
-      -- one. version is a constant per daemon binary; same semantics.
-      daemon_pid = excluded.daemon_pid,
-      daemon_version = excluded.daemon_version,
-      daemon_started_at = excluded.daemon_started_at,
+      -- v0.5.7.4 → v0.5.16.1: daemon-process fields use COALESCE so non-
+      -- canonical-daemon runtimes (e.g. Ptah self-emit from Windows VM
+      -- episode runtime) that send daemon_pid+version+started_at only on
+      -- initial emit don't have the value wiped by subsequent minimal
+      -- heartbeats. Sister-shape to the v0.5.9.1 runtime_state COALESCE
+      -- below. For canonical yaklog-sub (which sends these every heartbeat),
+      -- COALESCE is functionally equivalent to raw-assign — non-null new
+      -- values win COALESCE so daemon restart with a new pid/started_at
+      -- still propagates correctly. Per s345-aieng #10246 + yaklog-dev #10250
+      -- substrate-finding from Ptah AgentCard data gap empirical.
+      daemon_pid = COALESCE(excluded.daemon_pid, presence.daemon_pid),
+      daemon_version = COALESCE(excluded.daemon_version, presence.daemon_version),
+      daemon_started_at = COALESCE(excluded.daemon_started_at, presence.daemon_started_at),
       -- v0.5.9.1 runtime-execution-liveness: COALESCE to defend against
       -- daemon-clobber. The yaklog-sub daemon's normal /presence/event
       -- heartbeats (every 30s) DON'T include runtime_state → routes.js
