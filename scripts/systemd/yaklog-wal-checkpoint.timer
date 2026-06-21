@@ -16,7 +16,10 @@ Requires=yaklog-wal-checkpoint.service
 # Hourly at minute-37 ± 5 min randomized. Offset from minute-0 + minute-15
 # (where yaklog-output-ingester runs) keeps the substrate-maintenance jobs
 # from co-firing and double-pressuring the writer.
-OnCalendar=hourly
+#
+# NOTE: Multiple OnCalendar= entries are ADDITIVE in systemd (each fires
+# independently). Use only the explicit :37 schedule to avoid double-fire
+# per secops Gate (1) finding #10115.
 OnCalendar=*-*-* *:37:00
 RandomizedDelaySec=300
 # Catch up on missed firings after devel restart/network outage
