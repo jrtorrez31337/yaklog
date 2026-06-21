@@ -44,32 +44,67 @@ fi
 
 mkdir -p "$TEXTFILE_DIR"
 
-T0_NS=$(date +%s%N)
-# Auth per cluster canon: Bearer in Authorization header (NOT X-Ops-Key).
-# Sister-shape to existing ops-endpoint family (auditOpsRoutes.js uses
-# enforceOpsKey middleware which extracts via Authorization: Bearer).
-RESPONSE=$(curl -sS -X POST \
-  "${YAKLOG_URL}/api/v1/ops/wal-checkpoint" \
-  -H "Authorization: Bearer ${OPS_KEY}" \
-  -H "Content-Type: application/json" \
-  -d '{"mode":"TRUNCATE"}' \
-  -w "\n%{http_code}" 2>&1) || true
-T1_NS=$(date +%s%N)
+# CP14-X (parch #10175 Q3 + secops #10172 condition D): checkpoint BOTH
+# yaklog.db AND plexus-secure.db so the new substrate-canon class doesn't
+# accumulate unmanaged WAL (per feedback_yaklog_load_cascade_recovery_requires_restart_plus_wal_checkpoint).
+# Both fires write to the same Prom textfile (each overwrites the last; the
+# metrics are point-in-time snapshots, sister-shape to existing pattern).
+# A future micro-cycle could split into per-db textfile if per-db retention
+# matters; for now operator-tier discipline reads both via separate cron firings.
+DBS_TO_CHECKPOINT="${DBS_TO_CHECKPOINT:-yaklog plexus-secure}"
 
-ELAPSED_MS=$(( (T1_NS - T0_NS) / 1000000 ))
-HTTP_CODE=$(echo "$RESPONSE" | tail -1)
-BODY=$(echo "$RESPONSE" | sed '$d')
+# Aggregated metrics across all dbs
+TOTAL_ELAPSED_MS=0
+TOTAL_LOG_PAGES=0
+TOTAL_CHECKPOINTED=0
+ANY_BUSY=0
+ANY_FAIL=0
+LAST_HTTP_CODE=0
+
+for DB in $DBS_TO_CHECKPOINT; do
+  T0_NS=$(date +%s%N)
+  # Auth per cluster canon: Bearer in Authorization header (NOT X-Ops-Key).
+  # Sister-shape to existing ops-endpoint family (auditOpsRoutes.js uses
+  # enforceOpsKey middleware which extracts via Authorization: Bearer).
+  RESPONSE=$(curl -sS -X POST \
+    "${YAKLOG_URL}/api/v1/ops/wal-checkpoint" \
+    -H "Authorization: Bearer ${OPS_KEY}" \
+    -H "Content-Type: application/json" \
+    -d "{\"mode\":\"TRUNCATE\",\"db\":\"${DB}\"}" \
+    -w "\n%{http_code}" 2>&1) || true
+  T1_NS=$(date +%s%N)
+
+  THIS_ELAPSED_MS=$(( (T1_NS - T0_NS) / 1000000 ))
+  THIS_HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+  THIS_BODY=$(echo "$RESPONSE" | sed '$d')
+
+  THIS_LOG=$(echo "$THIS_BODY" | grep -oE '"log":[0-9]+' | head -1 | grep -oE '[0-9]+' || echo "0")
+  THIS_CHK=$(echo "$THIS_BODY" | grep -oE '"checkpointed":[0-9]+' | head -1 | grep -oE '[0-9]+' || echo "0")
+  THIS_BUSY=$(echo "$THIS_BODY" | grep -oE '"busy":[0-9]+' | head -1 | grep -oE '[0-9]+' || echo "0")
+
+  TOTAL_ELAPSED_MS=$(( TOTAL_ELAPSED_MS + THIS_ELAPSED_MS ))
+  TOTAL_LOG_PAGES=$(( TOTAL_LOG_PAGES + THIS_LOG ))
+  TOTAL_CHECKPOINTED=$(( TOTAL_CHECKPOINTED + THIS_CHK ))
+  if [[ "$THIS_BUSY" != "0" ]]; then ANY_BUSY=1; fi
+  if [[ "$THIS_HTTP_CODE" != "200" && "$THIS_HTTP_CODE" != "201" ]]; then ANY_FAIL=1; fi
+  LAST_HTTP_CODE="$THIS_HTTP_CODE"
+  echo "  checkpoint db=${DB} http=${THIS_HTTP_CODE} elapsed_ms=${THIS_ELAPSED_MS} log=${THIS_LOG} checkpointed=${THIS_CHK} busy=${THIS_BUSY}"
+done
+
+ELAPSED_MS=$TOTAL_ELAPSED_MS
+HTTP_CODE=$LAST_HTTP_CODE
+BODY="aggregated"
+LOG_PAGES=$TOTAL_LOG_PAGES
+CHECKPOINTED=$TOTAL_CHECKPOINTED
+BUSY=$ANY_BUSY
 
 # Emit Prom textfile metrics atomically (write to .tmp + rename).
+# Per-db values already aggregated above (LOG_PAGES / CHECKPOINTED / BUSY are
+# sums/disjunctions across DBS_TO_CHECKPOINT); no per-response re-parse needed.
 METRICS_TMP="${TEXTFILE_DIR}/wal-checkpoint.prom.$$.tmp"
 METRICS_OUT="${TEXTFILE_DIR}/wal-checkpoint.prom"
 
-# Parse JSON response (best-effort). Expected fields: busy, log, checkpointed.
-LOG_PAGES=$(echo "$BODY" | grep -oE '"log":[0-9]+' | head -1 | grep -oE '[0-9]+' || echo "0")
-CHECKPOINTED=$(echo "$BODY" | grep -oE '"checkpointed":[0-9]+' | head -1 | grep -oE '[0-9]+' || echo "0")
-BUSY=$(echo "$BODY" | grep -oE '"busy":[0-9]+' | head -1 | grep -oE '[0-9]+' || echo "0")
-
-if [[ "$HTTP_CODE" == "200" || "$HTTP_CODE" == "201" ]]; then
+if [[ "$ANY_FAIL" == "0" ]]; then
   STATUS=1
 else
   STATUS=0

@@ -476,23 +476,36 @@ router.post('/audit/anchor-record', (req, res) => {
 // to what's documented in feedback_db_rebuild_safety: "PRAGMA wal_checkpoint(TRUNCATE)"
 // is also called as part of online-backup discipline).
 const VALID_CHECKPOINT_MODES = new Set(['PASSIVE', 'FULL', 'RESTART', 'TRUNCATE']);
+// CP14-X Q3 ratify (parch #10175): `db` param on existing endpoint; per-db
+// elapsed_ms visibility preserved (each db's pressure is separate signal per
+// feedback_writer_lock_contention_visible_via_checkpoint_elapsed_ms).
+const VALID_CHECKPOINT_DBS = new Set(['yaklog', 'plexus-secure']);
 
 router.post('/wal-checkpoint', (req, res) => {
   const b = req.body || {};
   const mode = (b.mode || 'TRUNCATE').toUpperCase();
+  const dbName = (b.db || 'yaklog').toLowerCase();
   if (!VALID_CHECKPOINT_MODES.has(mode)) {
     return badRequest(res, `mode must be one of ${[...VALID_CHECKPOINT_MODES].join('|')}`);
+  }
+  if (!VALID_CHECKPOINT_DBS.has(dbName)) {
+    return badRequest(res, `db must be one of ${[...VALID_CHECKPOINT_DBS].join('|')}`);
   }
   const actor = computeActor(req);
   const t0 = Date.now();
   try {
+    // CP14-X Q3: resolve which db to checkpoint
+    const dbHandle = dbName === 'plexus-secure'
+      ? require('./plexusSecureDb').getDb()
+      : getDb();
     // PRAGMA returns { busy: 0|1, log: <pages-in-WAL-at-start>, checkpointed: <pages-written-back> }
-    const r = getDb().prepare(`PRAGMA wal_checkpoint(${mode})`).get();
+    const r = dbHandle.prepare(`PRAGMA wal_checkpoint(${mode})`).get();
     const elapsed_ms = Date.now() - t0;
     // CP16-prep observability: emit gauges so cluster Prom (via /metrics scrape)
     // surfaces checkpoint health per feedback_writer_lock_contention_visible_via_checkpoint_elapsed_ms
     emit.walCheckpoint({
       mode,
+      db: dbName,
       elapsed_ms,
       log: r.log,
       checkpointed: r.checkpointed,
@@ -502,6 +515,7 @@ router.post('/wal-checkpoint', (req, res) => {
     return res.json({
       ok: true,
       mode,
+      db: dbName,
       busy: r.busy,
       log: r.log,
       checkpointed: r.checkpointed,
@@ -509,7 +523,75 @@ router.post('/wal-checkpoint', (req, res) => {
       actor,
     });
   } catch (e) {
-    emit.walCheckpoint({ mode, elapsed_ms: Date.now() - t0, log: 0, checkpointed: 0, busy: 0, success: false });
+    emit.walCheckpoint({ mode, db: dbName, elapsed_ms: Date.now() - t0, log: 0, checkpointed: 0, busy: 0, success: false });
+    return internal(res, e.message);
+  }
+});
+
+// ─── CP14-X Plexus Secure Store: POST /ops/orp/:agent_id ────────────────────
+//
+// Per parch #10175 ratify of Option C (Jon-direct #10171). Ops-key gated
+// write endpoint for ORP authority artifacts. Sister-shape to existing
+// /ops/* mutation endpoints.
+//
+// Secops Gate (1) conditions absorbed:
+//   A — Transactional version-bump (db.transaction in upsertOrp)
+//   B — Schema validation BEFORE persist (returns 422, not 500, on mismatch)
+//   C — emit.orpWrite() on success + error paths (Prom observability)
+//   D — covered above (wal-checkpoint endpoint accepts plexus-secure db)
+
+const AGENT_ID_RE = /^[a-zA-Z0-9._:@/-]{1,64}$/;
+
+router.post('/orp/:agent_id', (req, res) => {
+  const agentId = req.params.agent_id;
+  if (!AGENT_ID_RE.test(agentId)) {
+    return badRequest(res, 'agent_id must match [a-zA-Z0-9._:@/-]{1,64}');
+  }
+  const b = req.body || {};
+  if (!b.orp_json || typeof b.orp_json !== 'object') {
+    return badRequest(res, 'orp_json (object) required');
+  }
+  if (!b.schema_version || typeof b.schema_version !== 'string') {
+    return badRequest(res, 'schema_version (string) required');
+  }
+  const actor = computeActor(req);
+  // Condition B: validate against ORP schema BEFORE persist.
+  const plexusSecure = require('./plexusSecureDb');
+  let validation;
+  try {
+    validation = plexusSecure.validateOrpJson(b.orp_json);
+  } catch (e) {
+    // Schema load error (e.g., file missing at deploy) — surface as 500 with
+    // diagnostic message; do NOT treat as validation failure.
+    emit.orpWrite({ agent_id: agentId, success: false, outcome: 'error' });
+    return internal(res, `ORP schema load failed: ${e.message}`);
+  }
+  if (!validation.valid) {
+    emit.orpWrite({ agent_id: agentId, success: false, outcome: 'validation-fail' });
+    return res.status(422).json({
+      error: 'ValidationError',
+      message: 'orp_json does not validate against ptah-orp.schema.json',
+      errors: validation.errors,
+    });
+  }
+  try {
+    const result = plexusSecure.upsertOrp({
+      agentId,
+      orpJson: b.orp_json,
+      schemaVersion: b.schema_version,
+      actor,
+      notes: b.notes,
+    });
+    emit.orpWrite({ agent_id: agentId, version: result.version, success: true });
+    return res.json({
+      ok: true,
+      agent_id: result.agent_id,
+      version: result.version,
+      updated_at: result.updated_at,
+      actor: result.actor,
+    });
+  } catch (e) {
+    emit.orpWrite({ agent_id: agentId, success: false, outcome: 'error' });
     return internal(res, e.message);
   }
 });

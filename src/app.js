@@ -16,6 +16,7 @@ const auditIngesterRoutes = require('./auditIngesterRoutes'); // CP12.5 (ADR-003
 const auditOtelIngesterRoutes = require('./auditOtelIngesterRoutes'); // ADR-0032 Phase 0 Item B
 const outputApiRoutes = require('./outputApiRoutes');   // CP13.3 (ADR-0032 Phase 1.3)
 const metricsRoute = require('./metricsRoute');         // CP16-prep observability (parch #10166)
+const orpRoute = require('./orpRoute');                 // CP14-X Plexus Secure Store (parch #10175)
 const auth = require('./middleware/auth');
 const { opsKeyAuditMiddleware } = require('./middleware/opsKeyAudit'); // CP12.2 admin R1 fold
 const { initializeDb, listPresence, getGlobalHwm, envDiffBootDetector } = require('./db');
@@ -500,6 +501,11 @@ app.use('/api/v1/ops/output', outputApiRoutes.opsRouter);
 // Prometheus scrape config (in prometheus.yml) supplies a scoped bearer per
 // ssw-devops Gate (2) install work.
 app.use('/api/v1/metrics', auth, metricsRoute);
+// CP14-X Plexus Secure Store per parch #10175 Q1 ratify: GET /api/v1/orp/<agent_id>
+// auth-required (any valid YAKLOG_API_KEYS token reads any ORP per #10174 +
+// secops design Q recommend; per-agent scoping deferred to forward-track).
+// POST /ops/orp/<agent_id> lives under /api/v1/ops mount (ops-key gated).
+app.use('/api/v1/orp', auth, orpRoute);
 
 app.get('/', (req, res) => {
   res.json({

@@ -116,6 +116,35 @@ const outputIngesterInvocationsTotal = new Counter({
   registers: [registry],
 });
 
+// ─── ORP write gauges (CP14-X Plexus Secure Store; secops #10172 condition C) ─
+// Set by POST /api/v1/ops/orp/<agent_id> handler after upsertOrp returns.
+
+const orpWriteInvocationsTotal = new Counter({
+  name: 'yaklog_orp_write_invocations_total',
+  help: 'Total POST /api/v1/ops/orp/<agent_id> invocations',
+  labelNames: ['outcome'],
+  registers: [registry],
+});
+
+const orpWriteSuccess = new Gauge({
+  name: 'yaklog_orp_write_success',
+  help: 'Whether last ORP write succeeded (1 = ok, 0 = error/validation-fail)',
+  registers: [registry],
+});
+
+const orpWriteLastVersion = new Gauge({
+  name: 'yaklog_orp_write_last_version',
+  help: 'Version number of last successful ORP write (per agent_id label)',
+  labelNames: ['agent_id'],
+  registers: [registry],
+});
+
+const orpWriteLastRunUnixTimestamp = new Gauge({
+  name: 'yaklog_orp_write_last_run_unix_timestamp',
+  help: 'Unix timestamp (seconds) of last ORP write attempt',
+  registers: [registry],
+});
+
 // ─── Emit helpers (called by ops endpoint handlers post-result) ─────────────
 
 function emitWalCheckpoint({ mode, elapsed_ms, log, checkpointed, busy, success }) {
@@ -140,10 +169,23 @@ function emitOutputIngester({ elapsed_ms, commits_walked, merges_walked, prs_wal
   outputIngesterInvocationsTotal.inc({ outcome });
 }
 
+function emitOrpWrite({ agent_id, version, success, outcome }) {
+  // outcome can be 'ok', 'error', or 'validation-fail' (sub-class of error
+  // for distinguishing 422 schema-validation rejects from 500 actual errors).
+  const finalOutcome = outcome || (success ? 'ok' : 'error');
+  orpWriteSuccess.set(success ? 1 : 0);
+  orpWriteLastRunUnixTimestamp.set(Math.floor(Date.now() / 1000));
+  orpWriteInvocationsTotal.inc({ outcome: finalOutcome });
+  if (success && agent_id && version != null) {
+    orpWriteLastVersion.set({ agent_id }, Number(version));
+  }
+}
+
 module.exports = {
   registry,
   emit: {
     walCheckpoint: emitWalCheckpoint,
     outputIngester: emitOutputIngester,
+    orpWrite: emitOrpWrite,
   },
 };
