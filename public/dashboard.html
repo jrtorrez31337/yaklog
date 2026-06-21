@@ -125,6 +125,14 @@
   .agent-card.status-unknown             { border-left-color: var(--yellow); }
   .agent-card.status-offline             { border-left-color: var(--red); }
   .agent-card.status-stop_failure        { border-left-color: var(--red); border-color: var(--red); }
+  /* Jon-direct 2026-06-21: online agents in runtime_state=quota_exhausted
+     ("quota-blocked") were rendering green (status-online_* class still
+     applied). Override left-border to purple to visually distinguish
+     blocked-but-online from healthy-online. Rule placed AFTER status-online_*
+     so equal-specificity cascade picks this one. Label "quota-blocked"
+     already serves the AT-readable signal per a11y-structural canon; this
+     is additive sighted-user color. */
+  .agent-card.status-quota_blocked       { border-left-color: var(--purple); }
   /* F4 (parch #8743 + Jon-direct major-bug 2026-06-14): stale-idle override.
      CC clients fire `Stop` on rate-limit (admin #8737 empirical) → daemon
      writes session_state='idle' (sticky terminal per v0.5.2 design).

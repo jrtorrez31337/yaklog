@@ -1633,6 +1633,12 @@
       this.el.className = 'agent-card';
       if (r.label) this.el.classList.add('status-' + r.label);
       if (r.label === 'offline') this.el.classList.add('is-offline');
+      // Jon-direct 2026-06-21: online + runtime_state=quota_exhausted ("quota-blocked")
+      // was rendering green via status-online_* class. Add the status-quota_blocked
+      // class so the CSS rule (defined AFTER status-online_*) overrides to purple.
+      // The label-badge already reads "quota-blocked" per the labelTitle block above;
+      // this is additive sighted-user color, AT-readable signal unchanged per a11y canon.
+      if (r.runtime_state === 'quota_exhausted') this.el.classList.add('status-quota_blocked');
       // F4 (parch #8743) + v0.5.63 (Jon-direct 2026-06-16): stale-idle class
       // adds the label-badge dim+italic CSS only. Border-left stays at the
       // status-derived color — yellow now reserved exclusively for the
