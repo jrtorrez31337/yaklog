@@ -68,9 +68,10 @@ test('GET /metrics: scoped Prom-scrape token also accepted (sister-shape per ssw
   assert.equal(r.statusCode, 200);
 });
 
-test('emit.walCheckpoint updates gauges visible at GET /metrics', async () => {
+test('emit.walCheckpoint updates gauges visible at GET /metrics (per-db labeled per task #221)', async () => {
   emit.walCheckpoint({
     mode: 'TRUNCATE',
+    db: 'yaklog',
     elapsed_ms: 123,
     log: 7,
     checkpointed: 5,
@@ -79,11 +80,29 @@ test('emit.walCheckpoint updates gauges visible at GET /metrics', async () => {
   });
   const r = await request(app).get('/api/v1/metrics').set(validAuth);
   assert.equal(r.statusCode, 200);
-  assert.match(r.text, /yaklog_wal_checkpoint_elapsed_ms 123/);
-  assert.match(r.text, /yaklog_wal_checkpoint_log_pages 7/);
-  assert.match(r.text, /yaklog_wal_checkpoint_pages_checkpointed 5/);
-  assert.match(r.text, /yaklog_wal_checkpoint_busy_flag 0/);
-  assert.match(r.text, /yaklog_wal_checkpoint_success 1/);
+  // Per task #221: all walCheckpoint gauges now carry {db="..."} label
+  assert.match(r.text, /yaklog_wal_checkpoint_elapsed_ms\{db="yaklog"\} 123/);
+  assert.match(r.text, /yaklog_wal_checkpoint_log_pages\{db="yaklog"\} 7/);
+  assert.match(r.text, /yaklog_wal_checkpoint_pages_checkpointed\{db="yaklog"\} 5/);
+  assert.match(r.text, /yaklog_wal_checkpoint_busy_flag\{db="yaklog"\} 0/);
+  assert.match(r.text, /yaklog_wal_checkpoint_success\{db="yaklog"\} 1/);
+});
+
+test('emit.walCheckpoint per-db labels: plexus-secure call does NOT overwrite yaklog gauge (task #221 fix verify)', async () => {
+  // Sister-shape to ssw-devops cron loop: fire yaklog first, then plexus-secure
+  emit.walCheckpoint({ mode: 'TRUNCATE', db: 'yaklog',        elapsed_ms: 111, log: 0, checkpointed: 0, busy: 0, success: true });
+  emit.walCheckpoint({ mode: 'TRUNCATE', db: 'plexus-secure', elapsed_ms: 222, log: 0, checkpointed: 0, busy: 0, success: true });
+  const r = await request(app).get('/api/v1/metrics').set(validAuth);
+  assert.equal(r.statusCode, 200);
+  // Both per-db gauge values present + distinguishable; neither overwrites the other
+  assert.match(r.text, /yaklog_wal_checkpoint_elapsed_ms\{db="yaklog"\} 111/);
+  assert.match(r.text, /yaklog_wal_checkpoint_elapsed_ms\{db="plexus-secure"\} 222/);
+});
+
+test('emit.walCheckpoint default db label (backward-compat: omitted db → "yaklog")', async () => {
+  emit.walCheckpoint({ mode: 'TRUNCATE', elapsed_ms: 99, log: 0, checkpointed: 0, busy: 0, success: true });
+  const r = await request(app).get('/api/v1/metrics').set(validAuth);
+  assert.match(r.text, /yaklog_wal_checkpoint_elapsed_ms\{db="yaklog"\} 99/);
 });
 
 test('emit.outputIngester updates gauges visible at GET /metrics', async () => {
@@ -110,12 +129,13 @@ test('POST /ops/wal-checkpoint emits gauges (live-integration: handler → emit 
   assert.equal(post.body.ok, true);
 
   // Scrape /metrics + verify gauges reflect the handler's actual elapsed_ms
+  // Per task #221: gauges now carry {db="..."} label; default db when handler omits is "yaklog"
   const scrape = await request(app).get('/api/v1/metrics').set(validAuth);
   assert.equal(scrape.statusCode, 200);
-  assert.match(scrape.text, /yaklog_wal_checkpoint_success 1/);
+  assert.match(scrape.text, /yaklog_wal_checkpoint_success\{db="yaklog"\} 1/);
   // elapsed_ms should be a non-negative integer matching the actual handler timing
-  const elapsedMatch = scrape.text.match(/yaklog_wal_checkpoint_elapsed_ms (\d+)/);
-  assert.ok(elapsedMatch, 'elapsed_ms gauge should be set after handler call');
+  const elapsedMatch = scrape.text.match(/yaklog_wal_checkpoint_elapsed_ms\{db="yaklog"\} (\d+)/);
+  assert.ok(elapsedMatch, 'elapsed_ms gauge with db="yaklog" should be set after handler call');
   const elapsedMs = parseInt(elapsedMatch[1], 10);
   assert.ok(elapsedMs >= 0 && elapsedMs < 10000, `elapsed_ms should be reasonable (0-10000), got ${elapsedMs}`);
 });
@@ -131,15 +151,16 @@ test('GET /metrics does NOT include nodejs_* / process_* default-collector metri
 
 test('GET /metrics: invocations counter increments across repeated calls', async () => {
   // Reset state by emitting once with known values, then call again to verify increment
-  emit.walCheckpoint({ mode: 'TRUNCATE', elapsed_ms: 1, log: 0, checkpointed: 0, busy: 0, success: true });
+  // Per task #221: counter labelNames includes 'db' — match accepts db label as part of the label set
+  emit.walCheckpoint({ mode: 'TRUNCATE', db: 'yaklog', elapsed_ms: 1, log: 0, checkpointed: 0, busy: 0, success: true });
   const r1 = await request(app).get('/api/v1/metrics').set(validAuth);
-  const count1Match = r1.text.match(/yaklog_wal_checkpoint_invocations_total\{[^}]*mode="TRUNCATE",outcome="ok"[^}]*\} (\d+)/);
-  assert.ok(count1Match, 'invocations counter should be present after emit');
+  const count1Match = r1.text.match(/yaklog_wal_checkpoint_invocations_total\{[^}]*mode="TRUNCATE"[^}]*outcome="ok"[^}]*db="yaklog"[^}]*\} (\d+)/);
+  assert.ok(count1Match, 'invocations counter with {mode,outcome,db} labels should be present after emit');
   const count1 = parseInt(count1Match[1], 10);
 
-  emit.walCheckpoint({ mode: 'TRUNCATE', elapsed_ms: 2, log: 0, checkpointed: 0, busy: 0, success: true });
+  emit.walCheckpoint({ mode: 'TRUNCATE', db: 'yaklog', elapsed_ms: 2, log: 0, checkpointed: 0, busy: 0, success: true });
   const r2 = await request(app).get('/api/v1/metrics').set(validAuth);
-  const count2Match = r2.text.match(/yaklog_wal_checkpoint_invocations_total\{[^}]*mode="TRUNCATE",outcome="ok"[^}]*\} (\d+)/);
+  const count2Match = r2.text.match(/yaklog_wal_checkpoint_invocations_total\{[^}]*mode="TRUNCATE"[^}]*outcome="ok"[^}]*db="yaklog"[^}]*\} (\d+)/);
   const count2 = parseInt(count2Match[1], 10);
   assert.equal(count2, count1 + 1, 'invocations counter should increment by 1');
 });

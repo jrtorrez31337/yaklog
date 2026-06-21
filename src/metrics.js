@@ -26,46 +26,57 @@ const registry = new Registry();
 // Set by POST /api/v1/ops/wal-checkpoint handler after PRAGMA returns.
 // Cron-driven (hourly) per yaklog-wal-checkpoint.timer + on-demand via direct POST.
 
+// Per-db labels (per secops #10177 + parch #10201 forward-track + task #221):
+// labelNames includes 'db' so per-db wal-checkpoint pressure is distinguishable
+// in Prom (CP14-X added plexus-secure.db; cron loop fires both yaklog + plexus-secure
+// per checkpoint cycle; without 'db' label the second call overwrites the first
+// at the /metrics tier per [[feedback_writer_lock_contention_visible_via_checkpoint_elapsed_ms]]).
 const walCheckpointElapsedMs = new Gauge({
   name: 'yaklog_wal_checkpoint_elapsed_ms',
-  help: 'Time taken by last WAL checkpoint (substrate-availability-tier diagnostic per feedback_writer_lock_contention_visible_via_checkpoint_elapsed_ms)',
+  help: 'Time taken by last WAL checkpoint per db (substrate-availability-tier diagnostic per feedback_writer_lock_contention_visible_via_checkpoint_elapsed_ms)',
+  labelNames: ['db'],
   registers: [registry],
 });
 
 const walCheckpointLogPages = new Gauge({
   name: 'yaklog_wal_checkpoint_log_pages',
-  help: 'Pages in WAL at start of last checkpoint (0 = WAL already drained by auto-checkpoint)',
+  help: 'Pages in WAL at start of last checkpoint per db (0 = WAL already drained by auto-checkpoint)',
+  labelNames: ['db'],
   registers: [registry],
 });
 
 const walCheckpointPagesCheckpointed = new Gauge({
   name: 'yaklog_wal_checkpoint_pages_checkpointed',
-  help: 'Pages successfully written back to main DB file in last checkpoint',
+  help: 'Pages successfully written back to main DB file in last checkpoint per db',
+  labelNames: ['db'],
   registers: [registry],
 });
 
 const walCheckpointBusyFlag = new Gauge({
   name: 'yaklog_wal_checkpoint_busy_flag',
-  help: 'SQLite busy flag from last checkpoint (1 = writer-lock contention; 0 = clean)',
+  help: 'SQLite busy flag from last checkpoint per db (1 = writer-lock contention; 0 = clean)',
+  labelNames: ['db'],
   registers: [registry],
 });
 
 const walCheckpointSuccess = new Gauge({
   name: 'yaklog_wal_checkpoint_success',
-  help: 'Whether last WAL checkpoint completed successfully (1 = ok, 0 = error)',
+  help: 'Whether last WAL checkpoint completed successfully per db (1 = ok, 0 = error)',
+  labelNames: ['db'],
   registers: [registry],
 });
 
 const walCheckpointLastRunUnixTimestamp = new Gauge({
   name: 'yaklog_wal_checkpoint_last_run_unix_timestamp',
-  help: 'Unix timestamp (seconds) of last WAL checkpoint invocation',
+  help: 'Unix timestamp (seconds) of last WAL checkpoint invocation per db',
+  labelNames: ['db'],
   registers: [registry],
 });
 
 const walCheckpointInvocationsTotal = new Counter({
   name: 'yaklog_wal_checkpoint_invocations_total',
-  help: 'Total POST /api/v1/ops/wal-checkpoint invocations',
-  labelNames: ['mode', 'outcome'],
+  help: 'Total POST /api/v1/ops/wal-checkpoint invocations per db',
+  labelNames: ['mode', 'outcome', 'db'],
   registers: [registry],
 });
 
@@ -147,15 +158,19 @@ const orpWriteLastRunUnixTimestamp = new Gauge({
 
 // ─── Emit helpers (called by ops endpoint handlers post-result) ─────────────
 
-function emitWalCheckpoint({ mode, elapsed_ms, log, checkpointed, busy, success }) {
+function emitWalCheckpoint({ mode, db, elapsed_ms, log, checkpointed, busy, success }) {
   const outcome = success ? 'ok' : 'error';
-  walCheckpointElapsedMs.set(Number(elapsed_ms) || 0);
-  walCheckpointLogPages.set(Number(log) || 0);
-  walCheckpointPagesCheckpointed.set(Number(checkpointed) || 0);
-  walCheckpointBusyFlag.set(Number(busy) || 0);
-  walCheckpointSuccess.set(success ? 1 : 0);
-  walCheckpointLastRunUnixTimestamp.set(Math.floor(Date.now() / 1000));
-  walCheckpointInvocationsTotal.inc({ mode: String(mode || 'unknown'), outcome });
+  // Default db label to 'yaklog' for backward compat with callers that don't
+  // pass db (the auditOpsRoutes /wal-checkpoint handler defaults db to 'yaklog'
+  // when body omits the param per CP14-X Q3 ratify backward-compat shape).
+  const dbLabel = String(db || 'yaklog');
+  walCheckpointElapsedMs.set({ db: dbLabel }, Number(elapsed_ms) || 0);
+  walCheckpointLogPages.set({ db: dbLabel }, Number(log) || 0);
+  walCheckpointPagesCheckpointed.set({ db: dbLabel }, Number(checkpointed) || 0);
+  walCheckpointBusyFlag.set({ db: dbLabel }, Number(busy) || 0);
+  walCheckpointSuccess.set({ db: dbLabel }, success ? 1 : 0);
+  walCheckpointLastRunUnixTimestamp.set({ db: dbLabel }, Math.floor(Date.now() / 1000));
+  walCheckpointInvocationsTotal.inc({ mode: String(mode || 'unknown'), outcome, db: dbLabel });
 }
 
 function emitOutputIngester({ elapsed_ms, commits_walked, merges_walked, prs_walked, success }) {
