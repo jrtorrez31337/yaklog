@@ -45,9 +45,12 @@ fi
 mkdir -p "$TEXTFILE_DIR"
 
 T0_NS=$(date +%s%N)
+# Auth per cluster canon: Bearer in Authorization header (NOT X-Ops-Key).
+# Sister-shape to existing ops-endpoint family (auditOpsRoutes.js uses
+# enforceOpsKey middleware which extracts via Authorization: Bearer).
 RESPONSE=$(curl -sS -X POST \
   "${YAKLOG_URL}/api/v1/ops/wal-checkpoint" \
-  -H "X-Ops-Key: ${OPS_KEY}" \
+  -H "Authorization: Bearer ${OPS_KEY}" \
   -H "Content-Type: application/json" \
   -d '{"mode":"TRUNCATE"}' \
   -w "\n%{http_code}" 2>&1) || true

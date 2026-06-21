@@ -43,6 +43,8 @@ const {
   computeChainSnapshot,
   insertAuditAnchor,
   ANCHOR_SUBSTRATE_VOCAB,
+  // CP16-prep WAL checkpoint maintenance per 2026-06-20 incident post-mortem
+  getDb,
 } = require('./db');
 
 const router = express.Router();
@@ -446,6 +448,56 @@ router.post('/audit/anchor-record', (req, res) => {
     if (/duplicate anchor/.test(msg)) return conflict(res, msg);
     if (/must be|required/.test(msg)) return badRequest(res, msg);
     return internal(res, msg);
+  }
+});
+
+// ─── CP16-prep maintenance: WAL checkpoint ──────────────────────────────────
+//
+// POST /api/v1/ops/wal-checkpoint  body: {"mode": "TRUNCATE"|"PASSIVE"|"FULL"|"RESTART"}
+//
+// Per 2026-06-20T21:08-21:43Z incident post-mortem: unmaintained WAL grew
+// to 4.2 MB and the next implicit checkpoint took 4 seconds while waiting
+// for the writer lock — cascading into POST starvation and cluster-bus
+// wedge. Hourly cron-driven explicit checkpoint via this endpoint keeps the
+// WAL bounded and surfaces writer-contention via elapsed_ms gauge.
+//
+// Per [[feedback_writer_lock_contention_visible_via_checkpoint_elapsed_ms]]:
+// elapsed_ms <100 = healthy; 1000-10000 = contended; >10000 = wedged.
+//
+// Modes per SQLite docs (https://www.sqlite.org/pragma.html#pragma_wal_checkpoint):
+//   PASSIVE  — non-blocking; writes back what it can without waiting
+//   FULL     — waits for writers to finish then writes back all frames
+//   RESTART  — like FULL but also waits for readers to finish on old WAL
+//   TRUNCATE — like RESTART but also truncates WAL file to zero bytes (default)
+//
+// TRUNCATE is the canonical maintenance mode (reclaims disk; sister-shape
+// to what's documented in feedback_db_rebuild_safety: "PRAGMA wal_checkpoint(TRUNCATE)"
+// is also called as part of online-backup discipline).
+const VALID_CHECKPOINT_MODES = new Set(['PASSIVE', 'FULL', 'RESTART', 'TRUNCATE']);
+
+router.post('/wal-checkpoint', (req, res) => {
+  const b = req.body || {};
+  const mode = (b.mode || 'TRUNCATE').toUpperCase();
+  if (!VALID_CHECKPOINT_MODES.has(mode)) {
+    return badRequest(res, `mode must be one of ${[...VALID_CHECKPOINT_MODES].join('|')}`);
+  }
+  const actor = computeActor(req);
+  const t0 = Date.now();
+  try {
+    // PRAGMA returns { busy: 0|1, log: <pages-in-WAL-at-start>, checkpointed: <pages-written-back> }
+    const r = getDb().prepare(`PRAGMA wal_checkpoint(${mode})`).get();
+    const elapsed_ms = Date.now() - t0;
+    return res.json({
+      ok: true,
+      mode,
+      busy: r.busy,
+      log: r.log,
+      checkpointed: r.checkpointed,
+      elapsed_ms,
+      actor,
+    });
+  } catch (e) {
+    return internal(res, e.message);
   }
 });
 
