@@ -1,0 +1,61 @@
+# yaklog-wal-checkpoint service — periodic WAL maintenance per 2026-06-20
+# incident post-mortem. Sister-shape to yaklog-output-ingester.service hardening
+# pattern (CP13.5 4-gate canon).
+#
+# Substrate-finding banked: feedback_yaklog_load_cascade_recovery_requires_restart_plus_wal_checkpoint
+# (WAL accumulation contributes to writer contention; unmaintained WAL → multi-second
+# implicit checkpoints → POST starvation → SSE reconnect cascade → cluster wedge).
+#
+# Per-host install (admin or ssw-devops Gate (2)):
+#   0. install -m 0755 -o root -g root scripts/yaklog-wal-checkpoint.sh \
+#      /usr/local/bin/yaklog-wal-checkpoint.sh
+#      (ProtectHome=true makes /home/* unreachable; per secops #9768 canon)
+#   1. cp scripts/systemd/yaklog-wal-checkpoint.service /etc/systemd/system/
+#   2. cp scripts/systemd/yaklog-wal-checkpoint.timer   /etc/systemd/system/
+#   3. cp scripts/systemd/yaklog-wal-checkpoint.env.example /etc/plexus/yaklog-wal-checkpoint.env
+#      + edit to set PLEXUS_OPS_KEY_FILE path
+#   4. install -d -m 0755 -o plexus-wal-checkpoint -g plexus-wal-checkpoint \
+#      /var/lib/yaklog/textfile/wal-checkpoint
+#   5. systemctl daemon-reload
+#   6. systemctl enable --now yaklog-wal-checkpoint.timer
+#
+# Pre-condition: /api/v1/ops/wal-checkpoint endpoint must exist on yaklog
+# (substrate-prep item; sister-shape to existing /api/v1/ops/* endpoints;
+# ops-key auth per [[feedback_composite_read_endpoints_use_bearer_not_ops_key]]
+# inverse — this IS a write/maintenance op so ops-key gate is canonical).
+
+[Unit]
+Description=Plexus yaklog WAL checkpoint maintenance (per 2026-06-20 incident post-mortem)
+After=network-online.target docker.service
+Wants=docker.service
+
+[Service]
+Type=oneshot
+
+# Dedicated unprivileged runner per secops least-privilege canon.
+# Operator creates with:
+#   useradd --system --no-create-home --shell /usr/sbin/nologin plexus-wal-checkpoint
+User=plexus-wal-checkpoint
+Group=plexus-wal-checkpoint
+
+# EnvironmentFile provides PLEXUS_OPS_KEY_FILE path (mode-600 owned by
+# this service user); never argv per feedback_secrets_no_yaklog.
+EnvironmentFile=/etc/plexus/yaklog-wal-checkpoint.env
+
+# Prom textfile collector sub-directory. Sister-shape to yaklog-output-ingester
+# canonical sub-dir pattern per ssw-devops #9769.
+Environment=TEXTFILE_DIR=/var/lib/yaklog/textfile/wal-checkpoint
+
+ExecStart=/usr/local/bin/yaklog-wal-checkpoint.sh \
+  --yaklog-url http://localhost:3100 \
+  --ops-key-file ${PLEXUS_OPS_KEY_FILE}
+
+# Hardening (mirror yaklog-output-ingester pattern)
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/yaklog/textfile/wal-checkpoint
+PrivateTmp=true
+
+StandardOutput=journal
+StandardError=journal

@@ -1,0 +1,27 @@
+# yaklog-wal-checkpoint timer — hourly cadence per 2026-06-20 incident
+# post-mortem empirical (WAL grew from 0 to 4.2 MB in ~2h of cluster load;
+# at 4.2 MB the implicit checkpoint took 4 seconds, blocking writer thread
+# and cascading into cluster wedge).
+#
+# Hourly is a conservative starting cadence; CP16 Pillar 0 empirical-bench
+# will surface the right cadence empirically (e.g., 30min if write rate
+# grows; 2h if writes throttle). For now, hourly matches yaklog-output-ingester
+# sister-shape and provides ample headroom vs the 2h-to-cascade observed.
+
+[Unit]
+Description=Plexus yaklog WAL checkpoint maintenance (hourly)
+Requires=yaklog-wal-checkpoint.service
+
+[Timer]
+# Hourly at minute-37 ± 5 min randomized. Offset from minute-0 + minute-15
+# (where yaklog-output-ingester runs) keeps the substrate-maintenance jobs
+# from co-firing and double-pressuring the writer.
+OnCalendar=hourly
+OnCalendar=*-*-* *:37:00
+RandomizedDelaySec=300
+# Catch up on missed firings after devel restart/network outage
+Persistent=true
+Unit=yaklog-wal-checkpoint.service
+
+[Install]
+WantedBy=timers.target
