@@ -150,10 +150,28 @@ opsRouter.post('/ingest', async (req, res) => {
   // through the request body.
   // CP13.6 Phase 2.2: runOnce is now async (GitHubWalker requires network IO).
   const { runOnce } = require('./outputIngester');
+  // CP16-prep observability per parch #10166 (Option 2c): emit gauges
+  // so cluster Prom surfaces ingester health via /api/v1/metrics scrape.
+  const { emit } = require('./metrics');
+  const t0 = Date.now();
   try {
     const result = await runOnce({ db: dbModule.initializeDb() });
+    emit.outputIngester({
+      elapsed_ms: Date.now() - t0,
+      commits_walked: result.totalCommits || 0,
+      merges_walked: result.totalMerges || 0,
+      prs_walked: result.totalPrs || 0,
+      success: true,
+    });
     return res.json(result);
   } catch (err) {
+    emit.outputIngester({
+      elapsed_ms: Date.now() - t0,
+      commits_walked: 0,
+      merges_walked: 0,
+      prs_walked: 0,
+      success: false,
+    });
     return res.status(500).json({ error: 'InternalError', message: err.message });
   }
 });

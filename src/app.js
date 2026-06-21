@@ -15,6 +15,7 @@ const auditOpsRoutes = require('./auditOpsRoutes');     // CP12.2 (ADR-0030 §5.
 const auditIngesterRoutes = require('./auditIngesterRoutes'); // CP12.5 (ADR-0030 Phase 1.5.S)
 const auditOtelIngesterRoutes = require('./auditOtelIngesterRoutes'); // ADR-0032 Phase 0 Item B
 const outputApiRoutes = require('./outputApiRoutes');   // CP13.3 (ADR-0032 Phase 1.3)
+const metricsRoute = require('./metricsRoute');         // CP16-prep observability (parch #10166)
 const auth = require('./middleware/auth');
 const { opsKeyAuditMiddleware } = require('./middleware/opsKeyAudit'); // CP12.2 admin R1 fold
 const { initializeDb, listPresence, getGlobalHwm, envDiffBootDetector } = require('./db');
@@ -491,6 +492,14 @@ app.use('/api/v1/audit/ingest', auditOtelIngesterRoutes);
 // trust). This ops-key gated surface mounts under /api/v1/ops/output;
 // enforceOpsKey middleware applied at router level inside outputApiRoutes.
 app.use('/api/v1/ops/output', outputApiRoutes.opsRouter);
+// CP16-prep observability migration per parch #10166 Q1 ratify (Option 2c).
+// /api/v1/metrics exposes Prom text-format via custom Registry. Auth REQUIRED
+// per secops #10164 corrected Q2 disposition: yaklog:3100 is host-public
+// (0.0.0.0:3100), NOT internal-only like plexus-otel-collector:8889. See
+// feedback_public_bind_vs_internal_only_network_isolation_distinction_at_substrate_auth_disposition_tier.
+// Prometheus scrape config (in prometheus.yml) supplies a scoped bearer per
+// ssw-devops Gate (2) install work.
+app.use('/api/v1/metrics', auth, metricsRoute);
 
 app.get('/', (req, res) => {
   res.json({

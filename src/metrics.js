@@ -1,0 +1,149 @@
+// CP16-prep observability migration per parch #10157 ratify of #10153 Option 2c
+// + parch #10166 6-OQ arbitration. Sister-shape gap fix for both substrate-prep
+// scripts (yaklog-wal-checkpoint + yaklog-output-ingester) whose Prom textfile
+// emit never landed in cluster Prom — see [[feedback_plexus_prom_topology_does_not_include_node_exporter_textfile_collector]].
+//
+// Architecture: yaklog server emits gauges via prom-client custom Registry;
+// GET /api/v1/metrics route exposes Prom text-format (auth-required per
+// secops #10164 corrected Q2 disposition — yaklog:3100 is 0.0.0.0 host-public,
+// NOT internal-only like plexus-otel-collector:8889; see
+// [[feedback_public_bind_vs_internal_only_network_isolation_distinction_at_substrate_auth_disposition_tier]]).
+//
+// Custom Registry per secops Gate (1) condition (#10161 / #10166 condition 3):
+// no default-collector metrics (process_*, nodejs_*, etc) — only the explicit
+// gauges below. Keeps the exposed surface minimal; no Node.js runtime
+// introspection leaked.
+
+'use strict';
+
+const { Registry, Gauge, Counter } = require('prom-client');
+
+// Custom Registry — NO default collectors per secops condition 3.
+// All explicit gauges/counters below register here.
+const registry = new Registry();
+
+// ─── WAL checkpoint maintenance gauges ──────────────────────────────────────
+// Set by POST /api/v1/ops/wal-checkpoint handler after PRAGMA returns.
+// Cron-driven (hourly) per yaklog-wal-checkpoint.timer + on-demand via direct POST.
+
+const walCheckpointElapsedMs = new Gauge({
+  name: 'yaklog_wal_checkpoint_elapsed_ms',
+  help: 'Time taken by last WAL checkpoint (substrate-availability-tier diagnostic per feedback_writer_lock_contention_visible_via_checkpoint_elapsed_ms)',
+  registers: [registry],
+});
+
+const walCheckpointLogPages = new Gauge({
+  name: 'yaklog_wal_checkpoint_log_pages',
+  help: 'Pages in WAL at start of last checkpoint (0 = WAL already drained by auto-checkpoint)',
+  registers: [registry],
+});
+
+const walCheckpointPagesCheckpointed = new Gauge({
+  name: 'yaklog_wal_checkpoint_pages_checkpointed',
+  help: 'Pages successfully written back to main DB file in last checkpoint',
+  registers: [registry],
+});
+
+const walCheckpointBusyFlag = new Gauge({
+  name: 'yaklog_wal_checkpoint_busy_flag',
+  help: 'SQLite busy flag from last checkpoint (1 = writer-lock contention; 0 = clean)',
+  registers: [registry],
+});
+
+const walCheckpointSuccess = new Gauge({
+  name: 'yaklog_wal_checkpoint_success',
+  help: 'Whether last WAL checkpoint completed successfully (1 = ok, 0 = error)',
+  registers: [registry],
+});
+
+const walCheckpointLastRunUnixTimestamp = new Gauge({
+  name: 'yaklog_wal_checkpoint_last_run_unix_timestamp',
+  help: 'Unix timestamp (seconds) of last WAL checkpoint invocation',
+  registers: [registry],
+});
+
+const walCheckpointInvocationsTotal = new Counter({
+  name: 'yaklog_wal_checkpoint_invocations_total',
+  help: 'Total POST /api/v1/ops/wal-checkpoint invocations',
+  labelNames: ['mode', 'outcome'],
+  registers: [registry],
+});
+
+// ─── Output ingester gauges ─────────────────────────────────────────────────
+// Set by POST /api/v1/ops/output/ingest handler after runOnce returns.
+// Cron-driven (hourly) per yaklog-output-ingester.timer + on-demand via direct POST.
+
+const outputIngesterElapsedMs = new Gauge({
+  name: 'yaklog_output_ingester_elapsed_ms',
+  help: 'Time taken by last output-strand ingester run (full runOnce sweep)',
+  registers: [registry],
+});
+
+const outputIngesterCommitsWalked = new Gauge({
+  name: 'yaklog_output_ingester_commits_walked',
+  help: 'Total commits walked across all repos in last ingester run',
+  registers: [registry],
+});
+
+const outputIngesterMergesWalked = new Gauge({
+  name: 'yaklog_output_ingester_merges_walked',
+  help: 'Total merges walked across all repos in last ingester run',
+  registers: [registry],
+});
+
+const outputIngesterPrsWalked = new Gauge({
+  name: 'yaklog_output_ingester_prs_walked',
+  help: 'Total PRs walked across all repos in last ingester run',
+  registers: [registry],
+});
+
+const outputIngesterSuccess = new Gauge({
+  name: 'yaklog_output_ingester_success',
+  help: 'Whether last output ingester run completed successfully (1 = ok, 0 = error)',
+  registers: [registry],
+});
+
+const outputIngesterLastRunUnixTimestamp = new Gauge({
+  name: 'yaklog_output_ingester_last_run_unix_timestamp',
+  help: 'Unix timestamp (seconds) of last output ingester invocation',
+  registers: [registry],
+});
+
+const outputIngesterInvocationsTotal = new Counter({
+  name: 'yaklog_output_ingester_invocations_total',
+  help: 'Total POST /api/v1/ops/output/ingest invocations',
+  labelNames: ['outcome'],
+  registers: [registry],
+});
+
+// ─── Emit helpers (called by ops endpoint handlers post-result) ─────────────
+
+function emitWalCheckpoint({ mode, elapsed_ms, log, checkpointed, busy, success }) {
+  const outcome = success ? 'ok' : 'error';
+  walCheckpointElapsedMs.set(Number(elapsed_ms) || 0);
+  walCheckpointLogPages.set(Number(log) || 0);
+  walCheckpointPagesCheckpointed.set(Number(checkpointed) || 0);
+  walCheckpointBusyFlag.set(Number(busy) || 0);
+  walCheckpointSuccess.set(success ? 1 : 0);
+  walCheckpointLastRunUnixTimestamp.set(Math.floor(Date.now() / 1000));
+  walCheckpointInvocationsTotal.inc({ mode: String(mode || 'unknown'), outcome });
+}
+
+function emitOutputIngester({ elapsed_ms, commits_walked, merges_walked, prs_walked, success }) {
+  const outcome = success ? 'ok' : 'error';
+  outputIngesterElapsedMs.set(Number(elapsed_ms) || 0);
+  outputIngesterCommitsWalked.set(Number(commits_walked) || 0);
+  outputIngesterMergesWalked.set(Number(merges_walked) || 0);
+  outputIngesterPrsWalked.set(Number(prs_walked) || 0);
+  outputIngesterSuccess.set(success ? 1 : 0);
+  outputIngesterLastRunUnixTimestamp.set(Math.floor(Date.now() / 1000));
+  outputIngesterInvocationsTotal.inc({ outcome });
+}
+
+module.exports = {
+  registry,
+  emit: {
+    walCheckpoint: emitWalCheckpoint,
+    outputIngester: emitOutputIngester,
+  },
+};

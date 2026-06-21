@@ -46,6 +46,8 @@ const {
   // CP16-prep WAL checkpoint maintenance per 2026-06-20 incident post-mortem
   getDb,
 } = require('./db');
+// CP16-prep observability migration per parch #10166 (Option 2c)
+const { emit } = require('./metrics');
 
 const router = express.Router();
 
@@ -487,6 +489,16 @@ router.post('/wal-checkpoint', (req, res) => {
     // PRAGMA returns { busy: 0|1, log: <pages-in-WAL-at-start>, checkpointed: <pages-written-back> }
     const r = getDb().prepare(`PRAGMA wal_checkpoint(${mode})`).get();
     const elapsed_ms = Date.now() - t0;
+    // CP16-prep observability: emit gauges so cluster Prom (via /metrics scrape)
+    // surfaces checkpoint health per feedback_writer_lock_contention_visible_via_checkpoint_elapsed_ms
+    emit.walCheckpoint({
+      mode,
+      elapsed_ms,
+      log: r.log,
+      checkpointed: r.checkpointed,
+      busy: r.busy,
+      success: true,
+    });
     return res.json({
       ok: true,
       mode,
@@ -497,6 +509,7 @@ router.post('/wal-checkpoint', (req, res) => {
       actor,
     });
   } catch (e) {
+    emit.walCheckpoint({ mode, elapsed_ms: Date.now() - t0, log: 0, checkpointed: 0, busy: 0, success: false });
     return internal(res, e.message);
   }
 });
