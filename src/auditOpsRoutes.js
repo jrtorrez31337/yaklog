@@ -33,6 +33,7 @@ const {
   disposePolicyViolation,
   insertAuditReconciliation,
   tombstoneAuditPayload,
+  tombstoneMessage,
   tombstoneSubject,
   processPermissionScan,
   insertAuditAttestation,
@@ -593,6 +594,47 @@ router.post('/orp/:agent_id', (req, res) => {
   } catch (e) {
     emit.orpWrite({ agent_id: agentId, success: false, outcome: 'error' });
     return internal(res, e.message);
+  }
+});
+
+// ─── ADR-0026 v2 Phase A: POST /messages/:id/tombstone ──────────────────────
+//
+// Per parch #10375 Jon-direct DM-canon supersession + yaklog-dev #10385 Q2 (b)+
+// lean. Sister-shape canon to /audit/tombstone (CP12.12.1). Body redacted to
+// sentinel '[REDACTED]'; audit metadata (id/sender/channel/mentions/private/
+// created_at) preserved per ADR-0026 audit-by-construction discipline.
+//
+// Use-case: closes bus-DB plaintext receipt-window for DM credential-delivery
+// substrate. After recipient fetches DM via yaklog-dm-fetch + encrypts payload
+// to swarm-secrets.git, recipient calls this endpoint to redact the body —
+// audit trail preserved; cleartext gone.
+//
+// Body: { reason: "..." } required (sister-shape audit-tombstone GDPR
+// lawful-basis-class discipline applied generically here as "operational
+// reason for body redaction").
+
+router.post('/messages/:id/tombstone', (req, res) => {
+  const messageId = Number(req.params.id);
+  if (!Number.isInteger(messageId) || messageId <= 0) {
+    return badRequest(res, 'message id must be a positive integer');
+  }
+  const b = req.body || {};
+  if (!b.reason || typeof b.reason !== 'string' || !b.reason.trim()) {
+    return badRequest(res, 'reason required (operational basis for body redaction)');
+  }
+  const actor = computeActor(req);
+  try {
+    const result = tombstoneMessage({
+      message_id: messageId,
+      ops_key_sha256: actor,
+      reason: b.reason,
+    });
+    return res.json({ ok: true, ...result });
+  } catch (e) {
+    const msg = e.message || '';
+    if (/already tombstoned/i.test(msg)) return conflict(res, msg);
+    if (/not found/i.test(msg)) return notFound(res, msg);
+    return internal(res, msg);
   }
 });
 

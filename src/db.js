@@ -224,6 +224,21 @@ function initializeDb() {
   }
   db.exec(`CREATE INDEX IF NOT EXISTS idx_messages_private ON messages(private)`);
 
+  // ADR-0026 v2 Phase A: messages tombstone canon per parch #10375 Jon-direct +
+  // yaklog-dev #10385 substrate-design. Sister-shape canon to CP12.12.1
+  // audit-tombstone (POST /api/v1/ops/audit/tombstone). Closes the bus-DB
+  // plaintext receipt-window discipline gap for DM credential-delivery
+  // substrate per parch #10375 Q2 (b)+ lean: persist + canonical-tombstone-
+  // on-encrypt. Body redacted to sentinel '[REDACTED]'; audit metadata
+  // (sender/recipient/mentions/ts) preserved for ops-audit trail.
+  if (!messagesCols.some((c) => c.name === 'tombstone_at')) {
+    db.exec(`ALTER TABLE messages ADD COLUMN tombstone_at TEXT`);
+  }
+  if (!messagesCols.some((c) => c.name === 'tombstone_reason')) {
+    db.exec(`ALTER TABLE messages ADD COLUMN tombstone_reason TEXT`);
+  }
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_messages_tombstone ON messages(tombstone_at) WHERE tombstone_at IS NOT NULL`);
+
   db.prepare(`
     CREATE TABLE IF NOT EXISTS presence_transitions (
       id                    INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2191,6 +2206,49 @@ function tombstoneSubject({ subject_hash, ops_key_sha256, reason }) {
   return { tombstone_at, subject_hash };
 }
 
+// ─── ADR-0026 v2 Phase A: messages-tombstone canon ──────────────────────────
+//
+// Sister-shape canon to tombstoneAuditPayload (CP12.12.1). Closes the bus-DB
+// plaintext receipt-window discipline gap for DM credential-delivery substrate
+// per parch #10375 Q2 (b)+ lean. Body redacted to sentinel '[REDACTED]';
+// audit metadata (sender/channel/mentions/private/created_at) preserved for
+// ops-audit trail per ADR-0026 audit-by-construction discipline.
+//
+// Idempotency: re-tombstone of already-tombstoned row throws (sister-shape
+// audit-tombstone double-tombstone-rejection canon).
+function tombstoneMessage({ message_id, ops_key_sha256, reason }) {
+  if (!Number.isInteger(message_id) || message_id <= 0 || !ops_key_sha256 || !reason) {
+    throw new Error('tombstoneMessage: message_id (positive int) + ops_key_sha256 + reason required');
+  }
+  const database = getDb();
+  const tombstone_at = new Date().toISOString();
+  const REDACTED_SENTINEL = '[REDACTED]';
+  const txn = database.transaction(() => {
+    const row = database.prepare(`SELECT id, sender, channel, private, tombstone_at FROM messages WHERE id = ?`).get(message_id);
+    if (!row) throw new Error(`tombstoneMessage: message ${message_id} not found`);
+    if (row.tombstone_at) throw new Error(`tombstoneMessage: message ${message_id} already tombstoned at ${row.tombstone_at}`);
+    database.prepare(`
+      UPDATE messages
+      SET body = @sentinel,
+          tombstone_at = @tombstone_at,
+          tombstone_reason = @reason
+      WHERE id = @message_id
+    `).run({ sentinel: REDACTED_SENTINEL, tombstone_at, reason, message_id });
+    return { message_id, tombstone_at, sender: row.sender, channel: row.channel, private: !!row.private };
+  });
+  const result = txn();
+  // Meta-audit per sister-shape tombstoneSubject canon
+  insertAuditCredentialChange({
+    occurred_at: tombstone_at,
+    credential_class: 'message-body-tombstone',
+    change_type: 'revoke',
+    actor: ops_key_sha256,
+    prior_digest: `msg#${message_id}`,
+    reason: `message-body redact (DM/credential-receipt-window discipline): ${reason}`.slice(0, 200),
+  });
+  return result;
+}
+
 // ─── audit_ingester_cursor (CP12.4) ─────────────────────────────────────────
 
 function getIngesterCursor(ingester_name) {
@@ -3714,6 +3772,7 @@ module.exports = {
   insertAuditPayload,
   getAuditPayload,
   tombstoneAuditPayload,
+  tombstoneMessage,
   upsertSubjectDirectory,
   getSubjectByHash,
   tombstoneSubject,
