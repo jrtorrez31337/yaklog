@@ -7,12 +7,25 @@ services:
       - .env
     ports:
       - "${YAKLOG_BIND_IP:-0.0.0.0}:3100:3100"
+      - "${YAKLOG_BIND_IP:-0.0.0.0}:3443:3443"
     volumes:
       - yaklog_data:/data
       - ${YAKLOG_SPEC_FILE:-./spec.md}:/data/spec.md:ro
       - ${YAKLOG_SPEC_DIR_HOST:-/home/jon/agents/global}:/data/canonical:ro
       - ${YAKLOG_BARE_GIT_HOST:-/srv/git}:/srv/git:ro
       - ${YAKLOG_FERRY_AUDIT_HOST:-/var/log/yaklog}:/var/log/yaklog:rw
+      # CP13.6 Phase 2.2 GitHub PAT for GitHubWalker per parch #9866 ratify.
+      # Mounted read-only; container reads via GITHUB_PAT_FILE env var below.
+      - /etc/plexus/github-pat.token:/etc/plexus/github-pat.token:ro
+      # Task #138 Phase 2A vendor-key delivery substrate per parch #10320 +
+      # ssw-devops #10288 OOB age-key ferry. yaklog-runtime age private key
+      # is read by src/secureStore/sopsAge.js when invoking `sops --decrypt`
+      # on vendor-keys/*.sops.env files in swarm-secrets.git. Mode 0600
+      # root:root on host (sister-shape github-pat.token); container UID=0
+      # matches host mode for read.
+      - /etc/plexus/yaklog-runtime.age.key:/etc/plexus/yaklog-runtime.age.key:ro
+    environment:
+      GITHUB_PAT_FILE: /etc/plexus/github-pat.token
 
   # ──────────────────────────────────────────────────────────────────────
   # Plexus OTel stack (Plan C Stage 1; Jon-ratified 2026-05-24).
@@ -135,6 +148,23 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+  yaklog-tls:
+    image: caddy:2-alpine
+    container_name: yaklog-tls
+    network_mode: "service:yaklog"
+    depends_on:
+      yaklog:
+        condition: service_started
+    volumes:
+      - ./otel/Caddyfile.yaklog-tls:/etc/caddy/Caddyfile:ro
+      - /etc/yaklog-tls:/etc/yaklog-tls:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "caddy", "validate", "--config", "/etc/caddy/Caddyfile"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
 volumes:
   plexus_minio_data:
   yaklog_data:
