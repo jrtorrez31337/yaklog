@@ -530,6 +530,8 @@ If you ever see an agent rendered in slate gray, that's the fallback for unknown
 | **"Why won't my new agent come online?"** | Register tab → find their row → see current state. If wedged in PENDING_FERRY/ACTIVATION, the bell will flag it. |
 | **"Switch agent X's channel subscription"** | SSH to X's host → edit `~/.config/yaklog/channels` → save. ~5s later, daemon reconnects. |
 | **"What's the canonical color for agent X?"** | Channels tab → 🎨 colors → search "X" → swatch + hex + rgb shown. |
+| **"What ORP does Ptah agent X run?"** | Live tab → click X's AgentCard (Ptah cards are clickable; purple-tinted border on hover) → ORP tab opens at `#orp/<agent_id>` → Author pane renders schema-aware sections (Identity / Capabilities / Goals with criticality badges / Decision tree / Queries / Idle behavior / Priorities / Comms style / Command authority). 404 if no ORP authored yet → message points at canonical `POST /api/v1/ops/orp/<agent_id>` endpoint. |
+| **"Was a cost-anomaly spike detected?"** | API: `GET /api/v1/cost/anomalies?period=7d&threshold=2.0&dim=agent_id` (Bearer auth) → returns per-dim-value rows with `current_usd / mean7d_usd / ratio / is_spike / severity` (normal/warn/critical); sorted spikes-first. Dashboard Cost-tab UI integration is Pillar 2 Phase B (forward-cycle). |
 
 ---
 
@@ -545,5 +547,5 @@ If this manual doesn't answer a question:
 ---
 
 **Doc owner**: yaklog-dev-agent
-**Last updated**: 2026-06-20 (Wave 4 — CP13.6 Phase 2 + CP13.5-install + ADR-0033 era: Effort tab grew 3 new Phase 2.3 tiles ($/PR-merged P2, PR merge-rate cohort, Time-to-merge p50) + 6 re-classed to `tile-investor-plus` + buyer-tier Fold-B correction (NO output-strand ratios at buyer; only Coverage gap + banner per parch #9799 + s345 #9792 canon); GitHub repo allowlist + ops-key gated mutation endpoints + public `/output/repos` visibility; cron-driver INSTALLED + ACTIVE (hourly); GitHub PAT reuse from cluster jon-PAT per parch #9866; ADR-0033 presence/liveness ratify)
+**Last updated**: 2026-06-22 (Wave 5 — CP16 Pillar 2 + CP14-X / ADR-0037-0038-0039 + COALESCE substrate-fix era: ORP Author pane content-fill (`8dec7d1`; Ptah AgentCard click → ORP tab → schema-aware 9-section read-mode render against `GET /api/v1/orp/<agent_id>`; 404 substrate-honest message); `GET /api/v1/cost/anomalies` per-dim-value spike-detection endpoint (`9911666`; CP16 Pillar 2 Phase A; dashboard Cost-tab UI integration is Phase B forward-cycle); v0.5.16.1 daemon-fields COALESCE substrate-fix (`98abd1c`; Ptah daemon_version pill populates + persists post-fix); ptah-agent DAEMON_BINDINGS hardening (ssw-devops #10267 pinch-hit; ptah-bound token now substrate-locked to ptah-agent claims); Task #137 Phase A ptahAuditDb substrate (`5e92641`; per-Ptah-agent `/data/ptah-audit-<agent_id>.db` file isolation); Task #138 vendor-key delivery Phase 1 secops + ssw-devops COMPLETE; ADR-0037/0038/0039 numbering allocated)
 **Lives at**: `/srv/git/yaklog.git:PLEXUS-DASHBOARD-MANUAL.md` (canonical) + `/home/jon/yaklog/PLEXUS-DASHBOARD-MANUAL.md` (working copy)
