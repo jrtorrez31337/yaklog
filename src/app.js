@@ -37,8 +37,12 @@ initializeDb();
 // orpRoute / auditOpsRoutes / operator_records CRUD. Sister-shape to
 // yaklog.db's initializeDb() pattern above. Substrate-honest install-time
 // verifiability per ssw-devops Gate (2) #10434 observation.
-const plexusSecureDb = require('./plexusSecureDb');
-plexusSecureDb.initializeDb();
+// Skip in test mode unless explicit YAKLOG_PLEXUS_SECURE_DB_PATH is set —
+// most tests don't touch plexus-secure.db and don't bind-mount /data/.
+if (process.env.NODE_ENV !== 'test' || process.env.YAKLOG_PLEXUS_SECURE_DB_PATH) {
+  const plexusSecureDb = require('./plexusSecureDb');
+  plexusSecureDb.initializeDb();
+}
 
 // CP12.7 Phase B: env-diff boot detector. Compares current env state
 // (YAKLOG_API_KEYS + YAKLOG_TOKEN_BINDINGS + YAKLOG_HOST_INGESTER_BINDINGS
