@@ -35,6 +35,15 @@ const { enforceRegistrantToken } = require('./middleware/registrantToken');
 const { enforceOpsKey } = require('./middleware/opsKey');
 const auth = require('./middleware/auth');
 const { enforceSenderBinding } = require('./middleware/senderBinding');
+// Task #137 Phase B per parch #10266 Q2+Q3 ratify: at /register-transition-to-
+// ACTIVE, pre-provision per-Ptah-agent audit SQLite file when submission
+// declares runtime_class='ptah'. Q2 ratify: "at /register pre-provisioned +
+// clean first-POST latency". Hooked at ACTIVATE (vs SUBMITTED) gives
+// just-in-time provision + post-rejection-window clean lifecycle (REJECTED
+// registrations never get a stray DB file). PTAH_AGENT_ID_RE namespace bound
+// is enforced inside ptahAuditDb.provisionForAgent() (defense-in-depth per
+// /register sub-OQ Option (c) trusted-runtime bootstrap discipline).
+const ptahAuditDb = require('./ptahAuditDb');
 
 const router = express.Router();
 
@@ -387,6 +396,27 @@ router.post('/:id/activate', (req, res) => {
   }
 
   const now = new Date().toISOString();
+
+  // Task #137 Phase B per parch #10266 Q2+Q3 ratify: pre-provision per-Ptah-
+  // agent audit SQLite file at activate time when submission declares
+  // runtime_class='ptah'. Failures here MUST block ACTIVE transition —
+  // substrate-honest at activate-tier: an agent transitioning to ACTIVE without
+  // its audit substrate would silently lose audit events on first POST. Sister-
+  // shape to feedback_substrate_empirical_check_before_pre_stage discipline.
+  let submission = null;
+  try { submission = reg.submission_json ? JSON.parse(reg.submission_json) : null; }
+  catch { submission = null; }
+  if (submission && submission.runtime_class === 'ptah') {
+    try {
+      ptahAuditDb.provisionForAgent(reg.agent_id);
+    } catch (e) {
+      return res.status(500).json({
+        error: 'ProvisionFailed',
+        message: `runtime_class=ptah agent: per-Ptah-agent audit DB provision failed: ${e.message}. Registration stays in PENDING_ACTIVATION; resolve provisioning failure (e.g., agent_id ptah-* namespace bound) and retry activate.`
+      });
+    }
+  }
+
   const updated = updateRegistration(req.params.id, {
     status: 'ACTIVE',
     activated_at: now,
@@ -402,7 +432,12 @@ router.post('/:id/activate', (req, res) => {
     event_type: 'ACTIVATED',
     actor: reg.agent_id,
     token_sha256_prefix: reg.minted_token_hash.slice(0, 16),
-    metadata: { from_ip: req.ip }
+    metadata: {
+      from_ip: req.ip,
+      // Surface Ptah-provision outcome in registration event metadata for
+      // operator visibility + audit-trail clarity.
+      ptah_audit_provisioned: !!(submission && submission.runtime_class === 'ptah') || undefined,
+    }
   });
   // CP12.7 Phase A: emit audit_credential_change for the activate transition.
   // Token transitions from latent-ciphertext to actively-bound; CC6 signal.
