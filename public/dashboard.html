@@ -440,6 +440,25 @@
   .orp-pane-body { color: var(--text); font-size: 13px; line-height: 1.5; }
   .orp-muted { color: var(--muted); font-style: italic; margin: 0 0 12px; }
   .orp-author-status, .orp-live-trace { display: block; margin-top: 12px; padding: 8px 12px; background: var(--panel); border-left: 3px solid var(--muted); color: var(--muted); font-family: monospace; font-size: 12px; }
+  /* ORP Author content-fill (Task #212 forward-cycle; read-mode render) */
+  .orp-meta { color: var(--muted); font-size: 11px; margin-bottom: 12px; }
+  .orp-section-h { color: var(--text); font-size: 13px; font-weight: 600; margin: 16px 0 6px; padding-top: 8px; border-top: 1px solid var(--border); }
+  .orp-section-h:first-of-type { border-top: none; padding-top: 0; }
+  .orp-dl { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; margin: 0 0 8px; }
+  .orp-dl dt { color: var(--muted); font-size: 11px; text-transform: lowercase; }
+  .orp-dl dd { color: var(--text); font-size: 13px; margin: 0; }
+  .orp-description { color: var(--text); font-size: 13px; margin: 0 0 12px; padding: 8px 10px; background: var(--panel); border-left: 2px solid var(--accent, #7c3aed); }
+  .orp-list { margin: 0 0 8px; padding-left: 20px; }
+  .orp-list li { color: var(--text); font-size: 13px; line-height: 1.5; margin-bottom: 4px; }
+  .orp-intent { font-weight: 600; }
+  .orp-extras { color: var(--muted); font-size: 11px; }
+  .orp-goal-id { font-weight: 600; }
+  .orp-criticality { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+  .orp-crit-hard { background: rgba(239,68,68,0.15); color: #ef4444; }
+  .orp-crit-stretch { background: rgba(96,165,250,0.15); color: #60a5fa; }
+  .orp-decision-list li { margin-bottom: 8px; }
+  .orp-when { color: var(--muted); font-size: 11px; font-weight: 600; }
+  .orp-then { color: var(--muted); font-size: 11px; font-weight: 600; }
   /* Ptah AgentCard clickability indicator (subtle; full a11y via aria-label + role) */
   .agent-card[data-runtime="ptah"] { cursor: pointer; }
   .agent-card[data-runtime="ptah"]:hover { border-left-color: #7c3aed; }

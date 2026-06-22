@@ -348,10 +348,217 @@
     const statusEl = document.getElementById('orp-instance-status');
     if (orpState.agentId) {
       if (nameEl) nameEl.textContent = orpState.agentId;
-      if (statusEl) statusEl.textContent = `instance ${orpState.agentId} — author + live-view substrate-shell ready; content rendering pending contracts`;
+      // Content-fill: fetch + render the ORP record in Author pane (read-mode).
+      // Live-view still pending gemini episode-trace contract.
+      // Edit-mode forward-track (POST /api/v1/ops/orp/<agent_id> shipped CP14-X
+      // server-side; UI editing surface deferred to ADR-0037 authoring cycle).
+      renderOrpAuthor(orpState.agentId, statusEl);
     } else {
       if (nameEl) nameEl.textContent = '(select a Ptah AgentCard)';
       if (statusEl) statusEl.textContent = 'awaiting instance selection — click a Ptah AgentCard to open its ORP view';
+    }
+  }
+
+  // ORP Author pane content-fill (Task #212 forward-cycle; sister-shape to
+  // existing /api/v1/orp/<agent_id> server endpoint shipped CP14-X / task #220).
+  // Fetches the ORP record + renders schema-aware read-only sections. Per
+  // ptah-orp.schema.json: role_id, display_name, description, version,
+  // capabilities[], goals[], decision_tree[], queries[], idle_behavior,
+  // priorities[], comms_style, command_authority.
+  async function renderOrpAuthor(agentId, statusEl) {
+    const body = document.getElementById('orp-author-body');
+    if (!body) return;
+    // Replace shell content with loading state
+    clearChildren(body);
+    body.appendChild(el('p', { class: 'orp-muted' }, `loading ORP for ${agentId}…`));
+    if (statusEl) statusEl.textContent = `loading ORP for ${agentId}…`;
+
+    let resp;
+    try {
+      resp = await fetch(`/api/v1/orp/${encodeURIComponent(agentId)}`, { cache: 'no-store' });
+    } catch (e) {
+      clearChildren(body);
+      body.appendChild(el('p', { class: 'orp-muted' }, `network error: ${e.message}`));
+      if (statusEl) statusEl.textContent = `network error loading ${agentId} ORP`;
+      return;
+    }
+    if (resp.status === 404) {
+      clearChildren(body);
+      body.appendChild(el('p', { class: 'orp-muted' },
+        `no ORP authored yet for ${agentId}. Server-side substrate is ready; ORP must be authored + POSTed to /api/v1/ops/orp/${agentId} (UI authoring deferred to forward-cycle).`));
+      if (statusEl) statusEl.textContent = `no ORP for ${agentId}`;
+      return;
+    }
+    if (resp.status === 401) {
+      clearChildren(body);
+      body.appendChild(el('p', { class: 'orp-muted' }, `auth required — log in to view ORP`));
+      if (statusEl) statusEl.textContent = `auth required`;
+      return;
+    }
+    if (!resp.ok) {
+      clearChildren(body);
+      body.appendChild(el('p', { class: 'orp-muted' }, `error: HTTP ${resp.status}`));
+      if (statusEl) statusEl.textContent = `error HTTP ${resp.status}`;
+      return;
+    }
+    const payload = await resp.json();
+    const orp = payload.orp_json || {};
+    clearChildren(body);
+
+    // Metadata header
+    const meta = el('div', { class: 'orp-meta' });
+    meta.appendChild(el('span', null, `version ${payload.version || '?'}`));
+    if (payload.schema_version) {
+      meta.appendChild(el('span', null, ` · schema ${payload.schema_version}`));
+    }
+    if (payload.updated_at) {
+      meta.appendChild(el('span', null, ` · updated ${fmtAge(payload.updated_at)}`));
+    }
+    body.appendChild(meta);
+
+    // Identity section
+    body.appendChild(el('h4', { class: 'orp-section-h' }, 'Identity'));
+    const idDl = el('dl', { class: 'orp-dl' });
+    const idFields = [
+      ['role_id', orp.role_id || '—'],
+      ['display_name', orp.display_name || '—'],
+      ['version', orp.version || '—'],
+    ];
+    for (const [k, v] of idFields) {
+      idDl.appendChild(el('dt', null, k));
+      idDl.appendChild(el('dd', null, String(v)));
+    }
+    body.appendChild(idDl);
+    if (orp.description) {
+      body.appendChild(el('p', { class: 'orp-description' }, orp.description));
+    }
+
+    // Capabilities
+    const caps = Array.isArray(orp.capabilities) ? orp.capabilities : [];
+    body.appendChild(el('h4', { class: 'orp-section-h' },
+      `Capabilities (${caps.length})`));
+    if (caps.length === 0) {
+      body.appendChild(el('p', { class: 'orp-muted' }, 'none'));
+    } else {
+      const ul = el('ul', { class: 'orp-list' });
+      for (const c of caps) {
+        const li = el('li');
+        li.appendChild(el('span', { class: 'orp-intent' }, c.intent || '(no intent)'));
+        const extras = [];
+        if (Array.isArray(c.app_scope) && c.app_scope.length) extras.push(`apps: ${c.app_scope.join(', ')}`);
+        if (Array.isArray(c.path_roots) && c.path_roots.length) extras.push(`paths: ${c.path_roots.join(', ')}`);
+        if (Array.isArray(c.url_allowlist) && c.url_allowlist.length) extras.push(`urls: ${c.url_allowlist.length}`);
+        if (typeof c.value_max_len === 'number') extras.push(`value≤${c.value_max_len}`);
+        if (extras.length) {
+          li.appendChild(el('span', { class: 'orp-extras' }, ' · ' + extras.join(' · ')));
+        }
+        ul.appendChild(li);
+      }
+      body.appendChild(ul);
+    }
+
+    // Goals
+    const goals = Array.isArray(orp.goals) ? orp.goals : [];
+    body.appendChild(el('h4', { class: 'orp-section-h' }, `Goals (${goals.length})`));
+    if (goals.length === 0) {
+      body.appendChild(el('p', { class: 'orp-muted' }, 'none'));
+    } else {
+      const ul = el('ul', { class: 'orp-list' });
+      for (const g of goals) {
+        const li = el('li');
+        const critClass = g.criticality === 'hard' ? 'orp-crit-hard' : 'orp-crit-stretch';
+        li.appendChild(el('span', { class: `orp-criticality ${critClass}` }, g.criticality || '?'));
+        li.appendChild(el('span', { class: 'orp-goal-id' }, ' ' + (g.id || '(no id)')));
+        if (g.description) li.appendChild(el('span', { class: 'orp-extras' }, ' — ' + g.description));
+        const checks = Array.isArray(g.success_checks) ? g.success_checks.length : 0;
+        const blocked = Array.isArray(g.blocked_terminals) ? g.blocked_terminals.length : 0;
+        const summary = [];
+        if (checks) summary.push(`${checks} check${checks > 1 ? 's' : ''}`);
+        if (blocked) summary.push(`${blocked} blocked-terminal${blocked > 1 ? 's' : ''}`);
+        if (summary.length) {
+          li.appendChild(el('span', { class: 'orp-extras' }, ' · ' + summary.join(', ')));
+        }
+        ul.appendChild(li);
+      }
+      body.appendChild(ul);
+    }
+
+    // Decision tree
+    const dt = Array.isArray(orp.decision_tree) ? orp.decision_tree : [];
+    body.appendChild(el('h4', { class: 'orp-section-h' }, `Decision tree (${dt.length})`));
+    if (dt.length === 0) {
+      body.appendChild(el('p', { class: 'orp-muted' }, 'none'));
+    } else {
+      const ul = el('ul', { class: 'orp-list orp-decision-list' });
+      for (const d of dt) {
+        const li = el('li');
+        li.appendChild(el('span', { class: 'orp-when' }, 'when: '));
+        li.appendChild(el('span', null, d.when || '(empty)'));
+        li.appendChild(el('br'));
+        li.appendChild(el('span', { class: 'orp-then' }, 'then: '));
+        li.appendChild(el('span', null, d.then || '(empty)'));
+        ul.appendChild(li);
+      }
+      body.appendChild(ul);
+    }
+
+    // Queries (optional)
+    const queries = Array.isArray(orp.queries) ? orp.queries : [];
+    if (queries.length) {
+      body.appendChild(el('h4', { class: 'orp-section-h' }, `Queries (${queries.length})`));
+      const ul = el('ul', { class: 'orp-list' });
+      for (const q of queries) {
+        const li = el('li');
+        li.appendChild(el('span', null, `${q.id || '(no id)'} (${q.type || '?'})`));
+        if (typeof q.ttl_ticks === 'number') {
+          li.appendChild(el('span', { class: 'orp-extras' }, ` · ttl=${q.ttl_ticks}`));
+        }
+        ul.appendChild(li);
+      }
+      body.appendChild(ul);
+    }
+
+    // Idle behavior
+    if (orp.idle_behavior && orp.idle_behavior.mode) {
+      body.appendChild(el('h4', { class: 'orp-section-h' }, 'Idle behavior'));
+      body.appendChild(el('p', null, `mode: ${orp.idle_behavior.mode}`));
+    }
+
+    // Priorities
+    const prios = Array.isArray(orp.priorities) ? orp.priorities : [];
+    if (prios.length) {
+      body.appendChild(el('h4', { class: 'orp-section-h' }, `Priorities (${prios.length})`));
+      const ol = el('ol', { class: 'orp-list' });
+      for (const p of prios) ol.appendChild(el('li', null, String(p)));
+      body.appendChild(ol);
+    }
+
+    // Comms style (optional)
+    if (orp.comms_style && (orp.comms_style.formality || orp.comms_style.progress_report)) {
+      body.appendChild(el('h4', { class: 'orp-section-h' }, 'Comms style'));
+      const dl = el('dl', { class: 'orp-dl' });
+      if (orp.comms_style.formality) {
+        dl.appendChild(el('dt', null, 'formality'));
+        dl.appendChild(el('dd', null, orp.comms_style.formality));
+      }
+      if (orp.comms_style.progress_report) {
+        dl.appendChild(el('dt', null, 'progress_report'));
+        dl.appendChild(el('dd', null, orp.comms_style.progress_report));
+      }
+      body.appendChild(dl);
+    }
+
+    // Command authority
+    if (orp.command_authority && Array.isArray(orp.command_authority.accept_from)) {
+      body.appendChild(el('h4', { class: 'orp-section-h' },
+        `Command authority — accepts from (${orp.command_authority.accept_from.length})`));
+      const ul = el('ul', { class: 'orp-list' });
+      for (const s of orp.command_authority.accept_from) ul.appendChild(el('li', null, String(s)));
+      body.appendChild(ul);
+    }
+
+    if (statusEl) {
+      statusEl.textContent = `loaded ORP for ${agentId} (version ${payload.version || '?'}); read-mode — edit-UI forward-track`;
     }
   }
 
