@@ -31,6 +31,15 @@ const SESSION_STATES_NOT_CONSUMING = new Set(['idle', 'stop_failure', 'unknown']
 
 initializeDb();
 
+// CP14-X Plexus Secure Store eager-init at app boot so all schema migrations
+// (orp + orp_version + operator_records per PLAN-OPERATOR-SESSION-SUBSTRATE
+// v2 Q13 RATIFY) apply at startup rather than waiting for first request to
+// orpRoute / auditOpsRoutes / operator_records CRUD. Sister-shape to
+// yaklog.db's initializeDb() pattern above. Substrate-honest install-time
+// verifiability per ssw-devops Gate (2) #10434 observation.
+const plexusSecureDb = require('./plexusSecureDb');
+plexusSecureDb.initializeDb();
+
 // CP12.7 Phase B: env-diff boot detector. Compares current env state
 // (YAKLOG_API_KEYS + YAKLOG_TOKEN_BINDINGS + YAKLOG_HOST_INGESTER_BINDINGS
 // sha256[:16] fingerprints) to the persisted credential_state_snapshot.
