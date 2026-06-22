@@ -75,6 +75,14 @@ module.exports = {
   // service-account. Never reuse an agent's token — confuses substrate
   // attribution with message-bus identity per secops #7810.
   hostIngesterBindings: parseTokenBindings(process.env.YAKLOG_HOST_INGESTER_BINDINGS),
+  // Operator-session Phase A per PLAN-OPERATOR-SESSION-SUBSTRATE v2 RATIFIED
+  // by parch #10382 + Jon-direct #10404. OPERATOR_BINDINGS env-tier auth
+  // canon per Q3 RATIFY (sister-shape DAEMON_BINDINGS canon; additive +
+  // class-distinct + zero-migration-risk on existing TOKEN_BINDINGS). Each
+  // operator-session bearer is bound to a single operator_id; per-operator
+  // token-pair canon enforces server-side session_class='operator' attribution
+  // at /presence/event (per Q2 RATIFY + secops Block-1 server-enforcement).
+  operatorBindings: parseTokenBindings(process.env.YAKLOG_OPERATOR_BINDINGS),
   corsOrigin: process.env.CORS_ORIGIN || '*',
   maxBodyBytes: parseNumber(process.env.MAX_BODY_BYTES, 1_000_000),
   specPath: process.env.YAKLOG_SPEC_PATH || '/data/spec.md',

@@ -476,7 +476,14 @@ router.post('/presence/event', (req, res) => {
     daemon_started_at: daemon_started_at ?? null,
     // v0.5.9 runtime-execution-liveness passthrough.
     runtime_state: runtime_state ?? null,
-    runtime_blocked_until: runtime_blocked_until ?? null
+    runtime_blocked_until: runtime_blocked_until ?? null,
+    // Operator-session Phase A per PLAN-OPERATOR-SESSION-SUBSTRATE v2 RATIFIED
+    // by parch #10382 + Jon-direct #10404. CRITICAL DISCIPLINE per secops
+    // Block-1: session_class is SERVER-ENFORCED from the auth binding tier
+    // (req.tokenClass). Client-supplied session_class field in request body
+    // is IGNORED — operator cannot impersonate agent-class via crafted POST.
+    // Sister-shape canon to DAEMON_BINDINGS auth-tier discipline.
+    session_class: req.tokenClass === 'operator' ? 'operator' : 'agent'
   });
 
   return res.status(200).json({ presence });

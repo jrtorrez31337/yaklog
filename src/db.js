@@ -239,6 +239,22 @@ function initializeDb() {
   }
   db.exec(`CREATE INDEX IF NOT EXISTS idx_messages_tombstone ON messages(tombstone_at) WHERE tombstone_at IS NOT NULL`);
 
+  // Operator-session substrate Phase A per PLAN-OPERATOR-SESSION-SUBSTRATE v2
+  // RATIFIED by parch #10382 + Jon-direct #10404. session_class column on
+  // presence (Q2 RATIFY: explicit field SERVER-ENFORCED from binding tier per
+  // secops Block-1); decommissioned_at column (Q10 RATIFY: 6-step offboarding
+  // checklist commit-canon; secops Block-2 + admin #10365 multi-host-atomic).
+  // Sister-shape canon to runtime_class column (CP12.x.3) at session-tier.
+  const presenceColsOpA = db.pragma('table_info(presence)');
+  if (!presenceColsOpA.some((c) => c.name === 'session_class')) {
+    db.exec(`ALTER TABLE presence ADD COLUMN session_class TEXT NOT NULL DEFAULT 'agent'`);
+  }
+  if (!presenceColsOpA.some((c) => c.name === 'decommissioned_at')) {
+    db.exec(`ALTER TABLE presence ADD COLUMN decommissioned_at TEXT`);
+  }
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_presence_session_class ON presence(session_class)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_presence_decommissioned ON presence(decommissioned_at) WHERE decommissioned_at IS NOT NULL`);
+
   db.prepare(`
     CREATE TABLE IF NOT EXISTS presence_transitions (
       id                    INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -398,6 +414,18 @@ function initializeDb() {
     `);
     db.prepare(`CREATE INDEX IF NOT EXISTS idx_cost_daily_vendor_date ON cost_daily(vendor, date)`).run();
   }
+
+  // Operator-session cost-attribution canon per Q6 RATIFY + bizmodel #10367:
+  // actor_class column on cost_daily (default 'agent' preserves existing
+  // headline ratios; slicer-toggle UI surfaces operator-class separately at
+  // Effort-tab Phase B). Sister-shape runtime_class/vendor dim-additive canon
+  // (CP11.x.2 + CP12.x.3). Placed after cost_daily CREATE + after vendor ADD
+  // so this migration sees the table; sister-shape to vendor ALTER pattern.
+  if (!costDailyCols.has('actor_class')) {
+    db.exec(`ALTER TABLE cost_daily ADD COLUMN actor_class TEXT NOT NULL DEFAULT 'agent'`);
+    costDailyCols.add('actor_class');
+  }
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_cost_daily_actor_class ON cost_daily(actor_class)`);
 
   // cost_dimension_tags — operator-assigned tag mapping per agent_id.
   // Forward-propagates to NEW rollup rows (does NOT retroactively re-tag
@@ -2541,7 +2569,13 @@ function upsertPresence({
   // CP14.1 (2026-06-13): runtime-class. Caller may pass explicit value (future
   // Layer 2 — daemon-reported via OTEL_RESOURCE_ATTRIBUTES service.name);
   // when omitted, server-side compute via agentRuntimes.runtimeOf() lookup.
-  runtime
+  runtime,
+  // Operator-session Phase A per PLAN-OPERATOR-SESSION-SUBSTRATE v2 RATIFIED
+  // by parch #10382 + Jon-direct #10404. Caller (routes.js POST /presence/event
+  // handler) sets this from req.tokenClass at the auth boundary — NEVER from
+  // request body — per secops Block-1 server-enforcement discipline. Defaults
+  // to 'agent' if omitted by caller (back-compat for legacy callers and tests).
+  session_class
 }) {
   const database = getDb();
   const now = new Date().toISOString();
@@ -2589,7 +2623,7 @@ function upsertPresence({
       runtime_uid, runtime_gid, runtime_hostname, current_cwd,
       daemon_pid, daemon_version, daemon_started_at,
       runtime_state, runtime_blocked_until,
-      runtime, last_cursor_advance_at
+      runtime, last_cursor_advance_at, session_class
     )
     VALUES (
       @agent_id, @daemon_state, @session_state, @cursor_position, @lock_held,
@@ -2601,7 +2635,7 @@ function upsertPresence({
       @runtime_uid, @runtime_gid, @runtime_hostname, @current_cwd,
       @daemon_pid, @daemon_version, @daemon_started_at,
       @runtime_state, @runtime_blocked_until,
-      @runtime, @last_cursor_advance_at
+      @runtime, @last_cursor_advance_at, @session_class
     )
     ON CONFLICT(agent_id) DO UPDATE SET
       daemon_state = excluded.daemon_state,
@@ -2673,7 +2707,14 @@ function upsertPresence({
       -- CP12.x.4: SSE-stale detection. Raw assign — JS layer computed the
       -- correct value (advanced timestamp on cursor increase, retained
       -- prior timestamp otherwise, seeded to now on first row with cursor).
-      last_cursor_advance_at = excluded.last_cursor_advance_at
+      last_cursor_advance_at = excluded.last_cursor_advance_at,
+      -- Operator-session Phase A per PLAN-OPERATOR-SESSION-SUBSTRATE v2
+      -- RATIFIED parch #10382 + Jon-direct #10404. COALESCE-style preservation:
+      -- once a binding-tier-derived session_class is set, subsequent heartbeats
+      -- (which also derive from same binding tier) will provide the same
+      -- value. Raw-assign canon-clean here since server-enforces from binding
+      -- tier per secops Block-1 — value is always-authoritative-at-write.
+      session_class = excluded.session_class
   `);
   stmt.run({
     agent_id,
@@ -2705,7 +2746,8 @@ function upsertPresence({
     runtime_state: runtime_state ?? null,
     runtime_blocked_until: runtime_blocked_until ?? null,
     runtime: runtime ?? null,
-    last_cursor_advance_at: last_cursor_advance_at ?? null
+    last_cursor_advance_at: last_cursor_advance_at ?? null,
+    session_class: session_class || 'agent'
   });
 
   if (stateChanged) {
@@ -2756,7 +2798,11 @@ function getPresenceByAgent(agent_id) {
     // CP14.1 runtime-class (CC / Codex / Gemini)
     runtime: row.runtime,
     // CP12.x.4 SSE-stale detection
-    last_cursor_advance_at: row.last_cursor_advance_at
+    last_cursor_advance_at: row.last_cursor_advance_at,
+    // Operator-session Phase A: session_class + decommissioned_at per
+    // PLAN-OPERATOR-SESSION-SUBSTRATE v2 RATIFIED parch #10382 + Jon-direct #10404
+    session_class: row.session_class || 'agent',
+    decommissioned_at: row.decommissioned_at || null
   };
 }
 
@@ -2800,7 +2846,10 @@ function listPresence() {
     // CP14.1 runtime-class (CC / Codex / Gemini)
     runtime: row.runtime,
     // CP12.x.4 SSE-stale detection
-    last_cursor_advance_at: row.last_cursor_advance_at
+    last_cursor_advance_at: row.last_cursor_advance_at,
+    // Operator-session Phase A
+    session_class: row.session_class || 'agent',
+    decommissioned_at: row.decommissioned_at || null
   }));
 }
 

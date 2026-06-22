@@ -71,6 +71,27 @@ function migrate() {
 
     CREATE INDEX IF NOT EXISTS idx_orp_version_agent ON orp_version(agent_id, version DESC);
   `);
+
+  // Operator-session Phase A per PLAN-OPERATOR-SESSION-SUBSTRATE v2 RATIFY
+  // (Q13 admin §2.10): operator_records artifact-class lives in plexus-secure.db
+  // (sister-shape ORP canon-class isolation at storage-tier per
+  // [[feedback_plexus_secure_store_separate_db_file_substrate_canon_class_isolation]]).
+  // Tracks operator-session lifecycle (provisioned → decommissioned). user_email
+  // is Anthropic-account identity at audit-tier; per [[feedback_plexus_identity_overlay_not_columns]]
+  // NOT a default dashboard column — surfaces via popover only.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS operator_records (
+      operator_id     TEXT PRIMARY KEY,
+      user_email      TEXT,
+      created_at      TEXT NOT NULL,
+      created_by      TEXT NOT NULL,
+      decommissioned_at TEXT,
+      decommissioned_by TEXT,
+      notes           TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_operator_records_active ON operator_records(decommissioned_at) WHERE decommissioned_at IS NULL;
+  `);
 }
 
 function getDb() {
@@ -176,6 +197,41 @@ function listOrpVersions(agentId, limit = 20) {
   return rows;
 }
 
+// ─── Operator-session record CRUD (Phase A per PLAN v2 §2.10) ───────────────
+
+function upsertOperatorRecord({ operatorId, userEmail, actor, notes }) {
+  const now = new Date().toISOString();
+  getDb().prepare(`
+    INSERT INTO operator_records (operator_id, user_email, created_at, created_by, notes)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(operator_id) DO UPDATE SET
+      user_email = excluded.user_email,
+      notes = excluded.notes
+  `).run(operatorId, userEmail || null, now, actor, notes || null);
+  return { operator_id: operatorId, created_at: now };
+}
+
+function getOperatorRecord(operatorId) {
+  return getDb().prepare('SELECT * FROM operator_records WHERE operator_id = ?').get(operatorId) || null;
+}
+
+function listOperatorRecords({ includeDecommissioned = false } = {}) {
+  const sql = includeDecommissioned
+    ? 'SELECT * FROM operator_records ORDER BY created_at DESC'
+    : 'SELECT * FROM operator_records WHERE decommissioned_at IS NULL ORDER BY created_at DESC';
+  return getDb().prepare(sql).all();
+}
+
+function decommissionOperatorRecord({ operatorId, actor, notes }) {
+  const now = new Date().toISOString();
+  const res = getDb().prepare(`
+    UPDATE operator_records
+    SET decommissioned_at = ?, decommissioned_by = ?, notes = COALESCE(?, notes)
+    WHERE operator_id = ? AND decommissioned_at IS NULL
+  `).run(now, actor, notes || null, operatorId);
+  return { operator_id: operatorId, decommissioned_at: now, updated: res.changes };
+}
+
 module.exports = {
   initializeDb,
   getDb,
@@ -184,5 +240,9 @@ module.exports = {
   getOrp,
   upsertOrp,
   listOrpVersions,
+  upsertOperatorRecord,
+  getOperatorRecord,
+  listOperatorRecords,
+  decommissionOperatorRecord,
   _internal: { loadSchema, getValidator },
 };

@@ -77,6 +77,26 @@ router.get('/vendor-keys', (req, res) => {
     });
   }
 
+  // Operator-session Phase A per PLAN-OPERATOR-SESSION-SUBSTRATE v2 §2.12 +
+  // secops Advisory-1: operator tokens REJECTED at /secure-store. Vendor-keys
+  // are agent-tier credential substrate per ADR-0038; operators don't fetch
+  // agent secrets via this route. Class-gate at handler tier (sister-canon
+  // Task #138 5-gate handler discipline).
+  if (req.tokenClass === 'operator') {
+    try {
+      recordAccess({
+        agent_id: (req.auth && req.auth.operatorId) || 'operator',
+        vendors_csv: '',
+        outcome: 'rejected-operator-class',
+        source_ip: req.ip,
+      });
+    } catch {}
+    return res.status(401).json({
+      error: 'Unauthorized',
+      message: 'Operator tokens are not authorized at /secure-store vendor-keys (agent-tier substrate per ADR-0038). Per PLAN-OPERATOR-SESSION-SUBSTRATE v2 §2.12 class-gate.',
+    });
+  }
+
   // Resolve agent_id from bearer
   const config = require('../config');
   const agentId = resolveAgentId(req, config);

@@ -70,9 +70,30 @@ module.exports = function auth(req, res, next) {
     });
   }
 
+  // Operator-session Phase A per PLAN-OPERATOR-SESSION-SUBSTRATE v2 RATIFIED
+  // by parch #10382 + Jon-direct #10404. req.tokenClass context attached for
+  // per-route class-gate enforcement per Q3 RATIFY + secops Advisory-1 (e.g.,
+  // /secure-store rejects operator class at 401 — sister-canon Task #138
+  // 5-gate handler discipline). Class resolution order: operator → agent → ops.
+  // Defense-in-depth pairing with Q2 RATIFY server-enforced session_class at
+  // /presence/event handler tier.
+  const operatorIds = config.operatorBindings.get(token);
+  if (operatorIds && operatorIds.size > 0) {
+    // Operator-session bearer (sister-shape DAEMON_BINDINGS pairing canon).
+    // Per Q3 + Q9 RATIFY (flat-all-operators at-introduction; sub-tier
+    // forward-track Phase F): all operators have equal cluster-wide read +
+    // post-as-own-operator_id capability. operatorId is the canonical
+    // operator identity for downstream session_class server-enforcement.
+    const [operatorId] = operatorIds;
+    req.auth = { token, source: 'operator', operatorId };
+    req.tokenClass = 'operator';
+    return next();
+  }
+
   // Path (a): static env-configured token.
   if (config.apiKeys.has(token)) {
     req.auth = { token, source: 'env' };
+    req.tokenClass = 'agent';
     return next();
   }
 
@@ -85,6 +106,7 @@ module.exports = function auth(req, res, next) {
       registrationId: regRow.registration_id,
       registrationAgentId: regRow.agent_id
     };
+    req.tokenClass = 'agent';
     return next();
   }
 
@@ -100,6 +122,7 @@ module.exports = function auth(req, res, next) {
       source: 'ops',
       opsKeyId: sha256Hex(token).slice(0, 16)
     };
+    req.tokenClass = 'ops';
     return next();
   }
 
