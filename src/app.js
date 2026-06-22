@@ -17,6 +17,7 @@ const auditOtelIngesterRoutes = require('./auditOtelIngesterRoutes'); // ADR-003
 const outputApiRoutes = require('./outputApiRoutes');   // CP13.3 (ADR-0032 Phase 1.3)
 const metricsRoute = require('./metricsRoute');         // CP16-prep observability (parch #10166)
 const costAnomaliesRoute = require('./costAnomaliesRoute'); // CP16 Pillar 2 (parch #10268)
+const vendorKeysRoute = require('./secureStore/vendorKeysRoute'); // Task #138 Phase 2B (parch #10320)
 const orpRoute = require('./orpRoute');                 // CP14-X Plexus Secure Store (parch #10175)
 const auth = require('./middleware/auth');
 const { opsKeyAuditMiddleware } = require('./middleware/opsKeyAudit'); // CP12.2 admin R1 fold
@@ -503,6 +504,7 @@ app.use('/api/v1/ops/output', outputApiRoutes.opsRouter);
 // ssw-devops Gate (2) install work.
 app.use('/api/v1/metrics', auth, metricsRoute);
 app.use('/api/v1/cost', auth, costAnomaliesRoute);
+app.use('/api/v1/secure-store', auth, vendorKeysRoute);
 // CP14-X Plexus Secure Store per parch #10175 Q1 ratify: GET /api/v1/orp/<agent_id>
 // auth-required (any valid YAKLOG_API_KEYS token reads any ORP per #10174 +
 // secops design Q recommend; per-agent scoping deferred to forward-track).
