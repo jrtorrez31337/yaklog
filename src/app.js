@@ -19,6 +19,8 @@ const metricsRoute = require('./metricsRoute');         // CP16-prep observabili
 const costAnomaliesRoute = require('./costAnomaliesRoute'); // CP16 Pillar 2 (parch #10268)
 const vendorKeysRoute = require('./secureStore/vendorKeysRoute'); // Task #138 Phase 2B (parch #10320)
 const orpRoute = require('./orpRoute');                 // CP14-X Plexus Secure Store (parch #10175)
+const dashboardLoginRoute = require('./dashboardLoginRoute'); // PLAN-DASHBOARD-OPERATOR-DM §2.3.1 (secops FLAG-2)
+const { dashboardCspMiddleware } = require('./middleware/csp'); // PLAN-DASHBOARD-OPERATOR-DM §2.9.2 (secops FLAG-1)
 const auth = require('./middleware/auth');
 const { opsKeyAuditMiddleware } = require('./middleware/opsKeyAudit'); // CP12.2 admin R1 fold
 const { initializeDb, listPresence, getGlobalHwm, envDiffBootDetector } = require('./db');
@@ -395,6 +397,12 @@ function noCacheDashboard(req, res, next) {
   res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
   next();
 }
+// PLAN-DASHBOARD-OPERATOR-DM §2.9.2: dashboard-specific CSP tightening
+// (defense-in-depth on top of helmet defaults; adds X-Frame-Options DENY
+// + tighter directives for dashboard surface). Mounted BEFORE dashboard
+// routes so the header lands on every /dashboard/* response.
+app.use(dashboardCspMiddleware);
+
 app.get('/dashboard', noCacheDashboard, (req, res) => {
   res.sendFile(path.join(__dirname, '..', 'public', 'dashboard.html'));
 });
@@ -402,6 +410,13 @@ app.get('/dashboard.js', noCacheDashboard, (req, res) => {
   res.type('application/javascript');
   res.sendFile(path.join(__dirname, '..', 'public', 'dashboard.js'));
 });
+
+// PLAN-DASHBOARD-OPERATOR-DM §2.3.1: dashboard operator-class login route
+// (open — no auth at mount; rate-limit + uniform-401 + timing-safe internal).
+// Sister-shape /register canonical-open pattern: identity-issuance routes are
+// open at endpoint tier; auth is by virtue of the operator-bearer being
+// validated inside the handler.
+app.use('/dashboard', dashboardLoginRoute);
 
 // Plan C Stage 4 CP7.1 — /update + /api/v1/update/manifest.
 // Public (no auth) — mirrors /dashboard + /presence/public posture.

@@ -339,6 +339,54 @@
   td.subagents.active { color: var(--blue); font-weight: 500; }
   td.tool .pill { padding: 1px 6px; border-radius: 3px; background: rgba(96,165,250,0.15); color: var(--blue); font-size: 11px; }
 
+  /* PLAN-DASHBOARD-OPERATOR-DM Phase A: DM compose UI */
+  .agent-card-dm-btn {
+    background: transparent; border: 1px solid var(--border); color: var(--text-dim);
+    border-radius: 4px; padding: 2px 7px; font-size: 11px; cursor: pointer;
+    margin-left: 6px;
+  }
+  .agent-card-dm-btn:hover { background: rgba(96,165,250,0.10); color: var(--blue); border-color: var(--blue); }
+  .agent-card-dm-btn:focus { outline: 2px solid var(--blue); outline-offset: 1px; }
+  .dm-modal { display: none; position: fixed; inset: 0; z-index: 200; }
+  .dm-modal.visible { display: block; }
+  .dm-modal-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.55); }
+  .dm-modal-card {
+    position: absolute; left: 50%; top: 12vh; transform: translateX(-50%);
+    width: 520px; max-width: 92vw; background: var(--panel);
+    border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.65);
+  }
+  .dm-modal-head { padding: 12px 16px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between; }
+  .dm-modal-head h3 { margin: 0; font-size: 14px; font-weight: 600; }
+  .dm-modal-close { background: transparent; border: none; color: var(--text-dim);
+    font-size: 20px; cursor: pointer; padding: 0 4px; }
+  .dm-modal-close:hover { color: var(--text); }
+  .dm-modal-body { padding: 16px; font-size: 13px; }
+  .dm-modal-hint { color: var(--text-dim); margin: 0 0 10px 0; font-size: 12px; }
+  .dm-modal-body label { display: block; color: var(--text-dim); margin: 8px 0 4px 0; font-size: 12px; }
+  .dm-modal-body input[type="password"], .dm-modal-body textarea {
+    width: 100%; box-sizing: border-box; background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px; padding: 8px;
+    font-family: inherit; font-size: 13px;
+  }
+  .dm-modal-body textarea { resize: vertical; min-height: 100px; }
+  .dm-modal-msg { margin-top: 8px; font-size: 12px; min-height: 18px; }
+  .dm-modal-msg.error { color: #f87171; }
+  .dm-modal-msg.success { color: #34d399; }
+  .dm-modal-actions { margin-top: 14px; display: flex; gap: 8px; justify-content: flex-end; }
+  .dm-modal-primary {
+    background: var(--blue); color: #fff; border: 1px solid var(--blue);
+    border-radius: 4px; padding: 6px 14px; cursor: pointer; font-size: 13px;
+  }
+  .dm-modal-primary:hover { filter: brightness(1.1); }
+  .dm-modal-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+  .dm-modal-cancel {
+    background: transparent; color: var(--text-dim); border: 1px solid var(--border);
+    border-radius: 4px; padding: 6px 14px; cursor: pointer; font-size: 13px;
+  }
+  .dm-modal-cancel:hover { color: var(--text); border-color: var(--text-dim); }
+
   /* CP3: agent-name overlay popup. */
   .agent-clickable { cursor: pointer; text-decoration: underline dotted rgba(255,255,255,0.18); text-underline-offset: 3px; }
   .agent-clickable:hover { text-decoration-color: var(--blue); color: var(--blue); }
@@ -1696,6 +1744,47 @@
 
 <!-- CP3: shared agent overlay popover (single instance reused). -->
 <div id="agent-popover" role="dialog" aria-hidden="true"></div>
+
+<!-- PLAN-DASHBOARD-OPERATOR-DM Phase A: operator login + DM compose modals -->
+<div id="dm-login-modal" class="dm-modal" role="dialog" aria-hidden="true" aria-labelledby="dm-login-title">
+  <div class="dm-modal-backdrop"></div>
+  <div class="dm-modal-card">
+    <div class="dm-modal-head">
+      <h3 id="dm-login-title">Operator login</h3>
+      <button type="button" class="dm-modal-close" aria-label="close">×</button>
+    </div>
+    <div class="dm-modal-body">
+      <p class="dm-modal-hint">Enter your operator-bearer token to enable DM-send from this dashboard session. Token is stored in sessionStorage (browser-tab scope).</p>
+      <label for="dm-login-token">Operator bearer:</label>
+      <input id="dm-login-token" type="password" autocomplete="off" spellcheck="false" />
+      <div id="dm-login-msg" class="dm-modal-msg"></div>
+      <div class="dm-modal-actions">
+        <button type="button" id="dm-login-submit" class="dm-modal-primary">Login</button>
+        <button type="button" class="dm-modal-cancel dm-modal-close">Cancel</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="dm-compose-modal" class="dm-modal" role="dialog" aria-hidden="true" aria-labelledby="dm-compose-title">
+  <div class="dm-modal-backdrop"></div>
+  <div class="dm-modal-card">
+    <div class="dm-modal-head">
+      <h3 id="dm-compose-title">DM <span id="dm-compose-recipient"></span></h3>
+      <button type="button" class="dm-modal-close" aria-label="close">×</button>
+    </div>
+    <div class="dm-modal-body">
+      <p class="dm-modal-hint">Sending as <strong id="dm-compose-operator"></strong> · recipient pre-bound from AgentCard · @mention auto-prepended</p>
+      <label for="dm-compose-body">Message:</label>
+      <textarea id="dm-compose-body" rows="6" placeholder="Type your message..."></textarea>
+      <div id="dm-compose-msg" class="dm-modal-msg"></div>
+      <div class="dm-modal-actions">
+        <button type="button" id="dm-compose-submit" class="dm-modal-primary">Send DM</button>
+        <button type="button" class="dm-modal-cancel dm-modal-close">Cancel</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <footer>
   Live tab: presence polled <code>/api/v1/presence/public</code> @ 2s · charts pushed via SSE <code>/api/v1/plexus/public/stream</code> ·

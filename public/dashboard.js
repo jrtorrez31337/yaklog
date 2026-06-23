@@ -1835,6 +1835,23 @@
         }, 'stale daemon'));
       }
       this.headEl.appendChild(pills);
+      // PLAN-DASHBOARD-OPERATOR-DM Phase A: DM compose icon-button on each
+      // AgentCard. Click → opens compose modal pre-bound to this agent_id.
+      // Requires operator login (sessionStorage operator-bearer); if absent,
+      // opens login modal first per §2.9.1 binding canon.
+      const dmBtn = el('button', {
+        type: 'button',
+        class: 'agent-card-dm-btn',
+        title: 'DM this agent (operator-class send)',
+        'aria-label': 'Send DM to ' + this.agentId,
+      }, '✉ DM');
+      dmBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (window.PlexusOperatorDM) {
+          window.PlexusOperatorDM.openCompose(this.agentId);
+        }
+      });
+      this.headEl.appendChild(dmBtn);
       // CP6.5: status-color left border + dimmed offline cards
       // Strip prior status- classes, add the current one
       this.el.className = 'agent-card';
@@ -5813,6 +5830,213 @@
       rerenderCardsWithFilter();
     });
   }
+
+  // ────────────────────────────────────────────────────────────────────
+  // PLAN-DASHBOARD-OPERATOR-DM Phase A: operator-class DM affordance
+  // (Jon-direct via parch #10470; ADR-0040 §4.2 + ADR-0026 v1 extension;
+  // PLAN v2 ratified at parch #10507 + secops #10514 Gate (1) re-confirm).
+  //
+  // sessionStorage holds operator-bearer at Phase 1 (HttpOnly cookie HARD
+  // GATE at Phase 2 per secops FLAG-1). XSS-defense: dashboard CSP
+  // `default-src 'self'; script-src 'self'` blocks inline scripts +
+  // cross-origin script sources; sessionStorage scope is browser-tab.
+  // ────────────────────────────────────────────────────────────────────
+  const PlexusOperatorDM = (function () {
+    const STORAGE_KEY = 'plexus_operator_bearer';
+    const STORAGE_OP_KEY = 'plexus_operator_id';
+    const loginModal = document.getElementById('dm-login-modal');
+    const composeModal = document.getElementById('dm-compose-modal');
+    let pendingRecipient = null;  // agent_id captured at click; opened after login
+
+    function getBearer() { return sessionStorage.getItem(STORAGE_KEY) || null; }
+    function getOperatorId() { return sessionStorage.getItem(STORAGE_OP_KEY) || null; }
+    function setSession(token, opId) {
+      sessionStorage.setItem(STORAGE_KEY, token);
+      sessionStorage.setItem(STORAGE_OP_KEY, opId);
+    }
+    function clearSession() {
+      sessionStorage.removeItem(STORAGE_KEY);
+      sessionStorage.removeItem(STORAGE_OP_KEY);
+    }
+
+    function openModal(m) { if (m) { m.classList.add('visible'); m.setAttribute('aria-hidden', 'false'); } }
+    function closeModal(m) {
+      if (!m) return;
+      m.classList.remove('visible');
+      m.setAttribute('aria-hidden', 'true');
+      // Reset transient state
+      const msg = m.querySelector('.dm-modal-msg');
+      if (msg) { msg.textContent = ''; msg.className = 'dm-modal-msg'; }
+      const inputs = m.querySelectorAll('input, textarea');
+      inputs.forEach((i) => { if (i.type === 'password' || i.tagName === 'TEXTAREA') i.value = ''; });
+    }
+
+    function openLogin() {
+      openModal(loginModal);
+      const tokenInput = document.getElementById('dm-login-token');
+      if (tokenInput) setTimeout(() => tokenInput.focus(), 50);
+    }
+
+    function openCompose(recipientAgentId) {
+      if (!getBearer()) {
+        pendingRecipient = recipientAgentId;
+        openLogin();
+        return;
+      }
+      pendingRecipient = null;
+      const recipEl = document.getElementById('dm-compose-recipient');
+      const opEl = document.getElementById('dm-compose-operator');
+      const bodyEl = document.getElementById('dm-compose-body');
+      if (recipEl) recipEl.textContent = '@' + recipientAgentId;
+      if (opEl) opEl.textContent = getOperatorId() || '(unknown)';
+      composeModal.dataset.recipientAgentId = recipientAgentId;
+      if (bodyEl) {
+        bodyEl.value = '@' + recipientAgentId + ' ';
+        setTimeout(() => { bodyEl.focus(); bodyEl.setSelectionRange(bodyEl.value.length, bodyEl.value.length); }, 50);
+      }
+      openModal(composeModal);
+    }
+
+    async function handleLogin() {
+      const tokenInput = document.getElementById('dm-login-token');
+      const msgEl = document.getElementById('dm-login-msg');
+      const submitBtn = document.getElementById('dm-login-submit');
+      if (!tokenInput || !msgEl || !submitBtn) return;
+      const token = tokenInput.value.trim();
+      if (!token) {
+        msgEl.textContent = 'Enter a bearer token.';
+        msgEl.className = 'dm-modal-msg error';
+        return;
+      }
+      submitBtn.disabled = true;
+      msgEl.textContent = 'Authenticating...';
+      msgEl.className = 'dm-modal-msg';
+      try {
+        const r = await fetch('/dashboard/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token }),
+        });
+        if (r.status === 200) {
+          const data = await r.json();
+          setSession(token, data.operator_id);
+          msgEl.textContent = 'Logged in as ' + data.operator_id;
+          msgEl.className = 'dm-modal-msg success';
+          setTimeout(() => {
+            closeModal(loginModal);
+            if (pendingRecipient) {
+              const recip = pendingRecipient;
+              pendingRecipient = null;
+              openCompose(recip);
+            }
+          }, 400);
+        } else if (r.status === 429) {
+          msgEl.textContent = 'Too many failed attempts. Try again later.';
+          msgEl.className = 'dm-modal-msg error';
+        } else {
+          msgEl.textContent = 'Invalid credentials.';
+          msgEl.className = 'dm-modal-msg error';
+        }
+      } catch (e) {
+        msgEl.textContent = 'Network error. Try again.';
+        msgEl.className = 'dm-modal-msg error';
+      } finally {
+        submitBtn.disabled = false;
+      }
+    }
+
+    async function handleCompose() {
+      const bodyEl = document.getElementById('dm-compose-body');
+      const msgEl = document.getElementById('dm-compose-msg');
+      const submitBtn = document.getElementById('dm-compose-submit');
+      const recipient = composeModal.dataset.recipientAgentId;
+      if (!bodyEl || !msgEl || !submitBtn || !recipient) return;
+      const body = bodyEl.value.trim();
+      if (!body || !body.includes('@' + recipient)) {
+        msgEl.textContent = 'Body must include @' + recipient + ' mention.';
+        msgEl.className = 'dm-modal-msg error';
+        return;
+      }
+      submitBtn.disabled = true;
+      msgEl.textContent = 'Sending...';
+      msgEl.className = 'dm-modal-msg';
+      try {
+        const r = await fetch('/api/v1/messages', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + getBearer(),
+          },
+          body: JSON.stringify({
+            channel: 'dm',
+            // sender is ignored — server overrides from operator-bearer per
+            // PLAN §2.3 Block-1 sister-canon. Include for shape compliance.
+            sender: getOperatorId(),
+            body,
+            private: true,
+          }),
+        });
+        if (r.status === 201) {
+          const data = await r.json();
+          msgEl.textContent = 'DM #' + data.message.id + ' sent to @' + recipient;
+          msgEl.className = 'dm-modal-msg success';
+          setTimeout(() => closeModal(composeModal), 800);
+        } else if (r.status === 401) {
+          msgEl.textContent = 'Session expired. Logging in again...';
+          msgEl.className = 'dm-modal-msg error';
+          clearSession();
+          setTimeout(() => { closeModal(composeModal); openLogin(); }, 600);
+        } else {
+          let errMsg = 'Send failed (HTTP ' + r.status + ')';
+          try { const j = await r.json(); errMsg = j.message || errMsg; } catch {}
+          msgEl.textContent = errMsg;
+          msgEl.className = 'dm-modal-msg error';
+        }
+      } catch (e) {
+        msgEl.textContent = 'Network error. Try again.';
+        msgEl.className = 'dm-modal-msg error';
+      } finally {
+        submitBtn.disabled = false;
+      }
+    }
+
+    // Wire up event handlers (close buttons, submit buttons, Escape key)
+    document.querySelectorAll('#dm-login-modal .dm-modal-close, #dm-compose-modal .dm-modal-close')
+      .forEach((btn) => btn.addEventListener('click', (e) => {
+        const modal = e.target.closest('.dm-modal');
+        if (modal) closeModal(modal);
+      }));
+    document.querySelectorAll('#dm-login-modal .dm-modal-backdrop, #dm-compose-modal .dm-modal-backdrop')
+      .forEach((bd) => bd.addEventListener('click', (e) => {
+        const modal = e.target.closest('.dm-modal');
+        if (modal) closeModal(modal);
+      }));
+    const loginSubmit = document.getElementById('dm-login-submit');
+    if (loginSubmit) loginSubmit.addEventListener('click', handleLogin);
+    const composeSubmit = document.getElementById('dm-compose-submit');
+    if (composeSubmit) composeSubmit.addEventListener('click', handleCompose);
+    // Enter submits login
+    const loginInput = document.getElementById('dm-login-token');
+    if (loginInput) loginInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); handleLogin(); }
+    });
+    // Cmd/Ctrl+Enter submits compose
+    const composeBody = document.getElementById('dm-compose-body');
+    if (composeBody) composeBody.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); handleCompose(); }
+    });
+    // Escape closes
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        if (composeModal && composeModal.classList.contains('visible')) closeModal(composeModal);
+        else if (loginModal && loginModal.classList.contains('visible')) closeModal(loginModal);
+      }
+    });
+
+    return { openCompose, openLogin, getOperatorId, clearSession };
+  })();
+  // Expose globally for AgentCard click handlers (renderHead injects ✉ DM btn)
+  window.PlexusOperatorDM = PlexusOperatorDM;
 
   // Kick off presence polling (unchanged from v0.5.7).
   poll();
