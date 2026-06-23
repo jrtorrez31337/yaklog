@@ -21,6 +21,7 @@ const vendorKeysRoute = require('./secureStore/vendorKeysRoute'); // Task #138 P
 const orpRoute = require('./orpRoute');                 // CP14-X Plexus Secure Store (parch #10175)
 const dashboardLoginRoute = require('./dashboardLoginRoute'); // PLAN-DASHBOARD-OPERATOR-DM §2.3.1 (secops FLAG-2)
 const { dashboardCspMiddleware } = require('./middleware/csp'); // PLAN-DASHBOARD-OPERATOR-DM §2.9.2 (secops FLAG-1)
+const { createConcurrencyLimiter } = require('./middleware/concurrencyLimit'); // Cascade-prevention #10535 (substrate-design Option b)
 const auth = require('./middleware/auth');
 const { opsKeyAuditMiddleware } = require('./middleware/opsKeyAudit'); // CP12.2 admin R1 fold
 const { initializeDb, listPresence, getGlobalHwm, envDiffBootDetector } = require('./db');
@@ -490,6 +491,16 @@ app.use('/api/v1/register', registerRoutes);
 // surface cannot easily hold a Bearer YAKLOG_TOKEN. Production multi-tenant
 // will swap this for cookie-auth — flagged in PLAN-C-STAGE-2-DESIGN.md §5.
 app.use('/api/v1/plexus/public', plexusRoutes.publicRouter);
+// Cascade-prevention #10535 substrate-design Option (b): per-route-family
+// concurrency limit for /audit/* + /policy/* (compute-heavy aggregates that
+// can saturate event-loop + writer-lock when poll-storms hit). Excess
+// returns 429 + Retry-After; protects presence-event POSTs from starvation.
+// Mounted BEFORE auditRoutes so limiter fires before handler. Sister-canon
+// to dashboardLoginRoute rate-limit at request-rate tier; this is in-flight
+// concurrency tier.
+const auditPolicyLimiter = createConcurrencyLimiter({ maxInFlight: 4, retryAfterS: 5, name: 'audit-policy' });
+app.use('/api/v1/plexus/public/audit', auditPolicyLimiter);
+app.use('/api/v1/plexus/public/policy', auditPolicyLimiter);
 // CP12.2 (ADR-0030 §5.1): audit + governance public-read mirror. Mounts
 // under same `/api/v1/plexus/public` namespace; reads from db.js helpers
 // only (no mutations). Network-isolation trust model — same as cost/.

@@ -3590,7 +3590,25 @@
     if (_auditMounted) return;
     _auditMounted = true;
     refreshAuditHero();
-    setInterval(refreshAuditHero, 60_000);  // 1m hero refresh
+    // Cascade-prevention #10535 substrate-design Option (a): pause polling
+    // when document hidden (no point spending Prom + DB cycles on a tab
+    // the operator can't see). resume + immediate-refresh on visibilitychange.
+    let _auditHeroInterval = null;
+    function startAuditHeroInterval() {
+      if (_auditHeroInterval) return;
+      _auditHeroInterval = setInterval(refreshAuditHero, 60_000);
+    }
+    function stopAuditHeroInterval() {
+      if (!_auditHeroInterval) return;
+      clearInterval(_auditHeroInterval);
+      _auditHeroInterval = null;
+    }
+    if (typeof document.hidden === 'boolean' && !document.hidden) startAuditHeroInterval();
+    else if (typeof document.hidden !== 'boolean') startAuditHeroInterval();  // older browsers
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) stopAuditHeroInterval();
+      else { refreshAuditHero(); startAuditHeroInterval(); }
+    });
     document.querySelectorAll('#audit-subnav button').forEach((b) => {
       b.addEventListener('click', () => auditShowSub(b.dataset.sub));
     });
