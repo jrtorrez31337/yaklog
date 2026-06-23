@@ -82,7 +82,19 @@ router.get('/messages', (req, res) => {
 });
 
 router.post('/messages', (req, res) => {
-  const { channel, sender, body, metadata, private: isPrivate } = req.body || {};
+  const { channel, body, metadata, private: isPrivate } = req.body || {};
+  let { sender } = req.body || {};
+
+  // Operator-class server-side sender override (PLAN-DASHBOARD-OPERATOR-DM §2.3
+  // Block-1 sister-canon per secops FLAG-3 + parch Q8 RATIFY). Operator-bearer
+  // cannot supply an arbitrary sender; server forces sender = operatorId from
+  // the auth-binding regardless of request-body value. Sister-canon to
+  // ADR-0040 §4.1 session_class server-enforcement at /presence/event handler.
+  // Empirical-validation per Q9: operator-bearer POST with sender:"<other>" →
+  // server-overridden to operatorId.
+  if (req.tokenClass === 'operator' && req.auth && req.auth.operatorId) {
+    sender = req.auth.operatorId;
+  }
 
   if (typeof channel !== 'string' || !CHANNEL_RE.test(channel)) {
     return res.status(400).json({

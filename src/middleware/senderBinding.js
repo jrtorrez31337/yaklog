@@ -6,6 +6,14 @@ const config = require('../config');
 //   skip binding check; treat as binding-exempt).
 function resolveAllowedSenders(req) {
   if (!req.auth || !req.auth.token) return { allowedSenders: null, isRegistration: false };
+  // Operator-class (ADR-0040 §4.2 + dashboard-DM PLAN §2.3 sister-canon Block-1):
+  // operator-bearer allowedSenders is exactly the bound operator_id. Sister-shape
+  // to /register-minted token path below — both bind a single identity.
+  // Covers POST + PATCH + DELETE write-routes per secops FLAG-3 + parch Q8 RATIFY
+  // canon-fold feedback_class_tier_sender_override_substantively_covers_all_write_routes_post_patch_delete.
+  if (req.auth.source === 'operator' && req.auth.operatorId) {
+    return { allowedSenders: new Set([req.auth.operatorId]), isRegistration: false };
+  }
   // /register-minted token (path b): registration row IS the binding.
   if (req.auth.source === 'registration' && req.auth.registrationAgentId) {
     return { allowedSenders: new Set([req.auth.registrationAgentId]), isRegistration: true };
