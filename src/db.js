@@ -348,6 +348,26 @@ function initializeDb() {
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_activity_agent_id_desc ON agent_activity(agent_id, id DESC)`).run();
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_activity_ts ON agent_activity(ts DESC)`).run();
 
+  // CP16 Pillar 0 Phase B per PLAN-CP16-PILLAR-0-AMENDMENT + parch ratify
+  // #10691. browser_perf_measurement stores per-callsite browser timing
+  // ingested via POST /api/v1/instrument/browser-perf. In-process tick
+  // rolls these up to /var/lib/yaklog/textfile/browser-perf.prom for
+  // node_exporter scrape (added via ssw-devops Gate 2 topology change).
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS browser_perf_measurement (
+      measurement_id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ts_unix_ms     INTEGER NOT NULL,
+      session_id     TEXT,
+      agent_id       TEXT,
+      callsite       TEXT NOT NULL,
+      duration_ms    REAL NOT NULL,
+      n_rows         INTEGER,
+      recorded_at    TEXT NOT NULL
+    )
+  `).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_browser_perf_callsite_ts ON browser_perf_measurement(callsite, ts_unix_ms DESC)`).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_browser_perf_ts ON browser_perf_measurement(ts_unix_ms DESC)`).run();
+
   // CP11.1 (2026-06-04): cost-persistence Phase 1 substrate (PLAN-CP11 v2 §4).
   // Pre-staged pre-canonical per Jon-direct "do not stop until #cost has been
   // updated and ready for review" — additive only (no existing-table changes),

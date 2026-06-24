@@ -125,3 +125,93 @@ test('POST /user-prompt: label-escape special chars in agent_id', async () => {
   const tf = fs.readFileSync(path.join(textfileDir, 'user-prompts.prom'), 'utf-8');
   assert.match(tf, /agent_id="a\\"b\\\\c"/);
 });
+
+// ──────────────────────────────────────────────────────────────────────
+// CP16 Pillar 0 Phase B: /browser-perf endpoint + rollup tick tests
+// ──────────────────────────────────────────────────────────────────────
+
+const BP_URL = '/api/v1/instrument/browser-perf';
+
+test('POST /browser-perf: accepts batched measurements + inserts rows', async () => {
+  const now = Date.now();
+  const res = await request(app).post(BP_URL).set('Authorization', AUTH).send({
+    measurements: [
+      { ts_unix_ms: now - 1000, callsite: 'cost.mean7d', duration_ms: 25 },
+      { ts_unix_ms: now - 500, callsite: 'cost.mean7d', duration_ms: 30 },
+      { ts_unix_ms: now, callsite: 'bus.thread', duration_ms: 100, n_rows: 50 }
+    ]
+  });
+  assert.equal(res.status, 201);
+  assert.equal(res.body.inserted, 3);
+});
+
+test('POST /browser-perf: empty array → 400', async () => {
+  const res = await request(app).post(BP_URL).set('Authorization', AUTH).send({ measurements: [] });
+  assert.equal(res.status, 400);
+});
+
+test('POST /browser-perf: missing measurements → 400', async () => {
+  const res = await request(app).post(BP_URL).set('Authorization', AUTH).send({});
+  assert.equal(res.status, 400);
+});
+
+test('POST /browser-perf: batch > 500 → 400', async () => {
+  const measurements = Array.from({ length: 501 }, (_, i) => ({
+    ts_unix_ms: Date.now() - i, callsite: 'cost.mean7d', duration_ms: 1
+  }));
+  const res = await request(app).post(BP_URL).set('Authorization', AUTH).send({ measurements });
+  assert.equal(res.status, 400);
+});
+
+test('POST /browser-perf: bad callsite (special chars) → 400', async () => {
+  const res = await request(app).post(BP_URL).set('Authorization', AUTH).send({
+    measurements: [{ ts_unix_ms: Date.now(), callsite: 'bad callsite with spaces', duration_ms: 1 }]
+  });
+  assert.equal(res.status, 400);
+});
+
+test('POST /browser-perf: negative duration_ms → 400', async () => {
+  const res = await request(app).post(BP_URL).set('Authorization', AUTH).send({
+    measurements: [{ ts_unix_ms: Date.now(), callsite: 'cost.mean7d', duration_ms: -5 }]
+  });
+  assert.equal(res.status, 400);
+});
+
+test('POST /browser-perf: no Bearer → 401', async () => {
+  const res = await request(app).post(BP_URL).send({
+    measurements: [{ ts_unix_ms: Date.now(), callsite: 'cost.mean7d', duration_ms: 1 }]
+  });
+  assert.equal(res.status, 401);
+});
+
+test('rollupCallsites + textfile: computes per-callsite P50/P95/P99', async () => {
+  // Insert 100 measurements for one callsite
+  const now = Date.now();
+  const measurements = Array.from({ length: 100 }, (_, i) => ({
+    ts_unix_ms: now - i, callsite: 'test.rollup', duration_ms: i + 1
+  }));
+  await request(app).post(BP_URL).set('Authorization', AUTH).send({ measurements });
+  const stats = instrumentRoutes.__rollupCallsites();
+  const s = stats.get('test.rollup');
+  assert.ok(s, 'rollup must have test.rollup callsite');
+  assert.equal(s.count, 100);
+  assert.ok(s.p50 >= 49 && s.p50 <= 51, `p50 ~50, got ${s.p50}`);
+  assert.ok(s.p95 >= 94 && s.p95 <= 96, `p95 ~95, got ${s.p95}`);
+  assert.ok(s.p99 >= 98 && s.p99 <= 100, `p99 ~99, got ${s.p99}`);
+});
+
+test('writeBrowserPerfTextfile: emits Prom metric lines per callsite', async () => {
+  const now = Date.now();
+  await request(app).post(BP_URL).set('Authorization', AUTH).send({
+    measurements: [
+      { ts_unix_ms: now, callsite: 'tf.test', duration_ms: 100 },
+      { ts_unix_ms: now, callsite: 'tf.test', duration_ms: 200 }
+    ]
+  });
+  instrumentRoutes.__writeBrowserPerfTextfile();
+  const tf = fs.readFileSync(path.join(textfileDir, 'browser-perf.prom'), 'utf-8');
+  assert.match(tf, /plexus_browser_perf_p50_seconds\{callsite="tf\.test"\}/);
+  assert.match(tf, /plexus_browser_perf_p95_seconds\{callsite="tf\.test"\}/);
+  assert.match(tf, /plexus_browser_perf_p99_seconds\{callsite="tf\.test"\}/);
+  assert.match(tf, /plexus_browser_perf_count\{callsite="tf\.test"\} 2/);
+});
