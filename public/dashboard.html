@@ -1792,6 +1792,11 @@
 </footer>
 
 <script src="/vendor/uPlot/uPlot.iife.min.js"></script>
+<!-- CP16 Pillar 0 Phase B (browser side): perf instrument exposes window.PerfInstrument
+     for callsite wraps in dashboard.js. Must load BEFORE dashboard.js so wraps can
+     reference the API. Empty/no-op when server endpoint /api/v1/instrument/browser-perf
+     returns 404 (pre-Phase-B-server deploy); ships clean either way. -->
+<script src="/perf-instrument.js"></script>
 <script src="/dashboard.js"></script>
 </body>
 </html>
