@@ -100,13 +100,33 @@ module.exports = function auth(req, res, next) {
   // Path (b): /register-minted token (ACTIVE registration row lookup).
   const regRow = getActiveRegistrationByMintedTokenHash(sha256Hex(token));
   if (regRow) {
-    req.auth = {
-      token,
-      source: 'registration',
-      registrationId: regRow.registration_id,
-      registrationAgentId: regRow.agent_id
-    };
-    req.tokenClass = 'agent';
+    // Path Y per parch #10658: derive tokenClass from registration submission.
+    // If the submission declared session_class='operator', authenticate this
+    // token as operator-class (sister-canon to env-var OPERATOR_BINDINGS path
+    // above; closes the Phase A scope-gap surfaced at #10650).
+    let sessionClass = 'agent';
+    try {
+      const submission = regRow.submission_json ? JSON.parse(regRow.submission_json) : null;
+      if (submission && submission.session_class === 'operator') sessionClass = 'operator';
+    } catch { /* malformed submission_json: fall back to agent-class */ }
+
+    if (sessionClass === 'operator') {
+      req.auth = {
+        token,
+        source: 'operator',
+        operatorId: regRow.agent_id,
+        registrationId: regRow.registration_id
+      };
+      req.tokenClass = 'operator';
+    } else {
+      req.auth = {
+        token,
+        source: 'registration',
+        registrationId: regRow.registration_id,
+        registrationAgentId: regRow.agent_id
+      };
+      req.tokenClass = 'agent';
+    }
     return next();
   }
 

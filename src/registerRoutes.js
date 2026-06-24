@@ -44,6 +44,10 @@ const { enforceSenderBinding } = require('./middleware/senderBinding');
 // is enforced inside ptahAuditDb.provisionForAgent() (defense-in-depth per
 // /register sub-OQ Option (c) trusted-runtime bootstrap discipline).
 const ptahAuditDb = require('./ptahAuditDb');
+// Path Y per parch #10658: at /activate, provision operator_records row when
+// submission declares session_class='operator'. Sister-canon to ptahAuditDb
+// provisioning at runtime_class='ptah'. Closes the Phase A scope-gap from #10650.
+const plexusSecureDb = require('./plexusSecureDb');
 
 const router = express.Router();
 
@@ -413,6 +417,27 @@ router.post('/:id/activate', (req, res) => {
       return res.status(500).json({
         error: 'ProvisionFailed',
         message: `runtime_class=ptah agent: per-Ptah-agent audit DB provision failed: ${e.message}. Registration stays in PENDING_ACTIVATION; resolve provisioning failure (e.g., agent_id ptah-* namespace bound) and retry activate.`
+      });
+    }
+  }
+
+  // Path Y per parch #10658: provision operator_records row when submission
+  // declares session_class='operator'. Sister-canon to ptahAuditDb provision
+  // above. Failures block ACTIVE transition (substrate-honest: an operator
+  // landing ACTIVE without operator_records row would fail ADR-0040 §4.6
+  // offboarding step (a)). Auth-class derivation lives in auth.js path-b.
+  if (submission && submission.session_class === 'operator') {
+    try {
+      plexusSecureDb.upsertOperatorRecord({
+        operatorId: reg.agent_id,
+        userEmail: submission.user_email || null,
+        actor: 'register-state-machine',
+        notes: `auto-provisioned at /register/${req.params.id}/activate`
+      });
+    } catch (e) {
+      return res.status(500).json({
+        error: 'ProvisionFailed',
+        message: `session_class=operator: operator_records provision failed: ${e.message}. Registration stays in PENDING_ACTIVATION; resolve and retry activate.`
       });
     }
   }
