@@ -105,7 +105,21 @@ test('POST /user-prompt: prom textfile is atomic (no .tmp left behind)', async (
   assert.ok(!files.includes('user-prompts.prom.tmp'), 'atomic write leaves no .tmp file');
 });
 
+test('POST /user-prompt: pipe-char in agent_id → 400 (counterKey defense per secops #10703)', async () => {
+  const res = await request(app).post(URL).set('Authorization', AUTH)
+    .send({ agent_id: 'bad|agent', prompt_char_length: 5 });
+  assert.equal(res.status, 400);
+  assert.match(res.body.message, /must not contain \| character/);
+});
+
+test('POST /user-prompt: pipe-char in session_id → 400', async () => {
+  const res = await request(app).post(URL).set('Authorization', AUTH)
+    .send({ agent_id: 'a', session_id: 's|x', prompt_char_length: 5 });
+  assert.equal(res.status, 400);
+});
+
 test('POST /user-prompt: label-escape special chars in agent_id', async () => {
+  // Label-escape covers quote + backslash; pipe is now rejected at 400 per defense above
   await request(app).post(URL).set('Authorization', AUTH)
     .send({ agent_id: 'a"b\\c', session_id: 's', prompt_char_length: 1 });
   const tf = fs.readFileSync(path.join(textfileDir, 'user-prompts.prom'), 'utf-8');

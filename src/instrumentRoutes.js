@@ -96,6 +96,12 @@ router.post('/user-prompt', (req, res) => {
   if (typeof prompt_char_length !== 'number' || prompt_char_length < 0) {
     return res.status(400).json({ error: 'BadRequest', message: 'prompt_char_length (non-negative number) required' });
   }
+  // Defense per secops #10703 non-blocking flag: counterKey uses | as
+  // internal delimiter. Reject pipe-containing agent_id/session_id to
+  // prevent key split corruption + metric line malformation.
+  if (agent_id.includes('|') || (typeof session_id === 'string' && session_id.includes('|'))) {
+    return res.status(400).json({ error: 'BadRequest', message: 'agent_id and session_id must not contain | character' });
+  }
   bumpCounter(agent_id, session_id, !!has_tool_calls, prompt_char_length);
   writeTextfileAtomic();
   return res.status(201).json({ ok: true });
