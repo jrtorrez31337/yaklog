@@ -911,9 +911,13 @@
       this.reconnectAttempt = 0;
       this.reconnectTimer = null;
       // CP6.14: connection state for UI indicator.
-      // 'connecting' (initial / reconnecting) | 'open' | 'error'
+      // 'connecting' (initial / reconnecting) | 'open' | 'error' | 'paused'
       this.state = 'connecting';
       this.lastFrameMs = 0;
+      // Cascade-prevention #10559 Q2: visibility-pause. When the tab is
+      // hidden the operator can't see live charts; closing the EventSource
+      // sheds Prom-query load on the server until the tab comes back.
+      this.paused = false;
     }
     subscribe(template, chart) {
       if (!this.subscribers.has(template)) this.subscribers.set(template, []);
@@ -955,6 +959,7 @@
       });
     }
     _scheduleReconnect() {
+      if (this.paused) return;
       if (this.reconnectTimer) return;
       const delay = Math.min(30000, 1000 * Math.pow(2, this.reconnectAttempt));
       this.reconnectAttempt++;
@@ -963,6 +968,19 @@
         if (this.es) { try { this.es.close(); } catch {} ; this.es = null; }
         this.connect();
       }, delay);
+    }
+    pause() {
+      if (this.paused) return;
+      this.paused = true;
+      if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
+      if (this.es) { try { this.es.close(); } catch {} ; this.es = null; }
+      this.state = 'paused';
+    }
+    resume() {
+      if (!this.paused) return;
+      this.paused = false;
+      this.reconnectAttempt = 0;
+      this.connect();
     }
   }
 
@@ -4732,9 +4750,11 @@
       this.maxId = 0;
       this.subscribers = new Set();    // each: { onAdd(msg), onBackfill(arr), onError(err) }
       this.es = null;
-      this.state = 'idle';             // idle | connecting | open | error
+      this.state = 'idle';             // idle | connecting | open | error | paused
       this.lastFrameMs = 0;
       this.channelCounts = new Map();  // channel → count seen
+      // Cascade-prevention #10559 Q2: visibility-pause.
+      this.paused = false;
     }
     subscribe(handler) {
       this.subscribers.add(handler);
@@ -4764,6 +4784,7 @@
       this._openSse();
     }
     _openSse() {
+      if (this.paused) return;
       try {
         const url = '/api/v1/plexus/public/messages-stream' + (this.maxId > 0 ? `?since=${this.maxId}` : '');
         this.es = new EventSource(url);
@@ -4792,7 +4813,21 @@
       });
     }
     _scheduleReconnect() {
+      if (this.paused) return;
       setTimeout(() => this._openSse(), 4000);
+    }
+    pause() {
+      if (this.paused) return;
+      this.paused = true;
+      if (this.es) { try { this.es.close(); } catch {} ; this.es = null; }
+      this.state = 'paused';
+      this._notifyState();
+    }
+    resume() {
+      if (!this.paused) return;
+      this.paused = false;
+      // Re-open from current maxId; buffer is preserved so subscribers see no gap.
+      this._openSse();
     }
     _ingest(msg, notifySubs) {
       if (!msg || typeof msg.id !== 'number') return;
@@ -4817,6 +4852,19 @@
     }
   }
   const busStream = new BusStream();
+
+  // Cascade-prevention #10559 Q2: pause both SSE streamers when the tab is
+  // hidden. Sister-shape to the refreshAuditHero visibility-pause above.
+  // Sheds Prom-query + DB-read load on the server for background-tab dashboards.
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      try { liveStream.pause(); } catch {}
+      try { busStream.pause(); } catch {}
+    } else {
+      try { liveStream.resume(); } catch {}
+      try { busStream.resume(); } catch {}
+    }
+  });
 
   // ── Ticker view (Live tab; always-on; whitelist filter; compact) ─────
   const tickerPane = document.getElementById('ticker-pane');
