@@ -6,16 +6,23 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-// Stub window + navigator BEFORE requiring the module (auto-init checks them).
+// Stub window + sessionStorage BEFORE requiring the module (auto-init checks them).
+const storage = new Map();
+global.sessionStorage = {
+  getItem: (k) => storage.has(k) ? storage.get(k) : null,
+  setItem: (k, v) => storage.set(k, String(v)),
+  removeItem: (k) => storage.delete(k),
+  clear: () => storage.clear(),
+};
 global.window = {};
 global.document = { addEventListener: () => {}, hidden: false };
-global.navigator = { sendBeacon: null }; // force fetch fallback path
+global.navigator = {};
 global.window.PERF_INSTRUMENT_NOAUTO = true; // disable auto-start in tests
 
 // Capture fetch calls
 let fetchCalls = [];
 global.fetch = (url, opts) => {
-  fetchCalls.push({ url, body: opts && opts.body });
+  fetchCalls.push({ url, headers: opts && opts.headers, body: opts && opts.body });
   return Promise.resolve({ ok: true });
 };
 
@@ -25,6 +32,10 @@ const { PerfInstrument } = mod;
 test.beforeEach(() => {
   mod.__reset();
   fetchCalls = [];
+  storage.clear();
+  // Default: operator IS logged in (bearer present)
+  sessionStorage.setItem('plexus_operator_bearer', 'test-bearer');
+  sessionStorage.setItem('plexus_operator_id', 'op-test');
 });
 
 test('record: appends to buffer with required fields', () => {
@@ -84,7 +95,7 @@ test('wrap: nRowsExtractor populates n_rows on result', () => {
   assert.equal(mod.__bufferLen(), 1);
 });
 
-test('flush: sends buffer via fetch fallback + clears buffer', () => {
+test('flush: sends buffer via fetch with Authorization + clears buffer', () => {
   PerfInstrument.record('flush.test', 10);
   PerfInstrument.record('flush.test2', 20);
   const sent = PerfInstrument.flush();
@@ -92,6 +103,7 @@ test('flush: sends buffer via fetch fallback + clears buffer', () => {
   assert.equal(mod.__bufferLen(), 0);
   assert.equal(fetchCalls.length, 1);
   assert.equal(fetchCalls[0].url, '/api/v1/instrument/browser-perf');
+  assert.equal(fetchCalls[0].headers['Authorization'], 'Bearer test-bearer');
   const body = JSON.parse(fetchCalls[0].body);
   assert.ok(Array.isArray(body.measurements));
   assert.equal(body.measurements.length, 2);
@@ -102,27 +114,51 @@ test('flush: empty buffer is no-op', () => {
   assert.equal(fetchCalls.length, 0);
 });
 
+test('flush: no bearer (pre-login) → silent skip, buffer preserved', () => {
+  storage.clear(); // simulate pre-login state
+  PerfInstrument.record('pre.login', 10);
+  const sent = PerfInstrument.flush();
+  assert.equal(sent, false, 'flush should return false when bearer absent');
+  assert.equal(mod.__bufferLen(), 1, 'buffer preserved for next flush attempt');
+  assert.equal(fetchCalls.length, 0, 'no fetch fired without bearer');
+});
+
+test('flush: post-login bearer triggers normal flush', () => {
+  storage.clear();
+  PerfInstrument.record('first.try', 10);
+  assert.equal(PerfInstrument.flush(), false, 'first attempt skipped (no bearer)');
+  // Operator logs in
+  sessionStorage.setItem('plexus_operator_bearer', 'fresh-bearer');
+  PerfInstrument.record('second.try', 20);
+  assert.equal(PerfInstrument.flush(), true, 'flush fires after bearer present');
+  assert.equal(fetchCalls.length, 1);
+  assert.equal(fetchCalls[0].headers['Authorization'], 'Bearer fresh-bearer');
+  const body = JSON.parse(fetchCalls[0].body);
+  assert.equal(body.measurements.length, 2, 'pre-login buffer flushed too');
+});
+
 test('buffer cap: oldest dropped when over MAX_BUFFER', () => {
   // Fill past 500
   for (let i = 0; i < 600; i++) PerfInstrument.record('overflow', 1);
   assert.equal(mod.__bufferLen(), 500);
 });
 
-test('flush via sendBeacon: prefers sendBeacon when available', () => {
-  let beaconCalls = [];
-  global.navigator.sendBeacon = (url, blob) => { beaconCalls.push({ url, blob }); return true; };
-  PerfInstrument.record('beacon.test', 50);
-  const sent = PerfInstrument.flush();
-  assert.equal(sent, true);
-  assert.equal(beaconCalls.length, 1);
-  assert.equal(fetchCalls.length, 0, 'fetch fallback not used when beacon succeeds');
-  global.navigator.sendBeacon = null;
+test('flush: agent_id from sessionStorage operator_id', () => {
+  sessionStorage.setItem('plexus_operator_id', 'op-specific');
+  PerfInstrument.record('agent.id.test', 10);
+  PerfInstrument.flush();
+  const body = JSON.parse(fetchCalls[0].body);
+  assert.equal(body.measurements[0].agent_id, 'op-specific');
 });
 
-test('flush via sendBeacon rejected: falls back to fetch', () => {
-  global.navigator.sendBeacon = () => false; // queue full / rejected
-  PerfInstrument.record('beacon.reject', 10);
+test('flush: fetch+keepalive flag set (sendBeacon replacement)', () => {
+  let keepaliveFlag = null;
+  global.fetch = (url, opts) => {
+    fetchCalls.push({ url, headers: opts.headers, body: opts.body });
+    keepaliveFlag = opts.keepalive;
+    return Promise.resolve({ ok: true });
+  };
+  PerfInstrument.record('keepalive.test', 10);
   PerfInstrument.flush();
-  assert.equal(fetchCalls.length, 1, 'fetch fallback used after beacon rejection');
-  global.navigator.sendBeacon = null;
+  assert.equal(keepaliveFlag, true, 'keepalive:true survives page unload');
 });

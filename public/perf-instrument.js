@@ -33,10 +33,21 @@
     }
   })();
 
-  // Agent id is best-effort: read from a globally-set window var if the
-  // operator's session is bound to one. Often null (operators view all agents).
+  // Read operator credentials from Dashboard-DM Phase A sessionStorage shape
+  // (per dashboard.js PlexusOperatorDM module). Same storage keys; same auth
+  // model. Per secops #10719 flag: sendBeacon can't set Authorization header,
+  // so without bearer read at flush time the auth-wrapped endpoint 401s
+  // silently. Reading per-flush also picks up post-login session activation
+  // without restart.
+  const STORAGE_KEY_BEARER = 'plexus_operator_bearer';
+  const STORAGE_KEY_OP = 'plexus_operator_id';
+  function getBearer() {
+    try { return sessionStorage.getItem(STORAGE_KEY_BEARER) || null; }
+    catch { return null; }
+  }
   function getAgentId() {
-    return (typeof window !== 'undefined' && window.YAKLOG_OPERATOR_ID) || null;
+    try { return sessionStorage.getItem(STORAGE_KEY_OP) || null; }
+    catch { return null; }
   }
 
   function record(callsite, durationMs, nRows) {
@@ -91,29 +102,26 @@
     }
   }
 
-  // Flush buffer to server via sendBeacon (survives page-unload). Falls back
-  // to fetch with keepalive if sendBeacon unavailable. Returns true if flush
-  // was attempted (buffer non-empty); false if nothing to send.
+  // Flush buffer to server via fetch + keepalive. Per secops #10719: dropped
+  // sendBeacon path because it can't set Authorization header; the auth-
+  // wrapped endpoint would 401 silently. Fetch+keepalive supports custom
+  // headers AND survives page-unload (modern browser standard; the canonical
+  // sendBeacon replacement). If no bearer available, skip the flush — no
+  // point firing into 401. Returns true if flush attempted; false otherwise.
   function flush() {
     if (buffer.length === 0) return false;
+    const bearer = getBearer();
+    if (!bearer) return false; // pre-login or operator-class not active
     const batch = buffer.splice(0, buffer.length); // take all + clear
     const body = JSON.stringify({ measurements: batch });
     try {
-      if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
-        const blob = new Blob([body], { type: 'application/json' });
-        const ok = navigator.sendBeacon(ENDPOINT, blob);
-        if (!ok) {
-          // Beacon rejected (e.g. queue full); restore + fall through to fetch
-          buffer.unshift(...batch);
-        } else {
-          return true;
-        }
-      }
-      // Fallback: fetch with keepalive
       if (typeof fetch !== 'undefined') {
         fetch(ENDPOINT, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + bearer,
+          },
           body,
           keepalive: true,
         }).catch(() => { /* best-effort; silent */ });
