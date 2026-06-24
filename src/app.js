@@ -524,6 +524,13 @@ app.use('/api/v1/ops', auditOpsRoutes);
 // CP12.5 (ADR-0030 Phase 1.5.S): per-host file-access ingester intake.
 // Mounts under `/api/v1/ingester` (auth'd; host-binding enforced per-route).
 app.use('/api/v1/ingester', auth, auditIngesterRoutes);
+// CP16 Pillar 0 Phase A per PLAN-CP16-PILLAR-0-AMENDMENT + parch ratify
+// #10691. /api/v1/instrument/user-prompt accepts UserPromptSubmit metadata
+// from emit-hook-event.sh and emits a Prom textfile for node_exporter to
+// scrape. Bearer auth via existing /api/v1 wrap. Metadata-only per secops
+// #10690 PII disposition.
+const instrumentRoutes = require('./instrumentRoutes');
+app.use('/api/v1/instrument', auth, instrumentRoutes);
 // ADR-0032 Phase 0 Item B (cross-runtime telemetry parity): OTel collector
 // forwards Codex/Gemini tool events here; mapper translates them into
 // audit_tool_invocation rows. Ops-key gated per feedback_secrets_no_yaklog
