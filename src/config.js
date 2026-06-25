@@ -100,7 +100,12 @@ module.exports = {
   // Plexus Prometheus URL — Stage 2 backend query proxy talks to this.
   // Default targets the docker-compose service-name (resolves on yaklog_default network).
   plexusPromUrl: process.env.YAKLOG_PLEXUS_PROM_URL || 'http://plexus-prometheus:9090',
-  plexusQueryCacheTtlMs: parseNumber(process.env.YAKLOG_PLEXUS_QUERY_CACHE_TTL_MS, 60_000),
+  // Cache TTL tightened from 60s → 15s to match Prom scrape_interval. Prior
+  // 60s default double-buffered on top of the 15s scrape with no responsiveness
+  // benefit — total OTel→chart worst case was ~105s. New worst case ~45s.
+  // Per Jon-direct 2026-06-25: graph not updating as fast as expected during
+  // active CC sessions. Empirical anchor: Prom scrape 15s + proxy 15s + browser 15s.
+  plexusQueryCacheTtlMs: parseNumber(process.env.YAKLOG_PLEXUS_QUERY_CACHE_TTL_MS, 15_000),
   plexusQueryCacheMaxEntries: parseNumber(process.env.YAKLOG_PLEXUS_QUERY_CACHE_MAX, 500),
   plexusQueryTimeoutMs: parseNumber(process.env.YAKLOG_PLEXUS_QUERY_TIMEOUT_MS, 5_000),
   isProduction: process.env.NODE_ENV === 'production'

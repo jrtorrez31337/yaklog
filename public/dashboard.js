@@ -2626,7 +2626,7 @@
   // ────────────────────────────────────────────────────────────────────
   // CP3: Cost tab — dim-picker + window-preset + cumulative table + rate chart.
   // ────────────────────────────────────────────────────────────────────
-  const COST_REFRESH_MS = 30000;
+  const COST_REFRESH_MS = 15000;  // matches Prom scrape + proxy cache TTL (Jon-direct 2026-06-25 responsiveness)
 
   function pickActiveOpt(containerSel, attr) {
     const c = document.querySelector(containerSel);
