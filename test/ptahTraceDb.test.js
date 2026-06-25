@@ -44,6 +44,21 @@ test('pathFor rejects non-ptah-* agent_id', () => {
   assert.throws(() => ptahTraceDb.pathFor('not-ptah-something'), /ptah-\* namespace/);
 });
 
+test('pathFor rejects ptah-* id containing `/` (aieng3 #10751 filename-collision fix)', () => {
+  // Per aieng3 #10751: legal `ptah-a/b` would normalize to `ptah-a_b` and
+  // collide with another legal `ptah-a_b`. Reject `/` outright since Ptah
+  // agent_ids don't require path-like names.
+  assert.throws(() => ptahTraceDb.pathFor('ptah-a/b'), /ptah-\* namespace.*slash excluded/);
+  assert.throws(() => ptahTraceDb.pathFor('ptah-team/agent'), /ptah-\* namespace.*slash excluded/);
+});
+
+test('pathFor produces bijective filename (no `_` substitution per fix above)', () => {
+  // After the fix, `_` in agent_id maps to literal `_` in filename
+  // (NOT a `/`-collision target since `/` is rejected).
+  const p = ptahTraceDb.pathFor('ptah-a_b');
+  assert.match(p, /ptah-trace-ptah-a_b\.db$/);
+});
+
 test('pathFor accepts ptah-* agent_id with stable filename', () => {
   const p = ptahTraceDb.pathFor('ptah-jon-desktop');
   assert.match(p, /ptah-trace-ptah-jon-desktop\.db$/);
@@ -158,6 +173,22 @@ test('wall-standby trace (s345-aieng #10745): result_dispatch persists + goal in
   assert.equal(rows[0].result_dispatch, 'wall-standby');
   const ep = ptahTraceDb.getEpisodeManifest(id, 'ep-001');
   assert.equal(ep.goal_terminal, null, 'standby must NOT mark episode terminal — recoverable');
+});
+
+test('C6 invariant: same episode_id with different orp_version rejected (aieng3 #10751)', () => {
+  // Per aieng3 #10751: episode_id↔orp_version is 1:1 per C6; runtime cuts
+  // fresh episode on reload. Allowing mixed orp_versions in one episode
+  // breaks cert correlation.
+  const id = 'ptah-c6-1';
+  ptahTraceDb.insertTrace(id, makeRec({ tick: 0, orp_version: 'v0.1.0' }), 'tok');
+  assert.throws(
+    () => ptahTraceDb.insertTrace(id, makeRec({ tick: 1, orp_version: 'v0.2.0' }), 'tok'),
+    /C6 violation.*orp_version=v0\.1\.0.*orp_version=v0\.2\.0/
+  );
+  // Same orp_version still works:
+  ptahTraceDb.insertTrace(id, makeRec({ tick: 2, orp_version: 'v0.1.0' }), 'tok');
+  const rows = ptahTraceDb.getTracesForEpisode(id, 'ep-001');
+  assert.equal(rows.length, 2, 'tick 0 + tick 2 land; tick 1 (different orp_version) rejected');
 });
 
 test('per-instance file isolation: insertTrace into A invisible to B', () => {

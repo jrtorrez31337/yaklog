@@ -69,6 +69,9 @@ router.post('/:agent_id/trace', (req, res) => {
         message: `(episode_id, tick) already exists: ${rec.episode_id}/${rec.tick} — monotonic-tick canon per C6`,
       });
     }
+    if (/C6 violation/.test(e.message)) {
+      return res.status(409).json({ error: 'Conflict', message: e.message });
+    }
     if (/agent_id|namespace|fails .*validation/i.test(e.message)) {
       return res.status(400).json({ error: 'ValidationError', message: e.message });
     }

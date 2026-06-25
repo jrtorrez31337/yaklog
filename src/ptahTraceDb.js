@@ -36,7 +36,11 @@ const DB_FILENAME_PREFIX = 'ptah-trace-';
 const DB_FILENAME_SUFFIX = '.db';
 
 const AGENT_ID_RE = /^[a-zA-Z0-9._:@/-]{1,64}$/;
-const PTAH_AGENT_ID_RE = /^ptah-[a-zA-Z0-9._:@/-]{1,59}$/;
+// PTAH_AGENT_ID_RE excludes `/` per aieng3 #10751 fix: legal IDs `ptah-a/b`
+// and `ptah-a_b` would collide at filename normalization tier (both map to
+// `ptah-trace-ptah-a_b.db`). Ptah agent_ids are operator-named and don't
+// require `/`; rejecting it is cleaner than bijective encoding.
+const PTAH_AGENT_ID_RE = /^ptah-[a-zA-Z0-9._:@-]{1,59}$/;
 
 const SNAPSHOT_SUMMARY_MAX_BYTES = 4096;
 const VALID_PARSE_STATUS = new Set(['deterministic', 'ok', 'reject', 'provider_error']);
@@ -100,9 +104,10 @@ function pathFor(agentId) {
     throw new Error('agent_id fails AGENT_ID_RE validation');
   }
   if (!PTAH_AGENT_ID_RE.test(agentId)) {
-    throw new Error('agent_id must match ptah-* namespace');
+    throw new Error('agent_id must match ptah-* namespace (slash excluded — would collide at filename normalization)');
   }
-  const safeName = DB_FILENAME_PREFIX + agentId.replace(/[/]/g, '_') + DB_FILENAME_SUFFIX;
+  // PTAH_AGENT_ID_RE excludes `/`, so no replace needed; name is bijective.
+  const safeName = DB_FILENAME_PREFIX + agentId + DB_FILENAME_SUFFIX;
   return path.join(DEFAULT_DB_DIR, safeName);
 }
 
@@ -181,6 +186,19 @@ function insertTrace(agentId, rec, recordedBy) {
   if (!Array.isArray(rec.goal_state)) throw new Error('goal_state array required');
   if (rec.parse_status != null && !VALID_PARSE_STATUS.has(rec.parse_status)) {
     throw new Error(`parse_status must be one of: ${Array.from(VALID_PARSE_STATUS).join(',')}`);
+  }
+
+  // C6 no-ORP-version-spanning invariant per parch + s345-aieng schema canon
+  // (aieng3 #10751 enforcement gap fix): if episode_id already exists, its
+  // orp_version is frozen — runtime cuts a fresh episode on reload. Different
+  // orp_version on same episode_id corrupts cert correlation.
+  const existingOrp = db.prepare(
+    `SELECT orp_version FROM ptah_trace_episode WHERE episode_id = ?`
+  ).get(rec.episode_id);
+  if (existingOrp && existingOrp.orp_version !== rec.orp_version) {
+    throw new Error(
+      `C6 violation: episode ${rec.episode_id} already bound to orp_version=${existingOrp.orp_version}, cannot accept orp_version=${rec.orp_version} — fresh episode required on reload`
+    );
   }
 
   const insertStmt = db.prepare(`
