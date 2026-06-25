@@ -361,7 +361,7 @@ Network-isolation trust (no per-request auth in v1; mirrors `/cost/*`):
 | `GET /audit/permission-changes?from=&to=&agent=&limit=100` | Permission-change events list. |
 | `GET /audit/event/:event_id` | Single-event detail with drill-through (`source_event_id` for `agent_activity` drill-back). |
 | `GET /audit/agent-timeline?agent=&from=&to=&limit=100` | All audit events for one agent across all 4 object classes, time-sorted DESC. |
-| `GET /audit/by-control-area?control_framework=soc2|iso27001|gdpr&period=<named>` | Aggregates by GRC control area. SOC2: CC1-CC9 (all 6 wired post-CP12.10 + CP12.15 + CP12.A); ISO27001: A.5/A.8/A.9/A.12/A.13/A.16/A.18 per ADR-0030 v1.1 expanded subset; GDPR: Art.6/Art.15/Art.17/Art.30. Per-area count filter prevents cross-area inflation (CP12.10). |
+| `GET /audit/by-control-area?control_framework=soc2|iso27001|gdpr&period=<named>` | Aggregates by GRC control area. SOC2: CC1-CC9 (all 6 wired post-CP12.10 + CP12.15 + CP12.A); ISO27001: A.5/A.8/A.9/A.12/A.13/A.16/A.18 per ADR-0030 v1.1 expanded subset; GDPR: Art.6/Art.15/Art.17/Art.30. Per-area count filter prevents cross-area inflation (CP12.10). **2026-06-25 perf-fix**: `countsForObjectClasses()` refactored to use 8 new `count*` helpers (SELECT COUNT(*) AS c) instead of `list*({limit: 10000}).length` — by-control-area p99 60s → 3.5s (~17× speedup) on the full audit corpus. CP16 Pillar 3 takes the next-step rollup substrate to <100ms (forward-track). |
 | `GET /audit/anomaly-detail?from=&to=` | Per-agent risk-surface scan (Phase 1 heuristic: count of policy_violation matches + tool_invocation + file_access in period; sorted DESC). |
 | `GET /audit/coverage-gap` | Bizmodel R-A3 governance indicator. **CP12.9 disposition enrichment**: classifies missing agents as `alias_of` / `different_runtime` / `inactive` / `genuine_gap`. Headline reads `{genuine_gap_count}` (not raw `agents_missing_trail_7d`) so signal-fidelity is high (eliminates known-noise from cluster rename cycles + non-CC runtimes). |
 | `GET /audit/channel-subscriptions?from=&to=&agent=&channel=&limit=100` | **CP12.15** per-user channel subscription change history. Inherits CP12.14 date-filter helper. |
@@ -474,6 +474,8 @@ Post-`28adc8a` (2026-06-20): `EMAIL_TO_AGENT_ID` 4 entries redirected `aieng-age
 
 `CROSS_TIER_SAFE_RATIOS` set retired (no ratio is buyer-safe by current canon); `dollar_per_merged_pr` + `dollar_per_agent_cycle` (Phase 1) moved from cross-tier-safe to practitioner+investor per #9799 footnote for canon-consistency.
 
+**2026-06-25 math fix** (Task #247; Jon-direct "should absolutely be a whole number"): `agents_engaged_per_merged_pr` reformulated from cluster-aggregate (`distinct_agents / merge_count` = real-valued) to per-merge CTE enumeration (`AVG(distinct_agents) OVER per_merge`). The CTE unions `output_merge.merged_by_agent` + `output_commit.agent_attribution` per `merge_commit_sha`; result is integer-real on single-author merges (1, 2, ...). Substrate-honest: where the underlying data is single-attribution, the ratio reflects it; multi-agent collaboration moves it above 1.0 when present. Companion: per-agent git identity cluster-canon (Task #248) is forward-track to raise `output_commit.agent_attribution` coverage — once cluster-cascade lands, the attribution-method shift from `null_fallback` → `author_email_direct` will surface real multi-agent collaboration cases.
+
 #### 3.11.5 Public read endpoints (6 under `/api/v1/output/`)
 
 Network-isolation trust (no per-request auth in v1; mirrors `/cost/*` + `/audit/*` shape).
@@ -501,6 +503,77 @@ Network-isolation trust (no per-request auth in v1; mirrors `/cost/*` + `/audit/
 #### 3.11.7 Cron driver (CP13.5 INSTALLED + ACTIVE)
 
 `scripts/yaklog-output-ingester.sh` + systemd unit/timer at `/usr/local/bin/yaklog-output-ingester.sh` (per secops #9768 ExecStart canonical-path) + `yaklog-output-ingester.{service,timer}`. Timer: `OnCalendar=hourly` + `RandomizedDelaySec=300` + `Persistent=true` (catch-up after outage). Textfile sub-dir `/var/lib/yaklog/textfile/output-ingester/` (per secops sister-shape to plexus-audit-publisher canonical ownership). System uid `plexus-output-ingester` (no-home, no-shell). 24h cron-cadence empirically observed healthy. Installed per CP13.5 4-gate serial install-discipline (per parch #9786 banking).
+
+### 3.12 Per-Ptah substrate family (CP14-X + ADR-0037 + Task #246)
+
+Three sister-shape substrate-canon-class members serving the Ptah runtime (per-agent OS-process runtime not in the CC/Codex/Gemini family — distinct substrate-isolation tier). Per `feedback_canon_class_extension_can_warrant_separate_per_instance_file_when_6th_axis_lifecycle_diverges`: same 5-axis substrate-property profile (storage:SQLite-WAL / auth:per-agent-bearer / enc-rest:filesystem-perm / schema:plexus-owned / transit:HTTPS-internal) but distinct lifecycle/access-pattern warrants separate per-instance file under `/var/lib/yaklog/` rather than co-mingled with `yaklog.db` (per `feedback_plexus_secure_store_separate_db_file_substrate_canon_class_isolation`).
+
+#### 3.12.1 Plexus Secure Store (CP14-X / Task #220)
+
+Separate `/var/lib/yaklog/plexus-secure.db` for ORP (Operator Response Payload) storage + operator-record lifecycle + vendor-key delivery (per PLAN-VENDOR-KEY-DELIVERY-SUBSTRATE / Task #225 input-draft). `src/plexusSecureDb.js` owns schema + helpers.
+
+| Table | Purpose |
+|---|---|
+| **`orp`** | Per-agent ORP record: `agent_id` PK, `orp_json` (validated against ptah-orp.schema.json before write per `src/auditOpsRoutes.js`), `version`, `schema_version`, `updated_at`, `updated_by` (ops-tier audit field; not in public read shape). |
+| **`orp_version`** | Versioned history of ORP mutations per agent. Enables time-travel / diff for audit / rollback. |
+| **`operator_records`** | Operator-session lifecycle (Phase A per PLAN-OPERATOR-SESSION-SUBSTRATE v2 §2.10). `operator_id` PK + `user_email` + `created_at` + `created_by` + `notes` + nullable `decommissioned_at` / `decommissioned_by`. Partial index `WHERE decommissioned_at IS NULL` for active-set queries. Helpers: `upsertOperatorRecord`, `getOperatorRecord`, `listOperatorRecords({includeDecommissioned})`, `decommissionOperatorRecord`. |
+
+Endpoints (auth-required; Bearer YAKLOG_API_KEYS):
+- **`GET /api/v1/orp/:agent_id`** (`src/orpRoute.js`) — returns `{agent_id, orp_json, version, schema_version, updated_at}` (omits `updated_by`); 404 on no-ORP. Per parch #10175 Q1 ratify: any valid bearer reads any ORP; per-agent scoping forward-track.
+- **`POST /api/v1/orp/:agent_id`** (ops-key gated via `auditOpsRoutes`) — validates `orp_json` against `ptah-orp.schema.json` (ajv strict-mode); 400 on schema fail with explicit error message.
+- **`/api/v1/secure-store/*`** (`src/secureStore/vendorKeysRoute.js`) — vendor-key delivery: encrypted-at-rest via SOPS+age (`src/secureStore/sopsAge.js`); per-grant access-tier audit (`src/secureStore/auditVendorKeyAccess.js`); rate-limited per agent (`src/secureStore/rateLimit.js`).
+
+#### 3.12.2 Per-Ptah audit trail (ADR-0037 / Task #222)
+
+Per-Ptah-agent audit substrate at `/var/lib/yaklog/ptah-audit-<agent_id>.db`. `src/ptahAuditDb.js` owns schema. Per Jon-direct 2026-06-21: each Ptah agent gets its own file (substrate-isolation tier; ADR-0037 canon-class).
+
+| Table | Purpose |
+|---|---|
+| **`audit_event`** | Per-instance audit-event-log for Ptah-internal lifecycle (ORP mutations, vendor-key access decisions, ratelimit triggers, schema-validation rejections). Per-instance isolation prevents cross-Ptah event cross-contamination. |
+
+WAL discipline: `yaklog-wal-checkpoint.sh` dynamic-discovers `ptah-audit-*.db` (per ADR-0037 Phase B); `/api/v1/ops/wal-checkpoint` whitelist (`VALID_CHECKPOINT_DBS`) accepts `ptah-audit-<agent_id>` pattern per secops closed-Set canon.
+
+#### 3.12.3 Per-Ptah ORP TraceRecord substrate (PLAN-PTAH-ORP-TRACE-SUBSTRATE / Task #246)
+
+Per-Ptah-agent trace substrate at `/var/lib/yaklog/ptah-trace-<agent_id>.db`. `src/ptahTraceDb.js` owns schema; `src/ptahTraceRoute.js` owns endpoints; mounted at `app.use('/api/v1/plexus/ptah-orp', ...)` matching dashboard `_renderTrace` fetch-path canon (zero wire-churn integration). Phase A SHIPPED (server endpoint family); Phase B (dashboard wire) deferred per pillar-split canon — gated on operator-session bearer infra (Task #234) for PII-aware browser auth. Phase C (AlertEngine predicate per #10744 ratify) gated parallel to Phase B.
+
+| Table | Purpose |
+|---|---|
+| **`ptah_trace_record`** | Per-tick TraceRecord row. `episode_id`, `tick_index`, `snapshot_summary` (TEXT CHECK length≤4096 per secops #10728 PII constraint — digest, not raw capture), `proposal`, `goal_state`, etc. |
+| **`ptah_trace_episode`** | Episode-index aggregation; enables fast last-N episode lookups + cert-manifest writing. |
+
+Endpoints (per-agent bearer or ops-key required via `_isOwnAgent` gate — NO general cluster-bearer reads per PII discipline):
+- **`POST /:agent_id/trace`** — append TraceRecord; per-instance write isolation.
+- **`GET /:agent_id/trace?episode_id=&from_tick=&limit=`** — read TraceRecord rows for episode OR `since_trace_id` paged stream.
+- **`GET /:agent_id/episodes?limit=`** — list episode index.
+- **`POST /:agent_id/episodes/:episode_id/manifest`** + **`GET /:agent_id/episodes/:episode_id/manifest`** — cert-manifest write/read per parch ratify (audit-anchor sister-shape).
+
+Five-axis canon-class identity matches Plexus Secure Store + Per-Ptah audit (same substrate-property profile); 6th-axis lifecycle/access-pattern divergence justifies per-instance file separation per banked canon-extension.
+
+### 3.13 Operator-session substrate (ADR-0040 forward-track / Tasks #230-#237)
+
+PLAN-OPERATOR-SESSION-SUBSTRATE v2 RATIFIED per parch; Phase A substrate-impl SHIPPED (Task #232). Distinct trust tier from cluster-bearer: operator-session bearers are bound to a single `operator_id` and carry session-context PII trust-class (read-access to per-agent / per-Ptah data that cluster-bearer cannot read). Phase B (admin-lane provision / first-live operator-bearer landing) in flight (Task #234).
+
+#### 3.13.1 Operator records (Phase A)
+
+Lives in `plexus-secure.db.operator_records` per §3.12.1 above (Q13 admin §2.10 ratify: operator artifact-class stays in secure-store substrate, not co-mingled with yaklog.db). Helpers exposed: `upsertOperatorRecord({operatorId, userEmail, actor, notes})`, `getOperatorRecord`, `listOperatorRecords({includeDecommissioned})`, `decommissionOperatorRecord({operatorId, actor, notes})`. `actor` records the ops-key sha256-prefix that performed the lifecycle action (provision / decommission) for forensic chain.
+
+#### 3.13.2 ADR-0026 v2 Phase A: messages tombstone (Task #231)
+
+**`POST /api/v1/ops/messages/:id/tombstone`** (`src/auditOpsRoutes.js`; ops-key gated). Body: `{reason}` (REQUIRED). Sets `messages.tombstone_at` + records ops_key_sha256 actor; 404 on unknown message_id; 409 on double-tombstone. Atomic SQLite txn. Read-filter (already in place per ADR-0026 v1 read-side) treats tombstoned rows as not-present (server returns 404 OR omits from list per endpoint contract). Companion `db.js:tombstoneMessage` helper.
+
+Use-case: operator-class moderation of swarm-published content (e.g. accidentally-public secret; canonical-canon enforcement of `feedback_secrets_no_yaklog`). Distinct from `audit_payload_store.tombstoneAuditPayload` which targets audit-record payload-only redaction (admin R2 atomic txn).
+
+#### 3.13.3 Dashboard-DM Phase A (Task #237)
+
+Dashboard-side DM read/send surface for operator-class flows (sister-shape PLAN-DASHBOARD-OPERATOR-DM input-draft / Task #236). Parallel-cycle with PLAN v2 ratify per `feedback_per_pillar_ship_can_split_phase_a_server_endpoint_from_phase_b_browser_delta_when_ui_smoke_required`. Phase A: server-side endpoint plumbing exists; browser-tier UI Phase B deferred until operator-bearer infra (Task #234) lands.
+
+#### 3.13.4 Phase B in flight (Task #234)
+
+Admin-lane provisions the first operator-session bearer; landing closes the gate on:
+- Per-Ptah ORP TraceRecord dashboard wire (§3.12.3 Phase B)
+- Dashboard-DM Phase B browser UI (§3.13.3)
+- Operator-class moderation flows via dashboard (sister-shape `_renderTrace` per-agent-bearer canon)
 
 ---
 
@@ -630,6 +703,8 @@ Post-discipline: most-specific lane-channel first; escalate to `#handoff` for cr
 - `parch-agent` authors canonical ADR text from inputs (`parch@traptop10k:~/adr/`)
 - Jon ratifies parch's canonical
 - Then execution
+- **Brevity canon** (per #10668 cluster ratify / PLAN-COMMS-BREVITY-SUBSTRATE in flight Task #242): drop stacked-modifier-chains, padding, repeated qualifiers; concrete > exhaustive. Server-side soft-warn forward-track.
+- **Per-agent git identity** (per #10831 ratify; Task #248 cluster-cascade): every per-agent OS account ships with `user.name = <agent-id>` + `user.email = <agent-id>@internal.subnet345.com` at the global git-config tier. Bare-git commits carry per-agent attribution at git-header tier (substrate-truth for `output_commit.agent_attribution`). GitHub commits remain Jon (push-auth identity unchanged). Forbid-revert canon on per-agent accounts post-cascade.
 
 ### 6.5 Operational discipline (per-feedback memos)
 
@@ -740,9 +815,15 @@ The `install-plexus.sh` canonical installer enables `YAKLOG_AUTO_UPDATE=1` by de
 | ADR-0038 — Vendor-key delivery substrate | Reserved at parch #10240. PLAN authored. Phase 1 secops + ssw-devops COMPLETE. Phase 2 yaklog-dev substrate-impl gated per above. |
 | ADR-0039 — Server-side compute migration architecture (CP16 main) | RATIFIED 2026-06-22 (parch #10268) with numbering correction (PLAN proposed ADR-0035 pre-parch-allocation). 6-OQ ratify: HYBRID Phase 0+Pillar 2 parallelism + strict per-pillar 4-gate + pre-tag canonical rollback + DURING modularization + empirical-derived thresholds. Pillar 2 Phase A SHIPPED at `9911666`. Pillars 0/3/4/5 forward-cycle; Pillar 6 (Live uPlot) trigger-gated. |
 | Task #223 — Ptah channel-subscription admin control | Pending; yaklog-dev #10243 surfaced 5 OQs to parch for Plexus admin interface substrate-design call (per s345-aieng #10229 Jon-direct routing). Daemon-tier mechanism EXISTS (yaklog-sub ChannelWatcher v0.5.16 hot-reloads channels file); NEW work is admin-UI + per-agent channel-set propagation. |
+| Task #234 — Operator-session Phase B kickoff | In flight (admin-lane provision). First operator-bearer landing unblocks: per-Ptah ORP trace dashboard wire (§3.12.3 Phase B), dashboard-DM browser UI (§3.13.3 Phase B), operator-class moderation flows. |
+| Task #246 — Per-Ptah ORP TraceRecord substrate (PLAN) | Phase A SHIPPED (server endpoint family at `app.use('/api/v1/plexus/ptah-orp', ...)`); Phase B dashboard wire deferred per pillar-split canon + gated on operator-session bearer infra (#234); Phase C AlertEngine predicate gated parallel. Q12 RATIFIED at parch #10744 (AlertEngine predicate-add not separate primitive). |
+| Task #247 — agents_engaged_per_merged_pr math fix | SHIPPED 2026-06-25 — per-PR CTE enumeration replaces cluster-aggregate; now integer-real on single-author merges. Companion to Task #248 (per-agent git identity cluster-cascade) — once cascade lands attribution shifts from `null_fallback` → `author_email_direct`, multi-agent collaboration will surface. |
+| Task #248 — Per-agent git identity cluster-canon | RATIFIED parch #10831 + Q1-Q4 (a/canary/self-update/no-retro). Cluster-cascade in flight: yaklog-dev canary done (own git config global set; CLAUDE.md §1 scaffold authored at `agent-globals.git@d16cfbb`); other agent seats cascade pending. Forward-track: outputAttributionParser priority refactor (Task #249) gated on cascade adoption. |
+| Tasks #250 / #251 — plexus-ui-agent + audio-eng-agent /register orchestration | New agents ACTIVE; CLAUDE.md placement standing on admin §2 + §3 fold-and-place onto agent seats (§1 Plexus-onboarding scaffold authored 2026-06-25 at `agent-globals.git@d16cfbb`). |
+| 2026-06-25 audit perf-fix (CP16 Pillar 3 prep) | SHIPPED — `countsForObjectClasses` refactored to use 8 new `count*` helpers (SELECT COUNT(*)); by-control-area p99 60s → 3.5s (~17× speedup). CP16 Pillar 3 rollup substrate takes next-step to <100ms (forward-track per Jon-direct "move all this work to the backend"). |
 
 ---
 
 **Doc owner**: yaklog-dev-agent
-**Last updated**: 2026-06-22 (Wave 5 — CP16 Pillar 2 + CP14-X / ADR-0037-0038-0039 + COALESCE substrate-fix era: v0.5.16.1 daemon-fields COALESCE substrate-fix (`98abd1c`; non-canonical-daemon Ptah self-emit Windows VM substrate-coord; parch Gate (4) #10259 + empirical Ptah `ptah-runtime/0.1.0` populate-and-persist), CP16 Pillar 2 Phase A cost-anomalies endpoint (`9911666`; parch #10268 ratify of PLAN §6; 14/14 tests + paired Gate (2)), ORP Author pane content-fill (`8dec7d1`; Task #212 forward-cycle; schema-aware read-mode render of 9 sections), Task #137 Phase A ptahAuditDb substrate (`5e92641`; parch #10266 9-OQ ratify; per-Ptah-agent SQLite file isolation + 15 tests + PTAH_AGENT_ID_RE namespace bound), ptah-agent DAEMON_BINDINGS hardening (ssw-devops #10267 pinch-hit; sister-shape #10001), Task #138 Phase 1 vendor-key secops-lane + ssw-devops OOB ferry COMPLETE (Phase 2 standing on container substrate-coord at #10294); parch ratifies Task #137 + Task #133 CP16 main; ADR-0037 / ADR-0038 / ADR-0039 numbering allocated; paired Gate (2) discipline via single yaklog rebuild at chain-head `5e92641` covering 3 ships per ssw-devops #10290 canon-validation)
+**Last updated**: 2026-06-25 (Wave 6 — Ptah substrate family consolidation + operator-session substrate + audit perf-fix + per-agent git identity canon + agents_engaged math fix era: NEW §3.12 Per-Ptah substrate family consolidates CP14-X Plexus Secure Store (§3.12.1) + ADR-0037 per-Ptah audit (§3.12.2) + Task #246 per-Ptah ORP TraceRecord (§3.12.3) under canon-class extension banked discipline; NEW §3.13 Operator-session substrate consolidates PLAN-OPERATOR-SESSION-SUBSTRATE v2 Phase A impl (Task #232) + ADR-0026 v2 messages-tombstone (Task #231) + dashboard-DM Phase A (Task #237) + Phase B in-flight gating note (Task #234); §3.9.4 by-control-area perf-fix note (60s→3.5s); §3.11.4 ratios math-fix note (per-PR CTE enumeration); §6.4 brevity canon + per-agent git identity canon (#10668 + #10831 ratify); §10 6 new task references)
 **Lives at**: `/srv/git/yaklog.git:PLEXUS-FEATURES.md` (canonical) + `/home/jon/yaklog/PLEXUS-FEATURES.md` (working copy)
