@@ -138,6 +138,24 @@ test('POST manifest: 400 when agent_id mismatch URL', async () => {
   assert.equal(r.status, 400);
 });
 
+test('POST manifest: 400 when orp_version contradicts episode-frozen value (aieng3 #10758)', async () => {
+  // Episode ep-route-1 is frozen at v0.1.0 (per before() seed).
+  const r = await request(app)
+    .post('/api/v1/plexus/ptah-orp/ptah-test-1/episodes/ep-route-1/manifest')
+    .set('Authorization', 'Bearer tok-ptah-x')
+    .send({ orp_version: 'v0.99.0', artifacts: [{ kind: 'x', path: '/p' }] });
+  assert.equal(r.status, 400);
+  assert.match(r.body.message, /C6 no-ORP-version-spanning/);
+});
+
+test('POST manifest: accepted when orp_version matches episode-frozen value', async () => {
+  const r = await request(app)
+    .post('/api/v1/plexus/ptah-orp/ptah-test-1/episodes/ep-route-1/manifest')
+    .set('Authorization', 'Bearer tok-ptah-x')
+    .send({ orp_version: 'v0.1.0', artifacts: [{ kind: 'story_txt', path: '/p' }] });
+  assert.equal(r.status, 200);
+});
+
 test('POST manifest: 403 when bearer is generic non-binding (no per-agent + no ops-key)', async () => {
   // Need a token in YAKLOG_API_KEYS but NOT bound to this agent + NOT ops-key.
   // The test env has tok-ptah-x bound to ptah-test-1 and tok-ops as ops.

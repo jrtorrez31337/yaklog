@@ -164,6 +164,14 @@ router.post('/:agent_id/episodes/:episode_id/manifest', (req, res) => {
       message: `manifest.agent_id=${manifest.agent_id} does not match URL agent_id=${agentId}`,
     });
   }
+  // C6 invariant: episode.orp_version is frozen at first trace insert; manifest
+  // cannot contradict it (per aieng3 #10758 cert-correlation requirement).
+  if (manifest.orp_version && manifest.orp_version !== ep.orp_version) {
+    return res.status(400).json({
+      error: 'ValidationError',
+      message: `manifest.orp_version=${manifest.orp_version} does not match episode-frozen orp_version=${ep.orp_version} — C6 no-ORP-version-spanning`,
+    });
+  }
   if (!Array.isArray(manifest.artifacts)) {
     return res.status(400).json({ error: 'ValidationError', message: 'manifest.artifacts must be array' });
   }
