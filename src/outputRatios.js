@@ -123,11 +123,58 @@ function computeRatios(db, opts = {}) {
     toolInvocationsCount = 0;
   }
 
-  // Distinct agents engaged in cluster coord
+  // Cluster-coord distinct-agents (kept for `_agents_engaged` metadata).
   const distinctAgentsRow = db.prepare(
     `SELECT COUNT(DISTINCT sender) AS n FROM messages WHERE created_at >= ${bound}`,
   ).get();
   const agentsEngaged = distinctAgentsRow.n;
+
+  // Per-merge agent enumeration for agents_engaged_per_merged_pr.
+  //
+  // Prior formula (`agentsEngaged / mergeCount`) divided total cluster-agents-
+  // sending-messages-in-window by total-merges — a cluster-aggregate ratio with
+  // no per-PR meaning (e.g., 34 senders / 31 merges = 1.097 regardless of
+  // whether each merge had 1 or 5 distinct authors).
+  //
+  // Correct semantic: average over MERGES in window of distinct-agents-per-merge,
+  // where agents-per-merge = union of (output_merge.merged_by_agent, all distinct
+  // output_commit.agent_attribution where commit_sha = merge_commit_sha). The
+  // merge commit's Co-Authored-By trailers are captured in output_commit's row
+  // for the merge commit via outputAttributionParser. Excludes merges with zero
+  // attributed agents from the average (honest "insufficient data" — those
+  // contribute to null_fallback_pct in coverage-gap, not to this ratio).
+  //
+  // Per Jon-direct 2026-06-25: agents-per-PR is the intended metric (operator-
+  // interpretation); cluster-aggregate was wrong by design. Forward-track:
+  // attribution-canon ${agent-id}@internal.subnet345.com will dramatically
+  // reduce the null-attribution merge cohort.
+  let agentsEngagedPerMergedPr = null;
+  try {
+    const row = db.prepare(`
+      WITH per_merge AS (
+        SELECT m.merge_commit_sha,
+               COUNT(DISTINCT agent) AS distinct_agents
+        FROM (
+          SELECT merge_commit_sha, merged_by_agent AS agent
+          FROM output_merge
+          WHERE occurred_at >= ${bound} AND merged_by_agent IS NOT NULL
+          UNION ALL
+          SELECT m2.merge_commit_sha, c.agent_attribution AS agent
+          FROM output_merge m2
+          JOIN output_commit c ON c.commit_sha = m2.merge_commit_sha
+          WHERE m2.occurred_at >= ${bound} AND c.agent_attribution IS NOT NULL
+        ) AS m
+        GROUP BY m.merge_commit_sha
+        HAVING distinct_agents > 0
+      )
+      SELECT AVG(distinct_agents) AS avg_agents,
+             COUNT(*) AS attributed_merge_count
+      FROM per_merge
+    `).get();
+    agentsEngagedPerMergedPr = row.avg_agents;
+  } catch {
+    agentsEngagedPerMergedPr = null;
+  }
 
   // CP13.6 Phase 2.3 — output_pr substrate (GitHubWalker per Q1+Q2 ratify)
   //
@@ -183,7 +230,7 @@ function computeRatios(db, opts = {}) {
     dollar_per_agent_cycle: safeDivide(costUsd, commitCount),
     coord_messages_per_merged_pr: safeDivide(messagesCount, mergeCount),
     tool_invocations_per_merged_pr: safeDivide(toolInvocationsCount, mergeCount),
-    agents_engaged_per_merged_pr: safeDivide(agentsEngaged, mergeCount),
+    agents_engaged_per_merged_pr: agentsEngagedPerMergedPr,
     // Phase 2.3 ratios (output_pr substrate; GitHubWalker per CP13.6):
     pr_merge_rate: safeDivide(prCohortMergedCount, prOpenedInPeriodCohortSize),
     time_to_merge_hours: timeToMergeHours,
