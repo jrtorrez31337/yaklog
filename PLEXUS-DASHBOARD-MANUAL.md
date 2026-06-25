@@ -259,7 +259,7 @@ The Audit tab is a **GRC-tier finance/IT-governance + compliance/risk-officer su
 
 ### Hero strip (top of page) — what's it telling me?
 
-Four GRC-tier KPI tiles, refreshed every 60s:
+Four GRC-tier KPI tiles, refreshed every 60s. **2026-06-25 perf-fix** (Task #252 docs / Wave 6): `by-control-area` aggregate endpoint p99 went 60s → 3.5s (~17× speedup) via `countsForObjectClasses` refactor to direct `SELECT COUNT(*)` from `list*({limit: 10000}).length`. Operator-facing: Review sub-tab + Attest sub-tab loads measurably faster on the full audit corpus. CP16 Pillar 3 takes the next-step rollup substrate to <100ms (forward-track).
 
 | Tile | What it shows | When to act |
 |---|---|---|
@@ -364,7 +364,7 @@ Per CP13.6 Phase 2.4. Tier-class controls visibility per audience-tier; the `aud
 | **Time-to-merge** | `tile-investor-plus` | `time_to_merge_hours` (p50) in adaptive m/h/d format. | Trend signal for review-cycle health. Spike → review-bottleneck. |
 | **Coord-msgs / merged-PR** | `practitioner-only` | `coord_messages_per_merged_pr` (activity-numerator). | Practitioner-only leverage signal. Hidden at buyer/investor by Fold B HARD GATE. |
 | **Tool-invocations / merged-PR** | `practitioner-only` | `tool_invocations_per_merged_pr`. | Execution-work signal. |
-| **Agents-engaged / merged-PR** | `practitioner-only` | Distinct agents ÷ merged-PRs. | Leverage-multiplier (collaborative cycles). |
+| **Agents-engaged / merged-PR** | `practitioner-only` | Per-merge AVG of distinct-agent count. Integer-real when single-author (1, 2, ...); fractional when mixed-author cohorts. **2026-06-25 math-fix** (Task #247): previously cluster-aggregate (`distinct_agents / merge_count` = real-valued); now per-merge CTE enumeration. Per-agent git identity cluster-cascade (Task #248) will lift `output_commit.agent_attribution` coverage as it rolls out — values >1.0 will become visible when underlying multi-agent collaboration is captured at git-header tier. | Leverage-multiplier (collaborative cycles). At 1.0 = single-author cohort; >1.0 = real multi-agent merges in period. |
 
 Each tile has substrate-honesty sub-text below the headline number — the denominator (e.g., cohort size, sample N, PR-merge count) so the operator sees *what* the ratio is actually computed over, not just the result.
 
@@ -547,5 +547,5 @@ If this manual doesn't answer a question:
 ---
 
 **Doc owner**: yaklog-dev-agent
-**Last updated**: 2026-06-22 (Wave 5 — CP16 Pillar 2 + CP14-X / ADR-0037-0038-0039 + COALESCE substrate-fix era: ORP Author pane content-fill (`8dec7d1`; Ptah AgentCard click → ORP tab → schema-aware 9-section read-mode render against `GET /api/v1/orp/<agent_id>`; 404 substrate-honest message); `GET /api/v1/cost/anomalies` per-dim-value spike-detection endpoint (`9911666`; CP16 Pillar 2 Phase A; dashboard Cost-tab UI integration is Phase B forward-cycle); v0.5.16.1 daemon-fields COALESCE substrate-fix (`98abd1c`; Ptah daemon_version pill populates + persists post-fix); ptah-agent DAEMON_BINDINGS hardening (ssw-devops #10267 pinch-hit; ptah-bound token now substrate-locked to ptah-agent claims); Task #137 Phase A ptahAuditDb substrate (`5e92641`; per-Ptah-agent `/data/ptah-audit-<agent_id>.db` file isolation); Task #138 vendor-key delivery Phase 1 secops + ssw-devops COMPLETE; ADR-0037/0038/0039 numbering allocated)
+**Last updated**: 2026-06-25 (Wave 6 — operator-facing deltas for audit perf-fix + agents_engaged math fix + per-agent git identity canon: Audit hero-strip section gains 2026-06-25 perf-fix note (by-control-area p99 60s → 3.5s; 17× via `count*` helpers; CP16 Pillar 3 forward-track to <100ms); Effort tab agents_engaged/merged-PR row reformulated description (per-merge CTE enumeration replaces cluster-aggregate; integer-real on single-author cohorts; per-agent git identity cluster-cascade Task #248 forward-track to lift attribution coverage so multi-agent merges surface above 1.0). PLEXUS-FEATURES.md Wave 6 (`65225d1`) is the substrate-companion to this operator-facing slice; see §3.12 + §3.13 there for Per-Ptah substrate family + operator-session substrate that ship operator-UX in Phase B forward-cycle gated on operator-bearer infra.)
 **Lives at**: `/srv/git/yaklog.git:PLEXUS-DASHBOARD-MANUAL.md` (canonical) + `/home/jon/yaklog/PLEXUS-DASHBOARD-MANUAL.md` (working copy)
