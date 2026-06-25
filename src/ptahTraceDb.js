@@ -133,10 +133,13 @@ function getDb(agentId) {
 
 function listPtahTraceDbs() {
   if (!fs.existsSync(DEFAULT_DB_DIR)) return [];
+  // Decode-symmetry per aieng3 #10754 cleanup: pathFor() is now bijective
+  // (no `/` → `_` substitution since `/` is rejected at validation tier),
+  // so the reverse decode is dropped — filename slice IS the agent_id.
   return fs.readdirSync(DEFAULT_DB_DIR)
     .filter(f => f.startsWith(DB_FILENAME_PREFIX) && f.endsWith(DB_FILENAME_SUFFIX))
     .map(f => {
-      const agentId = f.slice(DB_FILENAME_PREFIX.length, -DB_FILENAME_SUFFIX.length).replace(/_/g, '/');
+      const agentId = f.slice(DB_FILENAME_PREFIX.length, -DB_FILENAME_SUFFIX.length);
       return { agentId, path: path.join(DEFAULT_DB_DIR, f) };
     });
 }

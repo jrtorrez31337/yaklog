@@ -17,15 +17,19 @@
 
 const express = require('express');
 const ptahTraceDb = require('./ptahTraceDb');
+const { resolveAllowedSenders } = require('./middleware/senderBinding');
 
 const router = express.Router({ mergeParams: true });
 
 function _isOwnAgent(req, agentId) {
-  // req.auth populated by global auth middleware. Per-agent bearer carries
-  // bound agent_id; ops-key carries source='ops-key'.
+  // ops-key bypasses agent-binding (operator-tier cross-instance access).
   if (!req.auth) return false;
-  if (req.auth.source === 'ops-key') return true;
-  return req.auth.agentId === agentId;
+  if (req.auth.source === 'ops') return true;
+  // Per-agent bearer: use resolveAllowedSenders to derive bound agent_id(s)
+  // from TOKEN_BINDINGS / registration-minted token / operator binding.
+  const { allowedSenders } = resolveAllowedSenders(req);
+  if (!allowedSenders) return false;  // unbound cluster-bearer rejected (PII scope)
+  return allowedSenders.has(agentId);
 }
 
 function _validateAgentParam(req, res) {
@@ -114,6 +118,91 @@ router.get('/:agent_id/episodes', (req, res) => {
     const limit = Math.min(Number(req.query.limit) || 50, 200);
     const eps = ptahTraceDb.listEpisodes(agentId, { limit });
     return res.status(200).json({ agent_id: agentId, episodes: eps, count: eps.length });
+  } catch (e) {
+    return res.status(500).json({ error: 'InternalError', message: e.message });
+  }
+});
+
+// POST /:agent_id/episodes/:episode_id/manifest — cert-manifest write per parch
+// #10755 ship-in-Phase-A.2 ratify. Substrate stores typed-artifact body verbatim
+// per aieng3 #10730 shape; cert authority remains independent (aieng3 reads
+// artifact bytes from path, recomputes sha256/bytes, runs cert checks). This
+// endpoint validates JSON shape + episode_id/agent_id binding, NOT the strict
+// cert-tier exactly-one-of-each-required-kind constraint (that's cert authority).
+router.post('/:agent_id/episodes/:episode_id/manifest', (req, res) => {
+  const agentId = _validateAgentParam(req, res);
+  if (!agentId) return;
+  if (!_isOwnAgent(req, agentId)) {
+    return res.status(403).json({ error: 'Forbidden', message: 'per-agent bearer or ops-key required' });
+  }
+  const episodeId = req.params.episode_id;
+  const manifest = req.body || {};
+
+  // Verify episode exists (must have at least one trace landed).
+  const ep = ptahTraceDb.getEpisodeManifest(agentId, episodeId);
+  if (!ep) {
+    return res.status(404).json({
+      error: 'NotFound',
+      message: `no episode ${episodeId} for ${agentId} — POST trace records first`,
+    });
+  }
+
+  // Substrate-tier shape validation (deferred-strict cert-tier validation
+  // remains aieng3 authority per #10730 + #10751 cert-independence).
+  if (typeof manifest !== 'object' || manifest === null) {
+    return res.status(400).json({ error: 'ValidationError', message: 'manifest must be JSON object' });
+  }
+  if (manifest.episode_id && manifest.episode_id !== episodeId) {
+    return res.status(400).json({
+      error: 'ValidationError',
+      message: `manifest.episode_id=${manifest.episode_id} does not match URL episode_id=${episodeId}`,
+    });
+  }
+  if (manifest.agent_id && manifest.agent_id !== agentId) {
+    return res.status(400).json({
+      error: 'ValidationError',
+      message: `manifest.agent_id=${manifest.agent_id} does not match URL agent_id=${agentId}`,
+    });
+  }
+  if (!Array.isArray(manifest.artifacts)) {
+    return res.status(400).json({ error: 'ValidationError', message: 'manifest.artifacts must be array' });
+  }
+  for (let i = 0; i < manifest.artifacts.length; i++) {
+    const a = manifest.artifacts[i];
+    if (!a || typeof a !== 'object') {
+      return res.status(400).json({ error: 'ValidationError', message: `artifacts[${i}] must be object` });
+    }
+    if (typeof a.kind !== 'string' || !a.kind) {
+      return res.status(400).json({ error: 'ValidationError', message: `artifacts[${i}].kind required` });
+    }
+    if (typeof a.path !== 'string' || !a.path) {
+      return res.status(400).json({ error: 'ValidationError', message: `artifacts[${i}].path required (cluster-readable path or artifact ref)` });
+    }
+    if (a.bytes != null && (!Number.isFinite(a.bytes) || a.bytes < 0)) {
+      return res.status(400).json({ error: 'ValidationError', message: `artifacts[${i}].bytes must be non-negative number when present` });
+    }
+    if (a.sha256 != null && typeof a.sha256 !== 'string') {
+      return res.status(400).json({ error: 'ValidationError', message: `artifacts[${i}].sha256 must be string when present` });
+    }
+  }
+
+  // Bind authoritative fields per substrate (URL params are canonical).
+  const persisted = {
+    episode_id: episodeId,
+    agent_id: agentId,
+    role_id: manifest.role_id ?? ep.role_id ?? null,
+    orp_version: manifest.orp_version ?? ep.orp_version,
+    artifacts: manifest.artifacts,
+  };
+
+  try {
+    ptahTraceDb.setEpisodeManifest(agentId, episodeId, persisted);
+    return res.status(200).json({
+      ok: true,
+      agent_id: agentId,
+      episode_id: episodeId,
+      artifact_count: manifest.artifacts.length,
+    });
   } catch (e) {
     return res.status(500).json({ error: 'InternalError', message: e.message });
   }
