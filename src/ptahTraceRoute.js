@@ -152,21 +152,23 @@ router.post('/:agent_id/episodes/:episode_id/manifest', (req, res) => {
   if (typeof manifest !== 'object' || manifest === null) {
     return res.status(400).json({ error: 'ValidationError', message: 'manifest must be JSON object' });
   }
-  if (manifest.episode_id && manifest.episode_id !== episodeId) {
+  // Presence checks use `!= null` (treats `""`, `0`, `false` as PRESENT) per
+  // aieng3 #10761: truthy guard let falsy-present values bypass the binding
+  // check; cert-correlation ambiguity returned for malformed-but-present
+  // envelope values. All three URL-bound fields enforced symmetrically.
+  if (manifest.episode_id != null && manifest.episode_id !== episodeId) {
     return res.status(400).json({
       error: 'ValidationError',
       message: `manifest.episode_id=${manifest.episode_id} does not match URL episode_id=${episodeId}`,
     });
   }
-  if (manifest.agent_id && manifest.agent_id !== agentId) {
+  if (manifest.agent_id != null && manifest.agent_id !== agentId) {
     return res.status(400).json({
       error: 'ValidationError',
       message: `manifest.agent_id=${manifest.agent_id} does not match URL agent_id=${agentId}`,
     });
   }
-  // C6 invariant: episode.orp_version is frozen at first trace insert; manifest
-  // cannot contradict it (per aieng3 #10758 cert-correlation requirement).
-  if (manifest.orp_version && manifest.orp_version !== ep.orp_version) {
+  if (manifest.orp_version != null && manifest.orp_version !== ep.orp_version) {
     return res.status(400).json({
       error: 'ValidationError',
       message: `manifest.orp_version=${manifest.orp_version} does not match episode-frozen orp_version=${ep.orp_version} — C6 no-ORP-version-spanning`,
@@ -194,12 +196,15 @@ router.post('/:agent_id/episodes/:episode_id/manifest', (req, res) => {
     }
   }
 
-  // Bind authoritative fields per substrate (URL params are canonical).
+  // Bind authoritative fields per substrate (URL params + episode-frozen
+  // values are canonical). orp_version canonicalized unconditionally from
+  // ep.orp_version per aieng3 #10761 defense-in-depth: even if presence-check
+  // misfires, the persisted value can't contradict episode binding.
   const persisted = {
     episode_id: episodeId,
     agent_id: agentId,
     role_id: manifest.role_id ?? ep.role_id ?? null,
-    orp_version: manifest.orp_version ?? ep.orp_version,
+    orp_version: ep.orp_version,
     artifacts: manifest.artifacts,
   };
 

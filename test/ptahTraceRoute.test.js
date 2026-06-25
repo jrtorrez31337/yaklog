@@ -156,6 +156,36 @@ test('POST manifest: accepted when orp_version matches episode-frozen value', as
   assert.equal(r.status, 200);
 });
 
+test('POST manifest: falsy-present orp_version rejected (aieng3 #10761 truthy-bypass fix)', async () => {
+  // Truthy guard `if (manifest.orp_version && ...)` would have let `""`, `0`,
+  // `false` through. Presence check `!= null` catches them.
+  for (const bad of ['', 0, false]) {
+    const r = await request(app)
+      .post('/api/v1/plexus/ptah-orp/ptah-test-1/episodes/ep-route-1/manifest')
+      .set('Authorization', 'Bearer tok-ptah-x')
+      .send({ orp_version: bad, artifacts: [{ kind: 'x', path: '/p' }] });
+    assert.equal(r.status, 400, `value ${JSON.stringify(bad)} must reject as C6 mismatch`);
+    assert.match(r.body.message, /C6 no-ORP-version-spanning/);
+  }
+});
+
+test('POST manifest: persisted orp_version always canonicalized to episode-frozen value', async () => {
+  // Defense-in-depth per aieng3 #10761: even if presence-check were bypassed,
+  // persisted manifest must use ep.orp_version not client-supplied value.
+  // (Omitted manifest.orp_version is the path that exercises this canon.)
+  const r = await request(app)
+    .post('/api/v1/plexus/ptah-orp/ptah-test-1/episodes/ep-route-1/manifest')
+    .set('Authorization', 'Bearer tok-ptah-x')
+    .send({ artifacts: [{ kind: 'episode_final_png', path: '/p' }] });
+  assert.equal(r.status, 200);
+  const get = await request(app)
+    .get('/api/v1/plexus/ptah-orp/ptah-test-1/episodes/ep-route-1/manifest')
+    .set('Authorization', 'Bearer tok-ptah-x');
+  assert.equal(get.status, 200);
+  assert.equal(get.body.manifest.orp_version, 'v0.1.0', 'persisted manifest uses episode-frozen value');
+  assert.equal(get.body.orp_version, 'v0.1.0', 'top-level + manifest orp_version agree');
+});
+
 test('POST manifest: 403 when bearer is generic non-binding (no per-agent + no ops-key)', async () => {
   // Need a token in YAKLOG_API_KEYS but NOT bound to this agent + NOT ops-key.
   // The test env has tok-ptah-x bound to ptah-test-1 and tok-ops as ops.
