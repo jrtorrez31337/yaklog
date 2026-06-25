@@ -412,6 +412,14 @@ app.get('/dashboard.js', noCacheDashboard, (req, res) => {
   res.type('application/javascript');
   res.sendFile(path.join(__dirname, '..', 'public', 'dashboard.js'));
 });
+// Task #243 Phase B browser asset: perf-instrument.js shipped at 83d771a
+// referenced by public/dashboard.html (line 1799) but route handler was
+// missed in the original ship → 404 surfaced at post-deploy Gate (3) empirical.
+// Sister-shape /dashboard.js handler (per-file explicit; no express.static on /).
+app.get('/perf-instrument.js', noCacheDashboard, (req, res) => {
+  res.type('application/javascript');
+  res.sendFile(path.join(__dirname, '..', 'public', 'perf-instrument.js'));
+});
 
 // PLAN-DASHBOARD-OPERATOR-DM §2.3.1: dashboard operator-class login route
 // (open — no auth at mount; rate-limit + uniform-401 + timing-safe internal).
