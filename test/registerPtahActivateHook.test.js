@@ -17,9 +17,11 @@ const path = require('path');
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'yaklog-ptah-activate-test-'));
 const ptahAuditTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'yaklog-ptah-audit-dir-'));
+const ptahTraceTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'yaklog-ptah-trace-dir-'));
 process.env.YAKLOG_DB_PATH = path.join(tempDir, 'yaklog.db');
 process.env.YAKLOG_API_KEYS = 'tok-x';
 process.env.YAKLOG_PTAH_AUDIT_DB_DIR = ptahAuditTmp;
+process.env.YAKLOG_PTAH_TRACE_DB_DIR = ptahTraceTmp;  // Task #246 sister-shape provision
 process.env.YAKLOG_PRESENCE_SWEEP_MS = '0';
 process.env.NODE_ENV = 'test';
 

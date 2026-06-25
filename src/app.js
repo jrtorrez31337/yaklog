@@ -19,6 +19,7 @@ const metricsRoute = require('./metricsRoute');         // CP16-prep observabili
 const costAnomaliesRoute = require('./costAnomaliesRoute'); // CP16 Pillar 2 (parch #10268)
 const vendorKeysRoute = require('./secureStore/vendorKeysRoute'); // Task #138 Phase 2B (parch #10320)
 const orpRoute = require('./orpRoute');                 // CP14-X Plexus Secure Store (parch #10175)
+const ptahTraceRoute = require('./ptahTraceRoute');     // Task #246 Per-Ptah TraceRecord (parch #10731 + #10744 + #10748)
 const dashboardLoginRoute = require('./dashboardLoginRoute'); // PLAN-DASHBOARD-OPERATOR-DM §2.3.1 (secops FLAG-2)
 const { dashboardCspMiddleware } = require('./middleware/csp'); // PLAN-DASHBOARD-OPERATOR-DM §2.9.2 (secops FLAG-1)
 const { createConcurrencyLimiter } = require('./middleware/concurrencyLimit'); // Cascade-prevention #10535 (substrate-design Option b)
@@ -556,6 +557,7 @@ app.use('/api/v1/secure-store', auth, vendorKeysRoute);
 // secops design Q recommend; per-agent scoping deferred to forward-track).
 // POST /ops/orp/<agent_id> lives under /api/v1/ops mount (ops-key gated).
 app.use('/api/v1/orp', auth, orpRoute);
+app.use('/api/v1/plexus/ptah-orp', auth, ptahTraceRoute);  // Task #246 Per-Ptah TraceRecord substrate
 
 app.get('/', (req, res) => {
   res.json({

@@ -44,6 +44,7 @@ const { enforceSenderBinding } = require('./middleware/senderBinding');
 // is enforced inside ptahAuditDb.provisionForAgent() (defense-in-depth per
 // /register sub-OQ Option (c) trusted-runtime bootstrap discipline).
 const ptahAuditDb = require('./ptahAuditDb');
+const ptahTraceDb = require('./ptahTraceDb');  // Task #246 sister-shape per-Ptah-instance trace substrate
 // Path Y per parch #10658: at /activate, provision operator_records row when
 // submission declares session_class='operator'. Sister-canon to ptahAuditDb
 // provisioning at runtime_class='ptah'. Closes the Phase A scope-gap from #10650.
@@ -417,6 +418,17 @@ router.post('/:id/activate', (req, res) => {
       return res.status(500).json({
         error: 'ProvisionFailed',
         message: `runtime_class=ptah agent: per-Ptah-agent audit DB provision failed: ${e.message}. Registration stays in PENDING_ACTIVATION; resolve provisioning failure (e.g., agent_id ptah-* namespace bound) and retry activate.`
+      });
+    }
+    // Task #246: also provision per-Ptah-instance trace substrate (sister-shape
+    // audit provision; same per-Ptah-instance file-isolation canon-class per
+    // ADR-0037 §6 amendment / parch #10731 ratify).
+    try {
+      ptahTraceDb.provisionForAgent(reg.agent_id);
+    } catch (e) {
+      return res.status(500).json({
+        error: 'ProvisionFailed',
+        message: `runtime_class=ptah agent: per-Ptah-instance trace DB provision failed: ${e.message}.`
       });
     }
   }
