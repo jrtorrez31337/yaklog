@@ -41,6 +41,15 @@ const {
   listAuditAnchors,
   getAuditAnchorByDay,
   verifyAuditAnchor,
+  // COUNT-only helpers (perf fix for /audit/by-control-area; replaces list*().length)
+  countAuditToolInvocations,
+  countAuditFileAccess,
+  countAuditCredentialChanges,
+  countAuditPermissionChanges,
+  countAuditAttestations,
+  countAuditChannelSubscriptionChanges,
+  countPolicyRules,
+  countPolicyViolations,
 } = require('./db');
 
 const costQuery = require('./costQuery');
@@ -148,30 +157,31 @@ const CONTROL_AREA_MAP = {
 };
 
 function countsForObjectClasses(classes, { from, to, control_area } = {}) {
-  // Single-class fast paths: invoke the helper with a large limit and count.
-  // Phase 1 cap: 10k rows per class per period is empirically safe for the
-  // dashboards we ship; if rollup hits this ceiling we move counts into SQL.
+  // SELECT COUNT(*) per class — empirically ~60s pre-fix when each class did
+  // list*({limit:10000}).length (full row hydration of 10k rows × N classes;
+  // /audit/by-control-area SOC2 ~10-12 such fetches on growing data). Direct
+  // COUNT(*) is 100-1000× faster + no row-cap accuracy ceiling.
+  //
   // CP12.10: audit_attestation rows are filtered by control_area so a CC1
   // attestation doesn't inflate CC2's count.
-  const limit = 10000;
   let total = 0;
   for (const cls of classes) {
     if (cls === 'audit_tool_invocation') {
-      total += listAuditToolInvocations({ from, to, limit }).length;
+      total += countAuditToolInvocations({ from, to });
     } else if (cls === 'audit_file_access') {
-      total += listAuditFileAccess({ from, to, limit }).length;
+      total += countAuditFileAccess({ from, to });
     } else if (cls === 'audit_credential_change') {
-      total += listAuditCredentialChanges({ from, to, limit }).length;
+      total += countAuditCredentialChanges({ from, to });
     } else if (cls === 'audit_permission_change') {
-      total += listAuditPermissionChanges({ from, to, limit }).length;
+      total += countAuditPermissionChanges({ from, to });
     } else if (cls === 'audit_attestation') {
-      total += listAuditAttestations({ from, to, control_area, limit }).length;
+      total += countAuditAttestations({ from, to, control_area });
     } else if (cls === 'audit_channel_subscription_change') {
-      total += listAuditChannelSubscriptionChanges({ from, to, limit }).length;
+      total += countAuditChannelSubscriptionChanges({ from, to });
     } else if (cls === 'policy_rule') {
-      total += listPolicyRules().length;
+      total += countPolicyRules();
     } else if (cls === 'policy_violation') {
-      total += listPolicyViolations({ from, to, limit }).length;
+      total += countPolicyViolations({ from, to });
     }
   }
   return total;

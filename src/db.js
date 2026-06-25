@@ -3615,6 +3615,107 @@ function listAuditChannelSubscriptionChanges({ from, to, agent_id, channel_name,
     .all({ ...params, limit });
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// COUNT-ONLY helpers per audit-object class (perf fix for /audit/by-control-area).
+// Pre-fix: countsForObjectClasses fetched up to 10k full rows per class then
+// `.length`-counted in JS — SOC2 framework triggered ~10-12 such fetches +
+// hydration, total ~60s on growing audit data. SELECT COUNT(*) per class is
+// 100-1000× faster.
+//
+// Sister-shape list* but projects to COUNT(*) AS c. Same WHERE-clause set.
+// ──────────────────────────────────────────────────────────────────────────
+
+function countAuditToolInvocations({ from, to, agent_id, tool_name, status } = {}) {
+  const database = getDb();
+  const where = [];
+  const params = {};
+  if (from) { where.push('occurred_at >= @from'); params.from = from; }
+  if (to)   { where.push('occurred_at <= @to'); params.to = to; }
+  if (agent_id)  { where.push('agent_id = @agent_id'); params.agent_id = agent_id; }
+  if (tool_name) { where.push('tool_name = @tool_name'); params.tool_name = tool_name; }
+  if (status)    { where.push('status = @status'); params.status = status; }
+  const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  return database.prepare(`SELECT COUNT(*) AS c FROM audit_tool_invocation ${whereClause}`).get(params).c;
+}
+
+function countAuditFileAccess({ from, to, agent_id, path_prefix } = {}) {
+  const database = getDb();
+  const where = [];
+  const params = {};
+  if (from) { where.push('occurred_at >= @from'); params.from = from; }
+  if (to)   { where.push('occurred_at <= @to'); params.to = to; }
+  if (agent_id)    { where.push('agent_id = @agent_id'); params.agent_id = agent_id; }
+  if (path_prefix) { where.push('path LIKE @path_prefix'); params.path_prefix = path_prefix + '%'; }
+  const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  return database.prepare(`SELECT COUNT(*) AS c FROM audit_file_access ${whereClause}`).get(params).c;
+}
+
+function countAuditCredentialChanges({ from, to, credential_class } = {}) {
+  const database = getDb();
+  const where = [];
+  const params = {};
+  if (from) { where.push('occurred_at >= @from'); params.from = from; }
+  if (to)   { where.push('occurred_at <= @to'); params.to = to; }
+  if (credential_class) { where.push('credential_class = @credential_class'); params.credential_class = credential_class; }
+  const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  return database.prepare(`SELECT COUNT(*) AS c FROM audit_credential_change ${whereClause}`).get(params).c;
+}
+
+function countAuditPermissionChanges({ from, to, agent_id } = {}) {
+  const database = getDb();
+  const where = [];
+  const params = {};
+  if (from) { where.push('occurred_at >= @from'); params.from = from; }
+  if (to)   { where.push('occurred_at <= @to'); params.to = to; }
+  if (agent_id) { where.push('agent_id = @agent_id'); params.agent_id = agent_id; }
+  const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  return database.prepare(`SELECT COUNT(*) AS c FROM audit_permission_change ${whereClause}`).get(params).c;
+}
+
+function countAuditAttestations({ from, to, control_area } = {}) {
+  const database = getDb();
+  const where = [];
+  const params = {};
+  if (from) { where.push('occurred_at >= @from'); params.from = from; }
+  if (to)   { where.push('occurred_at <= @to'); params.to = to; }
+  if (control_area) { where.push('control_area = @control_area'); params.control_area = control_area; }
+  const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  return database.prepare(`SELECT COUNT(*) AS c FROM audit_attestation ${whereClause}`).get(params).c;
+}
+
+function countAuditChannelSubscriptionChanges({ from, to, agent_id, channel_name } = {}) {
+  const database = getDb();
+  const where = [];
+  const params = {};
+  if (from) { where.push('occurred_at >= @from'); params.from = from; }
+  if (to)   { where.push('occurred_at <= @to'); params.to = to; }
+  if (agent_id)     { where.push('agent_id = @agent_id'); params.agent_id = agent_id; }
+  if (channel_name) { where.push('channel_name = @channel_name'); params.channel_name = channel_name; }
+  const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  return database.prepare(`SELECT COUNT(*) AS c FROM audit_channel_subscription_change ${whereClause}`).get(params).c;
+}
+
+function countPolicyRules({ status } = {}) {
+  const database = getDb();
+  const where = [];
+  const params = {};
+  if (status) { where.push('status = @status'); params.status = status; }
+  const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  return database.prepare(`SELECT COUNT(*) AS c FROM policy_rule ${whereClause}`).get(params).c;
+}
+
+function countPolicyViolations({ from, to, rule_id, disposition } = {}) {
+  const database = getDb();
+  const where = [];
+  const params = {};
+  if (from) { where.push('occurred_at >= @from'); params.from = from; }
+  if (to)   { where.push('occurred_at <= @to'); params.to = to; }
+  if (rule_id)     { where.push('rule_id = @rule_id'); params.rule_id = rule_id; }
+  if (disposition) { where.push('disposition = @disposition'); params.disposition = disposition; }
+  const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  return database.prepare(`SELECT COUNT(*) AS c FROM policy_violation ${whereClause}`).get(params).c;
+}
+
 function diffChannelSubscriptions(prior, current) {
   // Identity: agent_id. Diff: per-agent set-difference of channel names.
   // Returns: { subscribes: [{agent_id, channel_name, source_path}], unsubscribes: [...] }
@@ -3813,6 +3914,15 @@ module.exports = {
   listAuditChannelSubscriptionChanges,
   processChannelSubscriptionScan,
   diffChannelSubscriptions,
+  // COUNT-only helpers for /audit/by-control-area perf fix (sister-shape list* but SELECT COUNT(*)).
+  countAuditToolInvocations,
+  countAuditFileAccess,
+  countAuditCredentialChanges,
+  countAuditPermissionChanges,
+  countAuditAttestations,
+  countAuditChannelSubscriptionChanges,
+  countPolicyRules,
+  countPolicyViolations,
   // CP12.16 (2026-06-07): GRC reconcile-class extension (Phase 2)
   RECONCILE_CLASS_VOCAB,
   aggregateAuditReconciliationsByClass,
