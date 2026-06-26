@@ -1,0 +1,21 @@
+# yaklog-audit-rollup timer — CP16 Phase 2 hourly cadence per
+# PLAN-CP16-PILLAR-AUDIT-ROLLUP-SUBSTRATE.md §6 + sister-shape
+# yaklog-output-ingester.timer canon.
+#
+# Hourly cadence at minute-25 ± 5 min randomized (offset from output-ingester
+# minute-15 + wal-checkpoint cadence + top-of-hour presence-sweep + cost-rollup
+# to spread cluster-wide writer-lock pressure).
+
+[Unit]
+Description=Plexus CP16 audit-aggregate rollup (hourly)
+Requires=yaklog-audit-rollup.service
+
+[Timer]
+OnCalendar=*:25
+RandomizedDelaySec=300
+# Catch up on missed firings after devel restart/network outage
+Persistent=true
+Unit=yaklog-audit-rollup.service
+
+[Install]
+WantedBy=timers.target

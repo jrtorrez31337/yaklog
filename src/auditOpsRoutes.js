@@ -529,6 +529,62 @@ router.post('/wal-checkpoint', (req, res) => {
   }
 });
 
+// ─── CP16 audit-rollup Phase 2: POST /ops/audit-rollup/backfill ─────────────
+//
+// Operator-trigger rollup driver. Sister-shape /wal-checkpoint canon (ops-key
+// gated + actor-attribution + structured response). Per PLAN-CP16-PILLAR-AUDIT-
+// ROLLUP-SUBSTRATE.md §13 option (d) — bridges between full deploy-time backfill
+// (operationally expensive ~15min per ssw-devops #10883) + steady-state cron
+// hourly incremental. Use cases:
+//   1. Post-deploy initial backfill (operator runs once after Phase 2 install)
+//   2. Operator-triggered rollup on demand (e.g. before a heavy /audit page load)
+//   3. Phase 2 systemd timer invokes this endpoint hourly via curl
+//
+// Body: {days_back?: int (1-365; default 90), end_date_exclusive?: 'YYYY-MM-DD'}
+// Response: {scanned, by_control_area, by_object_class, by_agent, elapsed_ms,
+//            window_days, end_date_exclusive, actor}
+
+router.post('/audit-rollup/backfill', (req, res) => {
+  const b = req.body || {};
+  const daysBack = Number.isInteger(b.days_back) ? b.days_back : 90;
+  if (daysBack < 1 || daysBack > 365) {
+    return badRequest(res, 'days_back must be integer 1..365');
+  }
+  const endDateExclusive = (typeof b.end_date_exclusive === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(b.end_date_exclusive))
+    ? b.end_date_exclusive
+    : null;
+  const actor = computeActor(req);
+  const t0 = Date.now();
+  try {
+    const { rollupAuditWindow } = require('./auditRollup');
+    const result = rollupAuditWindow({
+      daysBack,
+      endDateExclusive: endDateExclusive || undefined,
+    });
+    const elapsed_ms = Date.now() - t0;
+    // Aggregate counts from per-day results
+    let totalCca = 0; let totalCoc = 0; let totalCba = 0;
+    for (const day of result.results) {
+      totalCca += day.by_control_area || 0;
+      totalCoc += day.by_object_class || 0;
+      totalCba += day.by_agent || 0;
+    }
+    return res.json({
+      ok: true,
+      window_days: result.window_days,
+      end_date_exclusive: result.end_date_exclusive,
+      days_rolled: result.rolled,
+      by_control_area_rows: totalCca,
+      by_object_class_rows: totalCoc,
+      by_agent_rows: totalCba,
+      elapsed_ms,
+      actor,
+    });
+  } catch (e) {
+    return internal(res, e.message);
+  }
+});
+
 // ─── CP14-X Plexus Secure Store: POST /ops/orp/:agent_id ────────────────────
 //
 // Per parch #10175 ratify of Option C (Jon-direct #10171). Ops-key gated
