@@ -290,7 +290,7 @@
       const orpAgentId = m ? m[1] : null;
       mountOrpView(orpAgentId);
       name = 'orp';  // collapse to canonical tab-name for class-toggle below
-    } else if (!['live', 'cost', 'bus', 'audit', 'effort', 'register'].includes(name)) {
+    } else if (!['live', 'cost', 'bus', 'audit', 'effort', 'register', 'operate'].includes(name)) {
       name = 'live';
     }
     document.querySelectorAll('.tab-btn').forEach(b => {
@@ -313,6 +313,8 @@
     if (name === 'register') mountRegisterTab();
     // CP13.4: lazy-mount the Effort tab (ADR-0032 Phase 1.4 UX).
     if (name === 'effort' && typeof ensureEffortView === 'function') ensureEffortView();
+    // CP14 Operate tab lazy-mount + refresh on activation.
+    if (name === 'operate' && typeof mountOperateTab === 'function') mountOperateTab();
   }
 
   // ─────────────────────────────────────────────────────────────────────
@@ -5081,6 +5083,162 @@
       row.addEventListener('click', () => onClick(c.channel));
       listEl.appendChild(row);
     }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // CP14 Operate / eyes-on-glass tab — v1 5-tile operator surface
+  //
+  // Per PLAN-OPERATE-EYES-ON-GLASS-VIEW.md trio-converged (#10904 / #10906
+  // / #10908) + parch ratify #10925. Composition over existing endpoints:
+  //   - /api/v1/presence/public        → red-state + active sessions
+  //   - /api/v1/plexus/public/policy/violations?from=<60min>
+  //   - /api/v1/plexus/public/audit/anchor-verify?day=<today>
+  //   - /api/v1/cost/anomalies?period=7d&threshold=2.0&dim=agent_id
+  //
+  // Phase A (this ship): poll-only at 30s interval; per-tile state classes
+  // (red/yellow/green/error); drill-through routes to existing detail
+  // surfaces; AT-equivalent semantic HTML in place.
+  //
+  // Phase B forward-track: SSE+poll hybrid per Q2 ratify (event-stream
+  // tiles via existing BusStream presence-update subscription; aggregate
+  // tiles stay polled). Refactor when sub-cycle activated.
+  // ─────────────────────────────────────────────────────────────────────
+  let operateTabMounted = false;
+  let operatePollInterval = null;
+  const OPERATE_POLL_MS = 30000;
+
+  function mountOperateTab() {
+    if (!operateTabMounted) {
+      operateTabMounted = true;
+      // Wire drill-through click+keyboard handlers per tile
+      document.querySelectorAll('#operate-tile-grid .operate-tile').forEach((tile) => {
+        const target = tile.dataset.drill;
+        const handler = () => {
+          if (target === 'live-filtered-red') {
+            // For v1: navigate to Live; filter-to-red UX hook is forward-track
+            location.hash = '#live';
+          } else if (target === 'live') {
+            location.hash = '#live';
+          } else if (target === 'audit-incident') {
+            location.hash = '#audit';
+          } else if (target === 'audit-anchor') {
+            location.hash = '#audit';
+          } else if (target === 'cost-anomaly') {
+            location.hash = '#cost';
+          }
+        };
+        tile.addEventListener('click', handler);
+        tile.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handler(); }
+        });
+      });
+    }
+    // Refresh on every (re-)activation + start poll loop
+    refreshOperateTiles();
+    if (operatePollInterval) clearInterval(operatePollInterval);
+    operatePollInterval = setInterval(() => {
+      // Only poll while Operate tab is visible (cascade-prevention discipline)
+      if (document.querySelector('#tab-operate.active')) refreshOperateTiles();
+      else { clearInterval(operatePollInterval); operatePollInterval = null; }
+    }, OPERATE_POLL_MS);
+  }
+
+  function _setOperateTileState(tileId, state, value, sub, ariaSuffix) {
+    const tile = document.querySelector(`.operate-tile[data-tile="${tileId}"]`);
+    if (!tile) return;
+    tile.classList.remove('state-red', 'state-yellow', 'state-green', 'state-error');
+    if (state) tile.classList.add('state-' + state);
+    const valEl = document.getElementById(`operate-tile-${tileId}-value`);
+    const subEl = document.getElementById(`operate-tile-${tileId}-sub`);
+    if (valEl) valEl.textContent = value;
+    if (subEl) subEl.textContent = sub;
+    // a11y: append state-suffix to aria-label so AT users get state-signal
+    // not just color (per `feedback_accessibility_is_structural_canon_not_polish`)
+    const baseLabel = tile.getAttribute('aria-label')?.split(' — state: ')[0] || '';
+    if (ariaSuffix) tile.setAttribute('aria-label', `${baseLabel} — state: ${ariaSuffix}`);
+  }
+
+  async function refreshOperateTiles() {
+    const metaEl = document.getElementById('operate-footer-meta');
+    const t0 = Date.now();
+
+    // Presence-driven tiles (red-state + active sessions)
+    try {
+      const r = await fetch('/api/v1/presence/public');
+      const j = await r.json();
+      const rows = j.presence || j || [];
+      const red = rows.filter((p) =>
+        (p.runtime_state === 'quota_exhausted' || p.runtime_state === 'error') ||
+        p.sse_stream_stale === true ||
+        p.label === 'stalled'
+      );
+      const active = rows.filter((p) =>
+        p.session_state === 'active' || p.session_state === 'tool_running'
+      );
+      _setOperateTileState('red-state',
+        red.length === 0 ? 'green' : (red.length <= 2 ? 'yellow' : 'red'),
+        String(red.length),
+        red.length === 0 ? 'all agents healthy' : red.slice(0, 3).map((p) => p.agent_id).join(' · ') + (red.length > 3 ? ' +more' : ''),
+        red.length === 0 ? 'healthy' : (red.length <= 2 ? 'warn' : 'critical'));
+      _setOperateTileState('active-sessions', 'green',
+        String(active.length),
+        active.length === 0 ? 'cluster idle' : `${active.length} of ${rows.length} agents in active/tool_running`,
+        'informational');
+    } catch (e) {
+      _setOperateTileState('red-state', 'error', '?', `fetch error: ${e.message}`, 'unknown');
+      _setOperateTileState('active-sessions', 'error', '?', `fetch error: ${e.message}`, 'unknown');
+    }
+
+    // Policy violations (60min lookback)
+    try {
+      const from = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+      const r = await fetch(`/api/v1/plexus/public/policy/violations?from=${encodeURIComponent(from)}&limit=20`);
+      const j = await r.json();
+      const violations = j.violations || j.results || [];
+      const pending = violations.filter((v) => v.disposition === 'pending' || !v.disposition);
+      _setOperateTileState('policy-violations',
+        pending.length === 0 ? 'green' : (pending.length <= 2 ? 'yellow' : 'red'),
+        String(pending.length),
+        pending.length === 0 ? 'no pending violations' : `${pending.length} pending of ${violations.length} total`,
+        pending.length === 0 ? 'healthy' : (pending.length <= 2 ? 'warn' : 'critical'));
+    } catch (e) {
+      _setOperateTileState('policy-violations', 'error', '?', `fetch error: ${e.message}`, 'unknown');
+    }
+
+    // Audit chain integrity (today's anchor verify)
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const r = await fetch(`/api/v1/plexus/public/audit/anchor-verify?day=${today}`);
+      const j = await r.json();
+      if (j.found === false) {
+        _setOperateTileState('chain-integrity', 'yellow', '—', 'no anchor for today yet (publisher cadence)', 'awaiting publish');
+      } else if (j.match === true) {
+        _setOperateTileState('chain-integrity', 'green', '✓', `verified: ${(j.stored_digest || '').slice(0, 12)}…`, 'verified');
+      } else if (j.match === false) {
+        _setOperateTileState('chain-integrity', 'red', '✗', 'TAMPER DETECTED — investigate immediately', 'tamper-detected');
+      } else {
+        _setOperateTileState('chain-integrity', 'yellow', '?', j.note || 'verify state unclear', 'unknown-state');
+      }
+    } catch (e) {
+      _setOperateTileState('chain-integrity', 'error', '?', `fetch error: ${e.message}`, 'unknown');
+    }
+
+    // Cost spikes (7d window, agent_id dim)
+    try {
+      const r = await fetch('/api/v1/cost/anomalies?period=7d&threshold=2.0&dim=agent_id');
+      const j = await r.json();
+      const anomalies = j.anomalies || [];
+      const spikes = anomalies.filter((a) => a.is_spike === true);
+      _setOperateTileState('cost-spikes',
+        spikes.length === 0 ? 'green' : (spikes.length <= 2 ? 'yellow' : 'red'),
+        String(spikes.length),
+        spikes.length === 0 ? 'no spikes (7d vs mean)' : spikes.slice(0, 3).map((a) => a.dim_value).join(' · ') + (spikes.length > 3 ? ' +more' : ''),
+        spikes.length === 0 ? 'healthy' : (spikes.length <= 2 ? 'warn' : 'critical'));
+    } catch (e) {
+      _setOperateTileState('cost-spikes', 'error', '?', `fetch error: ${e.message}`, 'unknown');
+    }
+
+    if (metaEl) metaEl.textContent = `refreshed ${new Date().toLocaleTimeString()} · ${Date.now() - t0}ms`;
   }
 
   function mountBusTab() {

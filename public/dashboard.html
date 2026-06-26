@@ -897,6 +897,34 @@
   /* CP9.1: agent-color swatch on AgentCard head — matches channel bubble + chart line color */
   .agent-color-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; vertical-align: middle; margin-right: 6px; box-shadow: 0 0 0 1px rgba(0,0,0,0.4), 0 0 0 2px rgba(255,255,255,0.06); flex-shrink: 0; }
 
+  /* CP14 Operate / eyes-on-glass tab — 5-tile v1 operator surface per
+     trio-converged scope (bizmodel #10904 / s345 #10906 / techmark #10908 /
+     parch #10925 ratify). AT-equivalent semantic HTML + keyboard-operable
+     tiles. Tile state classes (.state-red / .state-yellow / .state-green)
+     drive color tint AND a textual state-suffix in aria-label so AT users
+     get the same signal as sighted users (accessibility-canon: no
+     color-only state per `feedback_accessibility_is_structural_canon_not_polish`). */
+  .operate-header { padding: 18px 24px 6px 24px; border-bottom: 1px solid var(--border); }
+  .operate-header h2 { font-size: 18px; margin: 0 0 4px 0; }
+  .operate-subhead { font-size: 12px; color: var(--muted); margin: 0; }
+  .operate-tile-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; padding: 18px 24px; }
+  .operate-tile { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 16px; cursor: pointer; display: flex; flex-direction: column; gap: 6px; transition: background 0.15s, transform 0.05s; outline: none; }
+  .operate-tile:hover, .operate-tile:focus { background: rgba(255,255,255,0.04); }
+  .operate-tile:focus { box-shadow: 0 0 0 2px #2563eb; }
+  .operate-tile:active { transform: scale(0.99); }
+  .operate-tile-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.4px; font-weight: 600; }
+  .operate-tile-value { font-size: 32px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; color: var(--text); }
+  .operate-tile-sub { font-size: 11px; color: var(--muted); font-style: italic; }
+  .operate-tile.state-red { background: rgba(239, 68, 68, 0.12); border-color: rgba(239, 68, 68, 0.4); }
+  .operate-tile.state-red .operate-tile-value { color: #ef4444; }
+  .operate-tile.state-yellow { background: rgba(234, 179, 8, 0.10); border-color: rgba(234, 179, 8, 0.4); }
+  .operate-tile.state-yellow .operate-tile-value { color: #eab308; }
+  .operate-tile.state-green { background: rgba(34, 197, 94, 0.08); border-color: rgba(34, 197, 94, 0.3); }
+  .operate-tile.state-green .operate-tile-value { color: #22c55e; }
+  .operate-tile.state-error { background: rgba(148, 163, 184, 0.10); border-color: rgba(148, 163, 184, 0.3); }
+  .operate-tile.state-error .operate-tile-value { color: var(--muted); font-size: 16px; }
+  .operate-footer { padding: 12px 24px; border-top: 1px solid var(--border); font-size: 11px; color: var(--muted); display: flex; justify-content: space-between; align-items: center; }
+
   /* CP10.3 M3: per-AgentCard Trace view — event-stream bubble timeline.
      Compact bubble shape (smaller than Channels-tab bubbles since card is small).
      Reuses the agent-color-bubble pattern for visual cohesion. */
@@ -1099,6 +1127,7 @@
 
 <nav class="tabs" id="tabs">
   <button class="tab-btn active" data-tab="live">Live</button>
+  <button class="tab-btn" data-tab="operate">Operate<span class="badge-new">CP14</span></button>
   <button class="tab-btn" data-tab="cost">Cost<span class="badge-new">CP3</span></button>
   <button class="tab-btn" data-tab="bus">Channels<span class="badge-new">CP9</span></button>
   <button class="tab-btn" data-tab="audit">Audit<span class="badge-new">CP8.2</span></button>
@@ -1661,6 +1690,55 @@
      Ptah dashboard at s345-aieng/ptah-provider-switch (offered for
      pairing at #10039).
      ════════════════════════════════════════════════════════════════════ -->
+<!-- ════════════════════════════════════════════════════════════════════════
+     CP14 Operate / eyes-on-glass view (PLAN-OPERATE-EYES-ON-GLASS-VIEW.md
+     trio-converged + parch ratified #10925). Operator-on-shift persona;
+     "is anything broken right now? where do I look first?" 5 tiles v1
+     per bizmodel #10904 disposition + s345 #10906 operational-health-only
+     register: red-state agent count / active sessions / recent policy
+     violations / audit chain integrity / cost spikes. Drill-through per
+     tile to existing detail surface. AT-equivalent semantic HTML per
+     accessibility canon (Jon legally-blind primary operator). v1 desktop-
+     first; mobile responsiveness v2 forward-track gated on customer-NOC
+     inheritance cycle (bizmodel #10023 fork-disposition).
+     ════════════════════════════════════════════════════════════════════ -->
+<section class="tab-panel" data-tab="operate" id="tab-operate" aria-labelledby="operate-heading">
+  <header class="operate-header">
+    <h2 id="operate-heading">Operate — eyes-on-glass</h2>
+    <p class="operate-subhead" id="operate-subhead">Operator-on-shift surface. Click any tile to drill into the detail view.</p>
+  </header>
+  <div class="operate-tile-grid" role="list" id="operate-tile-grid">
+    <article class="operate-tile" role="listitem" data-tile="red-state" data-drill="live-filtered-red" tabindex="0" aria-label="Red-state agent count tile; click to drill into Live tab filtered to red-state agents">
+      <div class="operate-tile-label">Red-state agents</div>
+      <div class="operate-tile-value" id="operate-tile-red-state-value" aria-live="polite">—</div>
+      <div class="operate-tile-sub" id="operate-tile-red-state-sub">loading…</div>
+    </article>
+    <article class="operate-tile" role="listitem" data-tile="active-sessions" data-drill="live" tabindex="0" aria-label="Active sessions tile; click to drill into Live tab">
+      <div class="operate-tile-label">Active sessions</div>
+      <div class="operate-tile-value" id="operate-tile-active-sessions-value" aria-live="polite">—</div>
+      <div class="operate-tile-sub" id="operate-tile-active-sessions-sub">loading…</div>
+    </article>
+    <article class="operate-tile" role="listitem" data-tile="policy-violations" data-drill="audit-incident" tabindex="0" aria-label="Recent policy violations tile; click to drill into Audit Incident sub-tab">
+      <div class="operate-tile-label">Recent policy violations (60min)</div>
+      <div class="operate-tile-value" id="operate-tile-policy-violations-value" aria-live="polite">—</div>
+      <div class="operate-tile-sub" id="operate-tile-policy-violations-sub">loading…</div>
+    </article>
+    <article class="operate-tile" role="listitem" data-tile="chain-integrity" data-drill="audit-anchor" tabindex="0" aria-label="Audit chain integrity tile; click to drill into Audit anchor view">
+      <div class="operate-tile-label">Audit chain integrity</div>
+      <div class="operate-tile-value" id="operate-tile-chain-integrity-value" aria-live="polite">—</div>
+      <div class="operate-tile-sub" id="operate-tile-chain-integrity-sub">loading…</div>
+    </article>
+    <article class="operate-tile" role="listitem" data-tile="cost-spikes" data-drill="cost-anomaly" tabindex="0" aria-label="Cost spikes tile; click to drill into Cost Anomaly sub-tab">
+      <div class="operate-tile-label">Cost spikes (7d)</div>
+      <div class="operate-tile-value" id="operate-tile-cost-spikes-value" aria-live="polite">—</div>
+      <div class="operate-tile-sub" id="operate-tile-cost-spikes-sub">loading…</div>
+    </article>
+  </div>
+  <footer class="operate-footer" id="operate-footer">
+    <span class="operate-footer-meta" id="operate-footer-meta">awaiting first refresh</span>
+  </footer>
+</section>
+
 <section class="tab-panel" data-tab="orp" id="tab-orp">
   <header class="orp-header">
     <h2 id="orp-instance-heading" class="orp-instance-heading">ORP — <span id="orp-instance-name">(select a Ptah AgentCard)</span></h2>
