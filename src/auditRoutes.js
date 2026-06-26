@@ -50,6 +50,8 @@ const {
   countAuditChannelSubscriptionChanges,
   countPolicyRules,
   countPolicyViolations,
+  // CP16 Pillar audit-rollup Phase 1c two-tier read
+  listAuditDailyByControlArea,
 } = require('./db');
 
 const costQuery = require('./costQuery');
@@ -384,17 +386,76 @@ router.get('/audit/by-control-area', (req, res) => {
     }
     const period = req.query.period ? String(req.query.period) : 'mtd';
     const r = costQuery.periodToRange(period);
-    const from = `${r.from}T00:00:00.000Z`;
-    const to = `${r.to}T23:59:59.999Z`;
 
-    const areas = CONTROL_AREA_MAP[framework].map(area => ({
-      id: area.id,
-      name: area.name,
-      audit_object_classes: area.audit_object_classes,
-      counts: {
-        total: countsForObjectClasses(area.audit_object_classes, { from, to, control_area: area.id }),
-      },
-    }));
+    // CP16 Pillar audit-rollup Phase 1c two-tier read: pre-aggregated rollup
+    // rows for COMPLETE days (date < today_utc) + live query for today's
+    // partial. Transparent to callers — same response shape. Driver:
+    // src/auditRollup.js writes the rollup tables via hourly cron (Phase 2).
+    //
+    // Backstop semantics: rollup tables are a cache, not truth. For any past
+    // date NOT covered by rollup (e.g. before Phase 2 cron started, or rollup
+    // gap), fall through to live query for that date. Worst-case behavior
+    // equals pre-Phase-1c live-only path (preserves correctness during the
+    // transition window).
+    //
+    // Per secops #10863 minor note: policy_rule is not date-scoped (current
+    // rule corpus state, not historical-at-day) — both live + rollup paths
+    // store today's rule count for every date. Sister-shape behavior
+    // preserved across both tiers.
+    const todayUtc = new Date().toISOString().slice(0, 10);
+    const fromYmd = r.from;
+    const toYmd = r.to;
+    const rollupToYmd = toYmd < todayUtc ? toYmd : _ymdMinusOne(todayUtc);
+
+    // Bulk rollup fetch for framework over past range
+    let rollupCoverage = new Map();  // Map<area, Set<date>>
+    let rollupSumByArea = new Map();
+    let rollupRows = [];
+    if (fromYmd <= rollupToYmd) {
+      rollupRows = listAuditDailyByControlArea({
+        control_framework: framework,
+        from_date: fromYmd,
+        to_date: rollupToYmd,
+      });
+      for (const row of rollupRows) {
+        if (!rollupCoverage.has(row.control_area)) rollupCoverage.set(row.control_area, new Set());
+        rollupCoverage.get(row.control_area).add(row.occurred_date);
+        rollupSumByArea.set(row.control_area, (rollupSumByArea.get(row.control_area) || 0) + row.count);
+      }
+    }
+
+    const pastDates = _datesBetween(fromYmd, rollupToYmd);
+    const includeLive = fromYmd <= todayUtc && todayUtc <= toYmd;
+    const liveFrom = `${todayUtc}T00:00:00.000Z`;
+    const liveTo = `${todayUtc}T23:59:59.999Z`;
+
+    // Track per-area how many past dates needed live-fallback (operator-debug)
+    let fallbackDateCount = 0;
+
+    const areas = CONTROL_AREA_MAP[framework].map(area => {
+      const covered = rollupCoverage.get(area.id) || new Set();
+      let rolled = rollupSumByArea.get(area.id) || 0;
+      // Fall through to live for past dates not covered by rollup
+      for (const d of pastDates) {
+        if (!covered.has(d)) {
+          rolled += countsForObjectClasses(area.audit_object_classes, {
+            from: `${d}T00:00:00.000Z`,
+            to: `${d}T23:59:59.999Z`,
+            control_area: area.id,
+          });
+          fallbackDateCount++;
+        }
+      }
+      const liveCount = includeLive
+        ? countsForObjectClasses(area.audit_object_classes, { from: liveFrom, to: liveTo, control_area: area.id })
+        : 0;
+      return {
+        id: area.id,
+        name: area.name,
+        audit_object_classes: area.audit_object_classes,
+        counts: { total: rolled + liveCount },
+      };
+    });
 
     return res.json({
       control_framework: framework,
@@ -402,12 +463,35 @@ router.get('/audit/by-control-area', (req, res) => {
       from: r.from,
       to: r.to,
       control_areas: areas,
+      // operator-debug hints (additive; non-breaking)
+      _rollup_to: rollupToYmd >= fromYmd ? rollupToYmd : null,
+      _live_day: includeLive ? todayUtc : null,
+      _rollup_rows_used: rollupRows.length,
+      _live_fallback_date_count: fallbackDateCount,
     });
   } catch (e) {
     if (/unknown period/.test(e.message)) return badRequest(res, e.message);
     return safeError(res, e);
   }
 });
+
+function _ymdMinusOne(ymd) {
+  const d = new Date(`${ymd}T00:00:00.000Z`);
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
+
+function _datesBetween(fromYmd, toYmd) {
+  if (fromYmd > toYmd) return [];
+  const out = [];
+  let d = new Date(`${fromYmd}T00:00:00.000Z`);
+  const end = new Date(`${toYmd}T00:00:00.000Z`);
+  while (d <= end) {
+    out.push(d.toISOString().slice(0, 10));
+    d = new Date(d.getTime() + 86400_000);
+  }
+  return out;
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // 9. GET /audit/anomaly-detail
