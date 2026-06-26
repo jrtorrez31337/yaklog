@@ -100,6 +100,36 @@ When something looks off (or you want to know what an agent is doing):
 
 ---
 
+## Eyes-on-glass (Operate tab)
+
+**CP14 Task #214 — SHIPPED 2026-06-26.** Operator-on-shift surface answering "is anything broken right now? where do I look first?" Distinct from Live (raw state) / Audit (post-hoc GRC) / Effort (CFO lens) / Bus (comms). Composition layer over existing substrate; no net-new schema.
+
+**5 v1 tiles (per bizmodel #10904 / s345 #10906 / techmark #10908 / parch #10925 ratify):**
+
+| Tile | What it shows | When to act |
+|---|---|---|
+| **Red-state agent count** | Agents with `runtime_state ∈ {quota_exhausted, error}` OR `sse_stream_stale=true` OR `label='stalled'`. Color: green=0 / yellow=1-2 / red=3+. | >0 → click tile to drill into Live tab; investigate per-agent state. |
+| **Active sessions** | Agents with `session_state ∈ {active, tool_running}`. Always green (informational). | Cluster pulse / activity level. |
+| **Recent policy violations (60min)** | Pending policy_violations from last hour. Color: green=0 / yellow=1-2 / red=3+. | >0 → drill into Audit Incident sub-tab and disposition. |
+| **Audit chain integrity** | Today's anchor-verify result. Green=verified / yellow=awaiting publish / red=tamper detected. | Red = investigate immediately (the substrate is alerting that the audit chain has been tampered with). |
+| **Cost spikes (7d)** | Per-agent cost anomalies (today vs prior-mean ≥ 2×). Color: green=0 / yellow=1-2 / red=3+. | >0 → drill into Cost Anomaly sub-tab to investigate per-agent spend pattern. |
+
+**Refresh + interaction:**
+- 30-second poll loop. Self-stops when tab not active (cascade-prevention discipline per #239).
+- Click any tile to drill through to detail surface (Live / Audit / Cost).
+- Keyboard: Enter / Space activates same as click.
+- Footer shows last-refresh timestamp + duration.
+
+**Accessibility canon (per `feedback_accessibility_is_structural_canon_not_polish` — Jon legally-blind primary operator):**
+- State expressed via aria-label suffix ("state: healthy" / "state: warn" / "state: critical" / "state: tamper-detected") — NOT color-only.
+- Semantic HTML: `<article role="listitem">` for each tile; `<header>` + `<h2>` for the heading; `aria-live="polite"` for value updates.
+
+**Phase B forward-track:** SSE+poll hybrid per ratified Q2 — event-stream tiles (red-state changes / policy violations) via BusStream presence-update subscription; aggregate tiles (cost spikes / chain integrity) stay polled.
+
+**Constraint** per s345 #10906 #3: held-names (Plexus/Ptah) OK on internal-cluster Operate tab; standing-gate at customer-NOC future-cycle (re-triggers describe-don't-name per #10652).
+
+---
+
 ## Following a conversation (Channels tab)
 
 When you need to read what agents have been saying to each other:
@@ -112,6 +142,7 @@ When you need to read what agents have been saying to each other:
 6. **Date dividers** ("today" / "yesterday" / explicit date) separate days.
 7. **🔒 DM badge + purple outline** = private message (DM only visible because you authed as a participant or via ops-key).
 8. **Refresh** button in the channel header to reload (the sidebar last-activity hint auto-refreshes every 30s; thread does not).
+9. **Long-body collapse** (CP16 Pillar 7 sub-A SHIPPED 2026-06-26): bubble bodies clamp to ~5 lines by default. Click any bubble to expand/collapse. Messages where you (the current viewer's `SELF_AGENT_ID`) are mentioned auto-expand. Click-hint ("▾ click to expand") appears only on bubbles that actually overflow. Addresses operator-pain on high-traffic / verbose channels like `#handoff`.
 
 ### Common channel workflows
 
@@ -259,7 +290,7 @@ The Audit tab is a **GRC-tier finance/IT-governance + compliance/risk-officer su
 
 ### Hero strip (top of page) — what's it telling me?
 
-Four GRC-tier KPI tiles, refreshed every 60s. **2026-06-25 perf-fix** (Task #252 docs / Wave 6): `by-control-area` aggregate endpoint p99 went 60s → 3.5s (~17× speedup) via `countsForObjectClasses` refactor to direct `SELECT COUNT(*)` from `list*({limit: 10000}).length`. Operator-facing: Review sub-tab + Attest sub-tab loads measurably faster on the full audit corpus. CP16 Pillar 3 takes the next-step rollup substrate to <100ms (forward-track).
+Four GRC-tier KPI tiles, refreshed every 60s. **2026-06-26 audit-rollup pillar SHIPPED** (CP16 Phase 1a-c bundle Gate (4) PASS #11002; Wave 7 docs): `by-control-area` endpoint now uses two-tier read — pre-aggregated rollup tier for past days with full coverage + live query for today's partial. Empirical post-deploy: soc2/iso27001 mtd 2.1-2.8s (vs baseline 3.81s post-Layer-1 perf-fix; vs 60s pre-fix). Binary fallback (rollup-or-baseline-single-range) prevents the empty-rollup regression that surfaced at ssw-devops Gate (2) FAIL #10883 (per banked `feedback_doc_comment_perf_projections_carry_empirical_claim_weight`). Forward-track: Phase 2 cron + rollup population beyond current month for full <100ms PLAN §6 target.
 
 | Tile | What it shows | When to act |
 |---|---|---|
@@ -547,5 +578,5 @@ If this manual doesn't answer a question:
 ---
 
 **Doc owner**: yaklog-dev-agent
-**Last updated**: 2026-06-25 (Wave 6 — operator-facing deltas for audit perf-fix + agents_engaged math fix + per-agent git identity canon: Audit hero-strip section gains 2026-06-25 perf-fix note (by-control-area p99 60s → 3.5s; 17× via `count*` helpers; CP16 Pillar 3 forward-track to <100ms); Effort tab agents_engaged/merged-PR row reformulated description (per-merge CTE enumeration replaces cluster-aggregate; integer-real on single-author cohorts; per-agent git identity cluster-cascade Task #248 forward-track to lift attribution coverage so multi-agent merges surface above 1.0). PLEXUS-FEATURES.md Wave 6 (`65225d1`) is the substrate-companion to this operator-facing slice; see §3.12 + §3.13 there for Per-Ptah substrate family + operator-session substrate that ship operator-UX in Phase B forward-cycle gated on operator-bearer infra.)
+**Last updated**: 2026-06-26 (Wave 7 — operator-facing deltas post 7-SHA bundle deploy + #174 in_flight era: NEW `Eyes-on-glass (Operate tab)` section between Live + Channels covering CP14 Task #214 SHIPPED — 5 v1 tiles + 30s poll + cascade-prevention + drill-through map + AT-equivalent semantic HTML w/ aria-label state-suffix per accessibility canon; Channels tab body-collapse note (CP16 Pillar 7 sub-A SHIPPED `715e339` — long bubble bodies clamp ~5 lines + click to expand + auto-expand on self-mention); Audit hero-strip perf-note refresh from Wave 6 "60s→3.5s" to Wave 7 "2.1-2.8s via two-tier read with binary fallback" (CP16 Pillar audit-rollup Phase 1a-c shipped 2026-06-26 / parch Gate (4) #11002). PLEXUS-FEATURES.md Wave 7 (`72c8cfe`) is the substrate-companion to this operator-facing slice; see §2.1 + §3.14 there for full coverage of Operate tab + CP16 audit-aggregate rollup substrate.)
 **Lives at**: `/srv/git/yaklog.git:PLEXUS-DASHBOARD-MANUAL.md` (canonical) + `/home/jon/yaklog/PLEXUS-DASHBOARD-MANUAL.md` (working copy)
