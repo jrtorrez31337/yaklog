@@ -110,12 +110,34 @@ function runtimeOf(agentId) {
   return REGISTRY.get(agentId) || DEFAULT_RUNTIME;
 }
 
+// Per-agent identity canon (#10831 ratify) — canonical commit email format
+// is `<agent-id>@internal.subnet345.com` for every agent on the cluster.
+// The `internal.subnet345.com` domain is a sentinel (no DNS; no mail);
+// the prefix IS the agent_id. Resolved here by prefix-extraction so
+// agentIdByEmail can match without per-agent EMAIL_TO_AGENT_ID entries.
+//
+// Cluster agent_id naming convention (matches /register validation):
+// lowercase letters / digits / hyphens / underscores; first char must be
+// a letter. Anchored regex enforces this.
+const CANONICAL_IDENTITY_EMAIL_RE = /^([a-z][a-z0-9_-]{0,63})@internal\.subnet345\.com$/;
+
 // Phase 0 Item C: reverse-index lookup. Returns null when email is not
 // a known runtime-canonical-author email (parser falls through to next
 // attribution_method in chain).
+//
+// Resolution order:
+//   1. EMAIL_TO_AGENT_ID exact lookup (host-specific variants;
+//      historical-alias preservation per #7894 rename)
+//   2. Canonical per-agent identity pattern (#10831 ratify):
+//      `<agent-id>@internal.subnet345.com` → prefix as agent_id
 function agentIdByEmail(email) {
   if (!email || typeof email !== 'string') return null;
-  return EMAIL_TO_AGENT_ID.get(email.toLowerCase()) || null;
+  const lower = email.toLowerCase();
+  const exact = EMAIL_TO_AGENT_ID.get(lower);
+  if (exact) return exact;
+  const m = lower.match(CANONICAL_IDENTITY_EMAIL_RE);
+  if (m) return m[1];
+  return null;
 }
 
 // Jon-direct empirical-expansion 2026-06-20 — name-pattern resolver for
