@@ -176,6 +176,28 @@ opsRouter.post('/ingest', async (req, res) => {
   }
 });
 
+// ── OPS: POST /reattribute (Q5 amendment ratify per parch #10879) ─────────
+// Re-parse output_commit rows where attribution_method='null_fallback' using
+// the post-1ab450f parser (#10872). Operator-corrected rows are NEVER touched.
+// One-shot use post-rebuild; idempotent + safe to re-run (only updates rows
+// where new parse yields non-null agent_attribution).
+
+opsRouter.post('/reattribute', (req, res) => {
+  const { reattributeNullFallback } = require('./outputReattribute');
+  const dryRun = req.body && req.body.dry_run === true;
+  const limit = (req.body && Number.isInteger(req.body.limit)) ? req.body.limit : 10000;
+  try {
+    const result = reattributeNullFallback({
+      db: dbModule.initializeDb(),
+      limit,
+      dryRun,
+    });
+    return res.json(result);
+  } catch (err) {
+    return res.status(500).json({ error: 'InternalError', message: err.message });
+  }
+});
+
 // ── OPS: output_repo allowlist management (CP13.6 Phase 2.2 / Q1 Option C) ─
 
 opsRouter.post('/repos', (req, res) => {
