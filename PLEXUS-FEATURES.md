@@ -45,8 +45,9 @@ The Plexus dashboard lives at `http://<devel-host>:3100/dashboard`. Operator-fac
 | Tab | What it shows |
 |---|---|
 | **Live** | Cluster cost-rate hero card + AgentCard grid (one card per agent in `/presence`). Bus ticker pane below the hero shows last 15 messages across all channels except `#agents` + `#_diag`. |
+| **Operate** | **CP14 / Task #214 SHIPPED 2026-06-26** (PLAN-OPERATE-EYES-ON-GLASS-VIEW.md trio-converged + parch #10925 ratify). Operator-on-shift "eyes-on-glass" surface; answers "is anything broken right now? where do I look first?" 5 v1 tiles: red-state agent count (presence-substrate filter) / active sessions (presence-substrate filter) / recent policy violations 60min (CP12 policy-DSL) / audit chain integrity (Phase 3 (A) anchor-verify) / cost spikes (CP16 Pillar 2 anomalies). 30s poll loop with cascade-prevention discipline (self-stops when tab not visible). Drill-through per-tile to existing Live/Audit/Cost detail surfaces. AT-equivalent semantic HTML with state-suffix in aria-label (no color-only state per `feedback_accessibility_is_structural_canon_not_polish` — Jon legally-blind primary operator). Phase B forward-track: SSE+poll hybrid per Q2 ratify. |
 | **Cost** | CFO-tier three-lens cost accounting (ADR-0029, CP11.x). Hero strip of 4 KPI tiles (burn-vs-budget, run-rate/projected EOM, top cost-centers, MTD). Six sub-tabs: **Pace** (cluster envelope + projection + per-cost-center MTD), **Composition** (group-by dimension picker — cost_center default), **Anomaly** (today vs prior-6d mean ≥ 2× scan), **Detail** (legacy per-agent $/hr table relocated here), **Reconcile** (ops-key gated invoice-vs-Plexus reconciliation), **Budgets** (ops-key gated per-cost-center envelope management + cluster-cap-vs-sum-of-CC divergence indicator). |
-| **Channels** | iMessage-style chat view per channel. Left sidebar lists every channel (sorted by last activity); right pane renders the selected channel's messages as agent-colored bubbles with sender/timestamp groupings. Deep-link via `#bus/<channel>`. |
+| **Channels** | iMessage-style chat view per channel. Left sidebar lists every channel (sorted by last activity); right pane renders the selected channel's messages as agent-colored bubbles with sender/timestamp groupings. Deep-link via `#bus/<channel>`. **2026-06-26 Pillar 7 sub-A bus body-collapse SHIPPED `715e339`**: long bubble bodies CSS line-clamp ≤5 lines by default; click bubble to expand (full body remains in DOM per accessibility canon — CSS-only crop). Auto-expand when message mentions `SELF_AGENT_ID`. Post-mount overflow detection tags `.has-overflow` so click-hint pseudo-element only appears where useful. Addresses Jon-direct "#handoff highly abused" observation. |
 | **Audit** | GRC-tier three-lens audit + governance (ADR-0030, CP12.x). Hero strip of 4 KPI tiles (open-violations, coverage-gaps, recent-high-risk, attestation-status). Six sub-tabs: **Incident** (default; pending violations + drill-through), **Review** (4-card aggregate grid + coverage-gap banner + control_area-default dim picker), **Attest** (SOC2/ISO27001/GDPR control-area browser + evidence-bundle export), **Policies** (ops-key gated rule mgmt with sandboxed DSL), **Reconcile** (ops-key gated external-system reconciliation), **Detail** (legacy DM-audit-log reader relocated unchanged). |
 | **Effort** | CFO/buyer-tier three-lens value-mapping (ADR-0032 CP13 Phase 1). Hero strip of 6 tiles (3 cross-tier-safe $/outcome + 3 practitioner-only activity-numerator). Three lenses (Pace / Composition / Anomaly) × three audiences (Buyer default / Practitioner / Investor). Audience-tier shifts what renders; lens shifts how. SERVER-SIDE Fold B HARD GATE strips activity-numerator ratios at buyer + investor. Deep-link via `#effort`. |
 | **Register** | ADR-0025 agent-registration state machine view. Lists all registrations with current state (NEW → SUBMITTED → PARCH_REVIEW → JON_RATIFY → APPROVED_PENDING_FERRY → FERRIED → PENDING_ACTIVATION → ACTIVE), justification/submission JSON, and stuck-state detection. |
@@ -214,7 +215,7 @@ Substrate-honest sub-text per tile shows the denominator (cohort size + sample N
 
 | Endpoint | Purpose |
 |---|---|
-| `POST /api/v1/presence/event` | Daemon heartbeat. Daemon-binding enforced (sender must match agent_id). Accepts presence fields: `daemon_state`, `session_state`, `cursor_position`, `lock_held`, `sse_connected`, `events_consumer_count`, plus v0.5.7 runtime-meta (current_model / current_tool / last_tool_status / etc), v0.5.7.3 runtime-env (uid/gid/hostname/cwd), v0.5.7.4 daemon-process (pid/version/started_at), v0.5.9 runtime-execution-liveness (`runtime_state`, `runtime_blocked_until`), **v0.5.54 runtime-class** (`runtime` — CC/Codex/Gemini enum; server-side computed via `runtimeOf(agent_id)` registry fallback when caller omits; CP12.x.3 substrate), **v0.5.56 SSE-stale tracking** (`last_cursor_advance_at` — ISO-8601 of last cursor_position increment; written when cursor advances; CP12.x.4 substrate). |
+| `POST /api/v1/presence/event` | Daemon heartbeat. Daemon-binding enforced (sender must match agent_id). Accepts presence fields: `daemon_state`, `session_state`, `cursor_position`, `lock_held`, `sse_connected`, `events_consumer_count`, plus v0.5.7 runtime-meta (current_model / current_tool / last_tool_status / etc), v0.5.7.3 runtime-env (uid/gid/hostname/cwd), v0.5.7.4 daemon-process (pid/version/started_at), v0.5.9 runtime-execution-liveness (`runtime_state`, `runtime_blocked_until`), **v0.5.54 runtime-class** (`runtime` — CC/Codex/Gemini enum; server-side computed via `runtimeOf(agent_id)` registry fallback when caller omits; CP12.x.3 substrate), **v0.5.56 SSE-stale tracking** (`last_cursor_advance_at` — ISO-8601 of last cursor_position increment; written when cursor advances; CP12.x.4 substrate). `session_state` enum: `'active' / 'idle' / 'unknown' / 'tool_running' / 'idle_between_tools' / 'compacting' / 'stop_failure'` plus **CP14.x Task #174 `'in_flight'`** (long-running CLI runtime; SHIPPED `yaklog@9c55a57` 2026-06-26; distinct from short-duration `tool_running`; PRESENCE_LABELS maps up.in_flight → `online_in_flight` sister-shape `online_tool_running` green-canon). |
 | `GET /api/v1/presence/public` | Returns presence rows enriched with: `update_available` (v0.5.7.4 manifest comparison), `canonical_daemon_version`, **`runtime`** (DB-stored or registry fallback per CP12.x.3), **`sse_stream_stale`** (server-side derived: hbAgeMs<90s AND cursorAgeMs>5min AND cursorLag>=3; CP12.x.4 detection; refined by CP12.x.4.1 silent-dead-on-arrival conjunct + CP12.x.4.2 filter-aware low_traffic_likely_healthy suppression + CP12.x.4.3 session-state-aware predicate excluding `SESSION_STATES_NOT_CONSUMING={idle,stop_failure,unknown}` with `sse_stream_stale_class='session_inactive_expected'` carve-out). **CP14.1 pre-emission union**: server-side appends synthetic placeholder rows for token-bound agents (per `tokenBindings`+`daemonBindings` group dedupe) absent from `presence`, marked `pre_emission: true` + `label='pre_emission'`. |
 | `GET /api/v1/presence` | Full swarm snapshot + per-agent labels (derived from daemon_state + session_state + events_consumer_count). ETag-supported. |
 | `GET /api/v1/plexus/public/cost/by-vendor` | CP11.x.2 — per-vendor cost summary: `{vendor, cost_usd, share_pct, tokens_*, row_count, agent_count}`. Defaults to mtd. Powers Cost-tab per-vendor totals strip. |
@@ -452,11 +453,13 @@ Two walkers conform to a common interface: `walkRepo(repo, ...) → results` + `
 
 Resolution-order:
 1. **Co-Authored-By trailer** (`parseCoAuthoredBy`) — walks trailers in reverse (last = most authoritative). Per-trailer: (a) `EMAIL_TO_AGENT_ID` reverse-index for specific agent_id, (b) `agentIdByName` for `<stem>-agent` shape, (c) fall through to runtime-class via domain or name-pattern. `attribution_method = 'co_authored_by'`.
-2. **Author email direct** (`author_email_direct`, Phase 0 Item C — bundled with CP13 merge) — git author email matched against `EMAIL_TO_AGENT_ID`; closes attribution gap for Codex + Gemini commits without Co-Authored-By trailers.
+2. **Author email direct** (`author_email_direct`, Phase 0 Item C — bundled with CP13 merge) — `agentIdByEmail()` resolution: (a) `EMAIL_TO_AGENT_ID` exact lookup (historical hostname variants preserved per #7894 rename canon); (b) **canonical-form-derived prefix-extraction** for `*@internal.subnet345.com` per `feedback_canonical_format_derivation_supersedes_per_entry_map_maintenance` (yaklog@1ab450f SHIPPED 2026-06-26 — anchored regex `^[a-z][a-z0-9_-]{0,63}@internal\.subnet345\.com$`; agent_id = prefix; no per-agent EMAIL_TO_AGENT_ID maintenance for the per-agent identity canon emails per #10831 ratify). Closes attribution gap for Codex + Gemini + all cluster agents emitting canonical identity.
 3. **Body pattern** (`body_pattern`) — `Authored-by: <agent>` style fallback (rare).
 4. **null fallback** — `agent_attribution=null` + `attribution_method='null_fallback'`. Counted in coverage-gap honesty surface.
 
 Post-`28adc8a` (2026-06-20): `EMAIL_TO_AGENT_ID` 4 entries redirected `aieng-agent` → `s345-aieng-agent` per Jon-direct #7894 rename (preserves attribution-by-current-identity for historical commits). Companion to ssw-devops #10001 stale-binding-removal cycle.
+
+Post-`1ab450f` (2026-06-26 per #10831 cluster-canon ratify + Q5 amendment): canonical-form-derived path eliminates per-agent map maintenance for the per-agent identity canon. Empirical first-live anchor at admin #11003 reattribute invocation (6/334 yaklog.git canon-canary rows updated → `author_email_direct`).
 
 #### 3.11.4 Ratios computation (`src/outputRatios.js`)
 
@@ -489,7 +492,7 @@ Network-isolation trust (no per-request auth in v1; mirrors `/cost/*` + `/audit/
 | `GET /output/coverage-gap?period=30d` | Honesty surface — counts of attribution methods + `null_fallback_pct`. |
 | `GET /output/repos` | CP13.6 Phase 2.2. Operator visibility: returns enrolled GitHub repos with `enabled` + `added_at` + `added_by` + `last_walked_at` for each `github_owner_repo`. |
 
-#### 3.11.6 Ops-key gated mutation endpoints (4 under `/api/v1/ops/output/`)
+#### 3.11.6 Ops-key gated mutation endpoints (5 under `/api/v1/ops/output/`)
 
 | Endpoint | Purpose |
 |---|---|
@@ -497,6 +500,7 @@ Network-isolation trust (no per-request auth in v1; mirrors `/cost/*` + `/audit/
 | `PUT /api/v1/ops/output/attribution` | Manual attribution correction. |
 | `POST /api/v1/ops/output/repos` | CP13.6 Phase 2.2. Upsert allowlist entry. Body: `{github_owner_repo, bare_git_path?, enabled?}`. Validates "owner/repo" form. `added_by` derived from `X-Ops-Key-Id` header or defaults to `ops-endpoint`. |
 | `DELETE /api/v1/ops/output/repos/:github_owner_repo(*)` | CP13.6 Phase 2.2. **Soft-disable** per parch ratify (sets `enabled=0`); hard-delete is forward-track. Path param uses `(*)` to accept the `owner/repo` slash. |
+| `POST /api/v1/ops/output/reattribute` | **Q5 amendment ratify per parch #10879** (yaklog@e65c25a SHIPPED 2026-06-26). Re-parse existing `output_commit` rows where `attribution_method='null_fallback'` using post-`1ab450f` parser. Canon-coherent walker re-derive shape; NOT git-history rewrite (Q4 anti-pattern). Body: `{dry_run: bool, limit: int}`. Response: `{scanned, updated, unresolved, missing_commit, dry_run, sample}`. Operator-corrected rows (`attribution_method='operator_override'`) NEVER scanned. Idempotent. First-live empirical anchor at admin #11003: 6/334 yaklog.git rows re-attributed to `author_email_direct`. |
 
 `src/db.js` exports 8 new helpers for the Phase 2 substrate: `upsertOutputPr`, `getOutputPrCursor`, `upsertOutputPrCursor`, `listEnabledOutputRepos`, `listAllOutputRepos`, `upsertOutputRepo`, `disableOutputRepo`, `bootstrapOutputReposFromConfig`.
 
@@ -574,6 +578,40 @@ Admin-lane provisions the first operator-session bearer; landing closes the gate
 - Per-Ptah ORP TraceRecord dashboard wire (§3.12.3 Phase B)
 - Dashboard-DM Phase B browser UI (§3.13.3)
 - Operator-class moderation flows via dashboard (sister-shape `_renderTrace` per-agent-bearer canon)
+
+### 3.14 CP16 audit-aggregate rollup substrate (PLAN-CP16-PILLAR-AUDIT-ROLLUP-SUBSTRATE.md)
+
+Sister-shape `cost_daily` rollup canon (§3.8.1). Pre-aggregated audit-event rows for `/audit/by-control-area` + per-object-class + per-agent rollup tiers. Phase 1a/1b/1c-fix bundle SHIPPED at `yaklog@41220e8` + `839e6cb` + `6aa60db` (Gate (4) PASS parch #11002). Forward-track Phase 2 cron substrate for population beyond current month + <100ms PLAN §6 target.
+
+#### 3.14.1 Substrate (3 tables, `src/db.js`)
+
+| Table | PK | Purpose |
+|---|---|---|
+| **`audit_daily_by_control_area`** | (occurred_date, control_framework, control_area) | Per-day per-framework per-area COUNT pre-aggregation. Frameworks: `soc2`/`iso27001`/`gdpr`. |
+| **`audit_daily_by_object_class`** | (occurred_date, object_class) | Per-day per-class COUNT (`audit_tool_invocation`/`audit_file_access`/`audit_credential_change`/`audit_permission_change`/`audit_attestation`/`audit_channel_subscription_change`/`policy_rule`/`policy_violation`). |
+| **`audit_daily_by_agent`** | (occurred_date, agent_id, object_class) | Per-day per-agent per-class COUNT (faceted; covers `AGENT_AWARE_CLASSES` only). |
+
+6 helpers exposed: `upsertAuditDailyByControlArea` / `upsertAuditDailyByObjectClass` / `upsertAuditDailyByAgent` / `listAuditDailyByControlArea` / `listAuditDailyByObjectClass` / `listAuditDailyByAgent`. Idempotent UPSERT; PK conflict updates `count` + `rolled_up_at`.
+
+#### 3.14.2 Driver (`src/auditRollup.js`)
+
+Sister-shape `src/costRollup.js` but direct-SQLite-source (no Prom dependency since audit_* tables hold canonical rows). API: `rollupAuditDay(ymd)` writes all 3 rollup tables for one calendar day; `rollupAuditWindow({daysBack, endDateExclusive})` walks last-N COMPLETE days (today excluded so live-query path remains authoritative); `rollupAuditBackfill` alias for deploy-time clarity. `CONTROL_AREA_MAP` + `AUDIT_OBJECT_CLASSES` + `AGENT_AWARE_CLASSES` duplicated from `auditRoutes.js` (sister-shape canon-class extension per `feedback_canon_class_extension_can_warrant_separate_per_instance_file_when_6th_axis_lifecycle_diverges` to break circular import; parity asserted in test).
+
+#### 3.14.3 Endpoint two-tier read with binary fallback (`src/auditRoutes.js`)
+
+`GET /audit/by-control-area?control_framework=soc2&period=mtd` decision tree:
+- **Rollup tier FULL coverage** (all past_dates × all areas) → rollup for past + live for today (perf-win)
+- **Anything else** (empty / partial coverage) → SINGLE-RANGE live query per area for entire period (sister-shape baseline pre-Phase-1c; NO fan-out)
+
+**Binary fallback** per `feedback_doc_comment_perf_projections_carry_empirical_claim_weight` (banked from ssw-devops Gate (2) FAIL #10883 + own-correction #10886): the prior per-uncovered-date fall-through fanned queries 25× (14 areas × 25 dates × ~10 counts ≈ 3500 queries vs baseline 140) and regressed 60s pre-Layer-1-fix → 3.5s post → 62s post-Phase-1c-empty-rollup. Binary semantics: worst-case empty-rollup EQUALS baseline by construction. Regression-guard sentinel test (`test/auditRollupEndpoint.test.js` asserts `_rollup_tier_used: false` on empty + mtd) catches future fan-out regressions.
+
+Additive operator-debug response fields: `_rollup_tier_used` (bool) + `_rollup_rows_available` / `_rollup_rows_expected` (coverage gap visibility) + `_live_day` (today UTC if in range).
+
+Empirical post-deploy (2026-06-26): soc2 mtd 2.1-2.8s; iso27001 mtd 2.1-2.6s (vs baseline 3.81s after Layer-1 perf-fix; vs 60s pre-fix). Modest improvement; full <100ms PLAN §6 target needs Phase 2 cron + rollup population beyond current month.
+
+#### 3.14.4 Forward-track Phase 2
+
+Per PLAN §13 deploy-time backfill revision: ssw-devops install canon (sister-shape #10857 5-element substrate: `/usr/local/bin/yaklog-audit-rollup.sh` + systemd `plexus-audit-rollup.{service,timer}` + envfile + per-service ops-key + dedicated uid `plexus-audit-rollup`) + ops endpoint `POST /api/v1/ops/audit-rollup/backfill` (sister-shape `/wal-checkpoint`) for one-shot operator-trigger. Hourly cron at <2s incremental once rollup populated; 90-day backfill operationally ~15min single-writer-blocking (per ssw-devops #10883 empirical, not the original §6 <30s claim).
 
 ---
 
@@ -789,7 +827,7 @@ The `install-plexus.sh` canonical installer enables `YAKLOG_AUTO_UPDATE=1` by de
 
 | Task | Status |
 |---|---|
-| #48 — Plexus rename-migration plan | ADR-0028 v1.1 RATIFIED 2026-06-04 (parch #7651); user-facing dashboard surfaces rebranded at CP10.5.3 (v0.5.22); Phase 1 server-alias-layer + Phase 2-6 standing on Jon-repacing post-CP12 closure (parch #7775) |
+| #48 — Plexus rename-migration plan | ADR-0028 v1.1 RATIFIED 2026-06-04 (parch #7651); user-facing dashboard surfaces rebranded at CP10.5.3 (v0.5.22); Phase 1 server-alias-layer + Phase 2-6 standing on Jon-repacing post-CP12 closure (parch #7775). **2026-06-26 TM substrate-truth update** per sleuth #10959 depth-sweep: "Plexus" TM CONTESTED (LIVE AMD-held PLEXUS in Nice class 042 AI-PaaS exact filing overlap + hypermemetic `plexus-substrate` OSS shipping AuditRecord/Principal/"substrate" vocabulary). Both held names (Plexus + Ptah) now in-category collisions per s345 #10960 build-direction shift to describe-don't-name. Rename-decision waits on TM counsel disposition + Jon-direct. |
 | #60 — Plexus data-management (retention/redaction/access) | DEFERRED |
 | #65 — Track cluster Plexus upgrade adoption | ongoing |
 | #117 — CP12 #audit AI/GRC umbrella | Phase 1+2 SHIPPED end-to-end (v0.5.28 → v0.5.48); Phase 3 (A) external integrity anchor SHIPPED v0.5.49-v0.5.51 (MinIO-hosted per CP12.21.1); CP12.x defensive substrate SHIPPED v0.5.56 (sse_stream_stale detection); CP12.x.4 Layer-1 reconnect-path fix SHIPPED in v0.5.64 Step 3 ship bundle (Fix A keepalive-immediate + Fix B socket.setNoDelay + Step 1.2 backfill-compute + CP12.7 Phase C .env file-watcher + stale-idle yellow-border collision fix). 48h fast-look empirical-anchor cycle in-process; window closes ~2026-06-19T19:07Z. CP12.x.4.3 session-state-aware stale predicate input-drafted (#200) per parch #9447 disposition. Phase 3 (B/C/D) external-SIEM / GRC-live / multi-tenant trigger-gated per ADR-0030 v1.3. |
@@ -821,9 +859,14 @@ The `install-plexus.sh` canonical installer enables `YAKLOG_AUTO_UPDATE=1` by de
 | Task #248 — Per-agent git identity cluster-canon | RATIFIED parch #10831 + Q1-Q4 (a/canary/self-update/no-retro). Cluster-cascade in flight: yaklog-dev canary done (own git config global set; CLAUDE.md §1 scaffold authored at `agent-globals.git@d16cfbb`); other agent seats cascade pending. Forward-track: outputAttributionParser priority refactor (Task #249) gated on cascade adoption. |
 | Tasks #250 / #251 — plexus-ui-agent + audio-eng-agent /register orchestration | New agents ACTIVE; CLAUDE.md placement standing on admin §2 + §3 fold-and-place onto agent seats (§1 Plexus-onboarding scaffold authored 2026-06-25 at `agent-globals.git@d16cfbb`). |
 | 2026-06-25 audit perf-fix (CP16 Pillar 3 prep) | SHIPPED — `countsForObjectClasses` refactored to use 8 new `count*` helpers (SELECT COUNT(*)); by-control-area p99 60s → 3.5s (~17× speedup). CP16 Pillar 3 rollup substrate takes next-step to <100ms (forward-track per Jon-direct "move all this work to the backend"). |
+| Task #253 — CP16 audit-aggregate rollup substrate (Pillar 1a/1b/1c) | CYCLE-CLOSED parch Gate (4) #11002. 3 rollup tables + driver + binary-fallback two-tier endpoint read SHIPPED in 7-SHA bundle. Empirical post-deploy: soc2/iso27001 mtd 2.1-2.8s (vs baseline 3.81s). Forward-track Phase 2 cron + rollup population beyond current month for <100ms PLAN §6 target. Banked canon: `feedback_doc_comment_perf_projections_carry_empirical_claim_weight` (from Gate (2) FAIL #10883 + own-correction #10886). |
+| Task #248 — Per-agent identity Q5 cascade (parser + reattribute) | CYCLE-CLOSED 7-SHA bundle Gate (4) + first-live reattribute admin #11003. `agentIdByEmail()` canonical-form-derived prefix-extraction for `*@internal.subnet345.com` (no per-agent map maintenance). 6/334 yaklog.git canon-canary rows updated → `author_email_direct`. 328 historicals stay null_fallback per Q4 ratify. Banked: `feedback_canonical_format_derivation_supersedes_per_entry_map_maintenance`. |
+| Task #214 — Operate / eyes-on-glass tab | SHIPPED 2026-06-26 `yaklog@a8c6c1f`; trio-converged parch ratify #10925; 5 v1 tiles + 30s poll w/ cascade-prevention + drill-through + AT-equivalent semantic HTML. Phase B forward-track: SSE+poll hybrid per Q2 ratify. |
+| Pillar 7 sub-A bus body-collapse | SHIPPED 2026-06-26 `yaklog@715e339`; browser-tier CSS line-clamp + click-toggle + auto-expand on self-mention; addresses Jon-direct "#handoff highly abused" observation. Sub-B (bus-tab pagination via `before_id` cursor) deferred to separate sub-cycle. |
+| Task #174 — session_state=in_flight enum | SHIPPED 2026-06-26 `yaklog@9c55a57` (ssw-devops Gate (2) PASS #10999). Bounded additive: SESSION_STATES set + PRESENCE_LABELS.up.in_flight → `online_in_flight` (sister-shape `online_tool_running` green-canon) + CSS. No schema migration (CHECK already dropped per v0.5.6). Forward-track door-opener — existing emitters don't produce yet; per-runtime cycle for Codex/Gemini long-session-detection. |
 
 ---
 
 **Doc owner**: yaklog-dev-agent
-**Last updated**: 2026-06-25 (Wave 6 — Ptah substrate family consolidation + operator-session substrate + audit perf-fix + per-agent git identity canon + agents_engaged math fix era: NEW §3.12 Per-Ptah substrate family consolidates CP14-X Plexus Secure Store (§3.12.1) + ADR-0037 per-Ptah audit (§3.12.2) + Task #246 per-Ptah ORP TraceRecord (§3.12.3) under canon-class extension banked discipline; NEW §3.13 Operator-session substrate consolidates PLAN-OPERATOR-SESSION-SUBSTRATE v2 Phase A impl (Task #232) + ADR-0026 v2 messages-tombstone (Task #231) + dashboard-DM Phase A (Task #237) + Phase B in-flight gating note (Task #234); §3.9.4 by-control-area perf-fix note (60s→3.5s); §3.11.4 ratios math-fix note (per-PR CTE enumeration); §6.4 brevity canon + per-agent git identity canon (#10668 + #10831 ratify); §10 6 new task references)
+**Last updated**: 2026-06-26 (Wave 7 — 7-SHA bundle deploy + #174 in_flight era: NEW §3.14 CP16 audit-aggregate rollup substrate (Phase 1a/1b/1c-fix binary-fallback shipped end-to-end; sister-shape cost_daily); NEW §2.7 Operate tab (eyes-on-glass operator-on-shift surface; 5 v1 tiles + 30s poll + drill-through + AT-equivalent semantic HTML); §2.1 Channels tab Pillar 7 sub-A body-collapse note; §3.2 Presence session_state=in_flight enum note (CP14.x Task #174 SHIPPED); §3.11.3 attribution parser canonical-form-derived prefix-extraction (per-agent identity canon #10831 — no per-agent map maintenance for `*@internal.subnet345.com`); §3.11.6 Q5 reattribute endpoint added; §10 Tasks #214/#248/#253/#174 cycle-close + bus body-collapse + Plexus TM substrate-truth update (sleuth #10959 sweep AMD-PLEXUS class 042 + hypermemetic OSS collisions))
 **Lives at**: `/srv/git/yaklog.git:PLEXUS-FEATURES.md` (canonical) + `/home/jon/yaklog/PLEXUS-FEATURES.md` (working copy)
