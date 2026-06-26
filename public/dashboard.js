@@ -4978,14 +4978,35 @@
       // CP10.5.4 (2026-06-03): bubble bg now driven by .from-self / .from-other
       // CSS classes (iMessage-style: blue/slate). Agent identity color stays
       // on the .chan-cluster-dot in the meta row (the bullet next to name).
+      //
+      // CP16 Pillar 7 sub-pillar A (body-collapse): long bodies clamp to ~5 lines
+      // by default; click bubble to expand. Auto-expand when mentioned. Per
+      // `feedback_accessibility_is_structural_canon_not_polish`: full body stays
+      // in DOM (CSS line-clamp only; no content truncation).
+      const mentionsSelf = (m.mentions || []).some((x) => x === SELF_AGENT_ID);
       const bubble = el('div', {
-        class: 'chan-bubble ' + (isSelf ? 'from-self' : 'from-other') + (m.private ? ' private' : ''),
+        class: 'chan-bubble ' + (isSelf ? 'from-self' : 'from-other')
+          + (m.private ? ' private' : '')
+          + (mentionsSelf ? ' expanded' : ''),
         title: `#${m.id} · ${m.created_at || ''} · ${ac.name}`,
       });
       bubble.appendChild(el('span', { class: 'bubble-id' }, '#' + m.id));
-      bubble.appendChild(renderBodyWithMentions(m.body || '', m.mentions || []));
+      const bodyWrap = el('span', { class: 'bubble-body' });
+      bodyWrap.appendChild(renderBodyWithMentions(m.body || '', m.mentions || []));
+      bubble.appendChild(bodyWrap);
+      bubble.addEventListener('click', () => bubble.classList.toggle('expanded'));
       cluster.appendChild(bubble);
     }
+    // Post-mount: detect overflow per bubble (scrollHeight > clientHeight on
+    // .bubble-body) and tag with .has-overflow so the expand hint pseudo-element
+    // only appears on bubbles that actually overflow.
+    requestAnimationFrame(() => {
+      cluster.querySelectorAll('.chan-bubble').forEach((b) => {
+        const body = b.querySelector('.bubble-body');
+        if (!body) return;
+        if (body.scrollHeight > body.clientHeight + 1) b.classList.add('has-overflow');
+      });
+    });
     return cluster;
   }
 

@@ -872,8 +872,17 @@
      bubble body itself is content-focused, not identity-focused. Per
      Jon-direct 'just the agent bullet color matters next to the name; the
      message bubble itself should mimic major messaging platform design.' */
-  .chan-bubble { max-width: 70%; padding: 8px 12px; border-radius: 16px; font-size: 13px; line-height: 1.45; word-wrap: break-word; white-space: pre-wrap; position: relative; }
+  .chan-bubble { max-width: 70%; padding: 8px 12px; border-radius: 16px; font-size: 13px; line-height: 1.45; word-wrap: break-word; white-space: pre-wrap; position: relative; cursor: pointer; }
   .chan-bubble .bubble-id { font-size: 9px; opacity: 0.55; margin-right: 6px; font-variant-numeric: tabular-nums; }
+  /* CP16 Pillar 7 sub-pillar A (body-collapse / "postination") — long bubble
+     bodies collapsed to ~5 lines by default; click to expand. Auto-expanded
+     when message mentions SELF_AGENT_ID. Per `feedback_accessibility_is_structural_canon_not_polish`:
+     full body remains in DOM for AT/screen-reader. Hint only added by JS when
+     body actually overflows (avoids clutter on short bubbles). */
+  .chan-bubble .bubble-body { display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden; }
+  .chan-bubble.expanded .bubble-body { display: block; -webkit-line-clamp: unset; overflow: visible; }
+  .chan-bubble.has-overflow:not(.expanded)::after { content: "▾ click to expand"; display: block; font-size: 9px; opacity: 0.55; margin-top: 4px; font-style: italic; }
+  .chan-bubble.has-overflow.expanded::after { content: "▴ click to collapse"; display: block; font-size: 9px; opacity: 0.5; margin-top: 4px; font-style: italic; }
   /* Self bubbles: iMessage-blue gradient, right-aligned tail */
   .chan-bubble.from-self { background: linear-gradient(180deg, #2563eb 0%, #1d4ed8 100%); color: #fff; border-bottom-right-radius: 4px; }
   /* Other bubbles: slate on dark theme, left-aligned tail */
