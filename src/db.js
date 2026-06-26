@@ -829,6 +829,55 @@ function initializeDb() {
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_audit_attest_area_time ON audit_attestation(control_area, occurred_at DESC)`).run();
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_audit_attest_time ON audit_attestation(occurred_at)`).run();
 
+  // CP16 Pillar audit-rollup substrate (2026-06-26) per PLAN-CP16-PILLAR-
+  // AUDIT-ROLLUP-SUBSTRATE.md. Sister-shape cost_daily canon: pre-aggregate
+  // daily rows feed the by-control-area + by-object-class + by-agent endpoint
+  // family at <100ms p99 cold-cache. Source tables (audit_*) remain
+  // authoritative; rollup is pure pre-computation. Driver: src/auditRollup.js
+  // hourly cron rolls up COMPLETE days only (date < today_utc); current-day
+  // partial stays in live-query path per §5 two-tier read pattern.
+  //
+  // No PII (aggregate COUNT rows only — no agent identifiers in by-control-
+  // area / by-object-class; agent_id at by-agent tier is internal identifier
+  // not user PII per secops #10856 disposition). Idempotent UPSERT.
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS audit_daily_by_control_area (
+      occurred_date     TEXT NOT NULL,            -- 'YYYY-MM-DD' UTC
+      control_framework TEXT NOT NULL,            -- 'soc2' | 'iso27001' | 'gdpr'
+      control_area      TEXT NOT NULL,            -- 'CC1'..'CC9' / 'A.5'.. / 'Art.6'..
+      count             INTEGER NOT NULL,
+      rolled_up_at      TEXT NOT NULL,            -- ISO-8601
+      PRIMARY KEY (occurred_date, control_framework, control_area)
+    )
+  `).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_audit_daily_by_control_area_framework_date
+    ON audit_daily_by_control_area (control_framework, occurred_date DESC)`).run();
+
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS audit_daily_by_object_class (
+      occurred_date  TEXT NOT NULL,
+      object_class   TEXT NOT NULL,               -- 'tool_invocation' | 'file_access' | 'credential_change' | 'permission_change' | 'attestation' | 'channel_subscription_change' | 'reconciliation' | 'anchor'
+      count          INTEGER NOT NULL,
+      rolled_up_at   TEXT NOT NULL,
+      PRIMARY KEY (occurred_date, object_class)
+    )
+  `).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_audit_daily_by_object_class_date
+    ON audit_daily_by_object_class (occurred_date DESC)`).run();
+
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS audit_daily_by_agent (
+      occurred_date  TEXT NOT NULL,
+      agent_id       TEXT NOT NULL,
+      object_class   TEXT NOT NULL,               -- per-class breakdown so rollup is faceted
+      count          INTEGER NOT NULL,
+      rolled_up_at   TEXT NOT NULL,
+      PRIMARY KEY (occurred_date, agent_id, object_class)
+    )
+  `).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_audit_daily_by_agent_date
+    ON audit_daily_by_agent (agent_id, occurred_date DESC)`).run();
+
   // ────────────────────────────────────────────────────────────────────────
   // CP13.1 / ADR-0032 Phase 1.1 — Output-strand substrate (2026-06-17)
   //
@@ -3716,6 +3765,93 @@ function countPolicyViolations({ from, to, rule_id, disposition } = {}) {
   return database.prepare(`SELECT COUNT(*) AS c FROM policy_violation ${whereClause}`).get(params).c;
 }
 
+// CP16 audit-rollup helpers — sister-shape upsertCostDaily. Idempotent UPSERT
+// keyed on PRIMARY KEY tuple; safe to re-rollup same day. `rolled_up_at`
+// captures the most-recent rollup pass timestamp.
+
+function upsertAuditDailyByControlArea({ occurred_date, control_framework, control_area, count, rolled_up_at }) {
+  if (!occurred_date || !control_framework || !control_area) {
+    throw new Error('upsertAuditDailyByControlArea: occurred_date + control_framework + control_area required');
+  }
+  if (typeof count !== 'number' || count < 0) {
+    throw new Error('upsertAuditDailyByControlArea: count must be non-negative number');
+  }
+  const now = rolled_up_at || new Date().toISOString();
+  getDb().prepare(`
+    INSERT INTO audit_daily_by_control_area (occurred_date, control_framework, control_area, count, rolled_up_at)
+    VALUES (@occurred_date, @control_framework, @control_area, @count, @rolled_up_at)
+    ON CONFLICT(occurred_date, control_framework, control_area) DO UPDATE SET
+      count = excluded.count,
+      rolled_up_at = excluded.rolled_up_at
+  `).run({ occurred_date, control_framework, control_area, count, rolled_up_at: now });
+}
+
+function upsertAuditDailyByObjectClass({ occurred_date, object_class, count, rolled_up_at }) {
+  if (!occurred_date || !object_class) {
+    throw new Error('upsertAuditDailyByObjectClass: occurred_date + object_class required');
+  }
+  if (typeof count !== 'number' || count < 0) {
+    throw new Error('upsertAuditDailyByObjectClass: count must be non-negative number');
+  }
+  const now = rolled_up_at || new Date().toISOString();
+  getDb().prepare(`
+    INSERT INTO audit_daily_by_object_class (occurred_date, object_class, count, rolled_up_at)
+    VALUES (@occurred_date, @object_class, @count, @rolled_up_at)
+    ON CONFLICT(occurred_date, object_class) DO UPDATE SET
+      count = excluded.count,
+      rolled_up_at = excluded.rolled_up_at
+  `).run({ occurred_date, object_class, count, rolled_up_at: now });
+}
+
+function upsertAuditDailyByAgent({ occurred_date, agent_id, object_class, count, rolled_up_at }) {
+  if (!occurred_date || !agent_id || !object_class) {
+    throw new Error('upsertAuditDailyByAgent: occurred_date + agent_id + object_class required');
+  }
+  if (typeof count !== 'number' || count < 0) {
+    throw new Error('upsertAuditDailyByAgent: count must be non-negative number');
+  }
+  const now = rolled_up_at || new Date().toISOString();
+  getDb().prepare(`
+    INSERT INTO audit_daily_by_agent (occurred_date, agent_id, object_class, count, rolled_up_at)
+    VALUES (@occurred_date, @agent_id, @object_class, @count, @rolled_up_at)
+    ON CONFLICT(occurred_date, agent_id, object_class) DO UPDATE SET
+      count = excluded.count,
+      rolled_up_at = excluded.rolled_up_at
+  `).run({ occurred_date, agent_id, object_class, count, rolled_up_at: now });
+}
+
+function listAuditDailyByControlArea({ control_framework, from_date, to_date, control_area } = {}) {
+  const where = [];
+  const params = {};
+  if (control_framework) { where.push('control_framework = @control_framework'); params.control_framework = control_framework; }
+  if (control_area)      { where.push('control_area = @control_area'); params.control_area = control_area; }
+  if (from_date) { where.push('occurred_date >= @from_date'); params.from_date = from_date; }
+  if (to_date)   { where.push('occurred_date <= @to_date'); params.to_date = to_date; }
+  const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  return getDb().prepare(`SELECT * FROM audit_daily_by_control_area ${whereClause} ORDER BY occurred_date DESC, control_framework, control_area`).all(params);
+}
+
+function listAuditDailyByObjectClass({ object_class, from_date, to_date } = {}) {
+  const where = [];
+  const params = {};
+  if (object_class) { where.push('object_class = @object_class'); params.object_class = object_class; }
+  if (from_date)    { where.push('occurred_date >= @from_date'); params.from_date = from_date; }
+  if (to_date)      { where.push('occurred_date <= @to_date'); params.to_date = to_date; }
+  const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  return getDb().prepare(`SELECT * FROM audit_daily_by_object_class ${whereClause} ORDER BY occurred_date DESC, object_class`).all(params);
+}
+
+function listAuditDailyByAgent({ agent_id, object_class, from_date, to_date } = {}) {
+  const where = [];
+  const params = {};
+  if (agent_id)     { where.push('agent_id = @agent_id'); params.agent_id = agent_id; }
+  if (object_class) { where.push('object_class = @object_class'); params.object_class = object_class; }
+  if (from_date)    { where.push('occurred_date >= @from_date'); params.from_date = from_date; }
+  if (to_date)      { where.push('occurred_date <= @to_date'); params.to_date = to_date; }
+  const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  return getDb().prepare(`SELECT * FROM audit_daily_by_agent ${whereClause} ORDER BY occurred_date DESC, agent_id, object_class`).all(params);
+}
+
 function diffChannelSubscriptions(prior, current) {
   // Identity: agent_id. Diff: per-agent set-difference of channel names.
   // Returns: { subscribes: [{agent_id, channel_name, source_path}], unsubscribes: [...] }
@@ -3923,6 +4059,12 @@ module.exports = {
   countAuditChannelSubscriptionChanges,
   countPolicyRules,
   countPolicyViolations,
+  upsertAuditDailyByControlArea,
+  upsertAuditDailyByObjectClass,
+  upsertAuditDailyByAgent,
+  listAuditDailyByControlArea,
+  listAuditDailyByObjectClass,
+  listAuditDailyByAgent,
   // CP12.16 (2026-06-07): GRC reconcile-class extension (Phase 2)
   RECONCILE_CLASS_VOCAB,
   aggregateAuditReconciliationsByClass,
