@@ -5266,17 +5266,80 @@
       }
     }
 
-    async function loadThread(channel) {
-      clearChildren(bodyEl);
-      bodyEl.appendChild(el('div', { class: 'chan-empty' }, `loading #${channel}…`));
+    // CP16 Pillar 7 sub-B (bus-tab pagination per PLAN-CP16 §10.5.2 + trio-ratified Q3):
+    // Initial load fetches newest N; "Load older" button at thread top fetches
+    // next page via before_id cursor. Sister-shape sub-A body-collapse (#10925
+    // ratified scope; both browser-tier rendering optimizations). Per-channel
+    // pagination state lives in a Map so revisiting a channel preserves what's
+    // already loaded.
+    const threadPaginationState = new Map();  // channel → {oldestId, allLoaded}
+
+    async function loadThread(channel, opts = {}) {
+      const isPaginate = opts.paginate === true;
+      const state = threadPaginationState.get(channel) || { oldestId: null, allLoaded: false };
+      let url = `/api/v1/plexus/public/messages?channel=${encodeURIComponent(channel)}&limit=${THREAD_PAGE_LIMIT}`;
+      if (isPaginate && state.oldestId !== null) {
+        url += `&before_id=${state.oldestId}`;
+      }
+      if (!isPaginate) {
+        clearChildren(bodyEl);
+        bodyEl.appendChild(el('div', { class: 'chan-empty' }, `loading #${channel}…`));
+        threadPaginationState.set(channel, { oldestId: null, allLoaded: false });
+      }
       try {
-        const r = await fetch(`/api/v1/plexus/public/messages?channel=${encodeURIComponent(channel)}&limit=${THREAD_PAGE_LIMIT}`);
+        const r = await fetch(url);
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         const j = await r.json();
-        renderThread(bodyEl, j.messages || []);
+        const newMsgs = j.messages || [];
+        if (isPaginate) {
+          // Prepend older messages to existing loaded set; preserve scroll position
+          const scrollHeightBefore = bodyEl.scrollHeight;
+          const scrollTopBefore = bodyEl.scrollTop;
+          // Drop the existing load-older button before re-render
+          const oldBtn = bodyEl.querySelector('.chan-load-older');
+          if (oldBtn) oldBtn.remove();
+          // Merge: collect existing rendered messages (data-msg-id attrs) + prepend new
+          const existingIds = new Set(Array.from(bodyEl.querySelectorAll('[data-msg-id]')).map((n) => Number(n.dataset.msgId)));
+          const merged = [...newMsgs.filter((m) => !existingIds.has(m.id))];
+          // Re-fetch current rendered messages would require re-store; simpler: just
+          // re-render full set by combining new + cached references via re-fetch.
+          // For Phase B simplification: re-renderThread with the merged historical
+          // pull would lose context; for this iteration we just prepend the new page
+          // ABOVE the existing DOM (cluster boundaries may briefly mis-align until
+          // next selectChannel refresh; acceptable v1 trade-off).
+          const newFragment = document.createDocumentFragment();
+          // Build a temp container for renderThread to populate, then prepend its children
+          const tempContainer = document.createElement('div');
+          renderThread(tempContainer, merged);
+          while (tempContainer.firstChild) newFragment.appendChild(tempContainer.firstChild);
+          bodyEl.insertBefore(newFragment, bodyEl.firstChild);
+          // Restore scroll position so user stays in place
+          requestAnimationFrame(() => {
+            bodyEl.scrollTop = scrollTopBefore + (bodyEl.scrollHeight - scrollHeightBefore);
+          });
+        } else {
+          renderThread(bodyEl, newMsgs);
+        }
+        // Update pagination state from newest fetch's oldest id
+        const oldestInPage = newMsgs.length > 0 ? Math.min(...newMsgs.map((m) => m.id)) : null;
+        const allLoaded = newMsgs.length < THREAD_PAGE_LIMIT;
+        threadPaginationState.set(channel, {
+          oldestId: oldestInPage !== null ? Math.min(oldestInPage, state.oldestId || Infinity) : state.oldestId,
+          allLoaded,
+        });
+        // Add "Load older" button at top if more available
+        if (!allLoaded && threadPaginationState.get(channel).oldestId !== null) {
+          const existing = bodyEl.querySelector('.chan-load-older');
+          if (existing) existing.remove();
+          const btn = el('button', { class: 'chan-load-older', type: 'button', 'aria-label': 'Load older messages' }, '↑ Load older');
+          btn.addEventListener('click', () => loadThread(channel, { paginate: true }));
+          bodyEl.insertBefore(btn, bodyEl.firstChild);
+        }
       } catch (err) {
-        clearChildren(bodyEl);
-        bodyEl.appendChild(el('div', { class: 'chan-empty' }, `failed to load #${channel}: ${err.message}`));
+        if (!isPaginate) {
+          clearChildren(bodyEl);
+          bodyEl.appendChild(el('div', { class: 'chan-empty' }, `failed to load #${channel}: ${err.message}`));
+        }
       }
     }
 

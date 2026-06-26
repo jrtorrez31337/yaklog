@@ -901,6 +901,12 @@
   /* CP9.1: agent-color swatch on AgentCard head — matches channel bubble + chart line color */
   .agent-color-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; vertical-align: middle; margin-right: 6px; box-shadow: 0 0 0 1px rgba(0,0,0,0.4), 0 0 0 2px rgba(255,255,255,0.06); flex-shrink: 0; }
 
+  /* CP16 Pillar 7 sub-pillar B (bus-tab pagination per PLAN-CP16 §10.5.2):
+     "Load older" button at thread top fetches next page via before_id cursor.
+     Sister-shape sub-A; both browser-tier rendering optimizations. */
+  .chan-load-older { display: block; width: 100%; padding: 10px; background: rgba(255,255,255,0.04); color: var(--muted); border: 1px solid var(--border); border-radius: 6px; font-size: 12px; cursor: pointer; margin: 4px 0 12px 0; font-family: inherit; text-align: center; }
+  .chan-load-older:hover, .chan-load-older:focus { background: rgba(255,255,255,0.08); color: var(--text); outline: 2px solid #2563eb; outline-offset: 0; }
+
   /* CP14 Operate / eyes-on-glass tab — 5-tile v1 operator surface per
      trio-converged scope (bizmodel #10904 / s345 #10906 / techmark #10908 /
      parch #10925 ratify). AT-equivalent semantic HTML + keyboard-operable
