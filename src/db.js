@@ -538,6 +538,13 @@ function initializeDb() {
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_audit_ti_agent_time ON audit_tool_invocation(agent_id, occurred_at)`).run();
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_audit_ti_tool_time ON audit_tool_invocation(tool_name, occurred_at)`).run();
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_audit_ti_event_id ON audit_tool_invocation(event_id)`).run();
+  // CP16 Phase 2 today-live perf (sister-shape idx_audit_cc_time + idx_audit_csc_time
+  // + idx_audit_attest_time). Standalone idx_occurred_at needed because composite
+  // indexes (agent_id, occurred_at) + (tool_name, occurred_at) can't directly serve
+  // date-range COUNT(*) without a leading-column predicate. ssw-devops #11030 empirical:
+  // mtd response 2.0-2.6s even with full rollup hit — today-live path dominated by
+  // 7 areas × ~2 classes × ~3.6k tool_invocation rows full-scan per request.
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_audit_ti_time ON audit_tool_invocation(occurred_at)`).run();
 
   // audit_file_access — Phase 1 schema only (ingester is Phase 1.5 substrate-
   // coord with ssw-devops + secops per OQ#2 fold). Includes admin R5 + secops
@@ -564,6 +571,8 @@ function initializeDb() {
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_audit_fa_agent_time ON audit_file_access(agent_id, occurred_at)`).run();
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_audit_fa_path_time ON audit_file_access(path, occurred_at)`).run();
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_audit_fa_event_id ON audit_file_access(event_id)`).run();
+  // CP16 Phase 2 today-live perf sister-shape audit_tool_invocation idx_occurred_at fill.
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_audit_fa_time ON audit_file_access(occurred_at)`).run();
 
   // audit_credential_change — token rotation events; ops-key changes; sha256-
   // prefix only (never the secret per secrets-discipline-no-yaklog).
@@ -633,6 +642,8 @@ function initializeDb() {
     )
   `).run();
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_audit_pc_agent_time ON audit_permission_change(agent_id, occurred_at)`).run();
+  // CP16 Phase 2 today-live perf sister-shape fill — standalone date-range idx.
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_audit_pc_time ON audit_permission_change(occurred_at)`).run();
 
   // policy_rule — policy-as-code substrate. Sandboxed DSL evaluator per
   // secops R1 fold (100ms / 1MB / no fs-net-proc); expansion is ADR-
