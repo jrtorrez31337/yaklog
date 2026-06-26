@@ -2592,9 +2592,14 @@ const PRESENCE_LABELS = {
     // per yaklog-sub _IN_FLIGHT_STATES); the gap was server-side label
     // derivation missing the entry. CSS for .status-stop_failure +
     // .label-stop_failure was already in dashboard.html (dead code until now).
-    stop_failure: 'stop_failure'
+    stop_failure: 'stop_failure',
+    // CP14.x (Task #174): in_flight = long-running CLI runtime session
+    // (Codex/Gemini sessions minutes-to-hours; distinct from short-duration
+    // tool_running per-invocation). Sister-shape online_tool_running but
+    // signals "expect extended wait for next state change."
+    in_flight: 'online_in_flight'
   },
-  down: { active: 'offline', idle: 'offline', unknown: 'offline', tool_running: 'offline', idle_between_tools: 'offline', compacting: 'offline', stop_failure: 'offline' }
+  down: { active: 'offline', idle: 'offline', unknown: 'offline', tool_running: 'offline', idle_between_tools: 'offline', compacting: 'offline', stop_failure: 'offline', in_flight: 'offline' }
 };
 
 // v0.5.6: daemon_only label per yaklog #5061 + Jon-direct #5452.

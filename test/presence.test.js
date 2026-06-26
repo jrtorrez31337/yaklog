@@ -65,9 +65,12 @@ test('POST /presence/event derived label matrix', async () => {
     ['up', 'unknown', 'stalled'],
     ['up', 'tool_running', 'online_tool_running'],
     ['up', 'idle_between_tools', 'online_idle_between_tools'],
+    // CP14.x (Task #174): in_flight enum for long-running CLI runtime sessions.
+    ['up', 'in_flight', 'online_in_flight'],
     ['down', 'active', 'offline'],
     ['down', 'idle', 'offline'],
-    ['down', 'unknown', 'offline']
+    ['down', 'unknown', 'offline'],
+    ['down', 'in_flight', 'offline']
   ];
   for (const [daemon, session, expected] of cases) {
     const res = await request(app).post('/api/v1/presence/event').set(authA).send({
@@ -206,4 +209,17 @@ test('deriveLabel: regression coverage for the pre-existing mappings', () => {
   assert.equal(deriveLabel('up',   'unknown',  1), 'stalled');
   assert.equal(deriveLabel('up',   'unknown',  0), 'daemon_only');
   assert.equal(deriveLabel('down', 'idle',     1), 'offline');
+});
+
+// CP14.x (Task #174): in_flight enum for long-running CLI runtimes
+// (Codex/Gemini sessions minutes-to-hours; distinct from short-duration
+// tool_running per-invocation). Sister-shape online_tool_running but
+// signals "expect extended wait for next state change."
+test('deriveLabel: in_flight session_state on up daemon → label online_in_flight', () => {
+  assert.equal(deriveLabel('up',   'in_flight', 1), 'online_in_flight');
+  // consumer=0 + non-unknown session_state must NOT trigger daemon_only short-circuit
+  assert.equal(deriveLabel('up',   'in_flight', 0), 'online_in_flight');
+});
+test('deriveLabel: down daemon + in_flight → offline (canonical down→offline mapping)', () => {
+  assert.equal(deriveLabel('down', 'in_flight', 1), 'offline');
 });

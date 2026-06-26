@@ -119,6 +119,9 @@
   .agent-card.status-online_idle,
   .agent-card.status-online_idle_between_tools,
   .agent-card.status-online_tool_running { border-left-color: var(--green); }
+  /* CP14.x (Task #174): in_flight = long-running CLI runtime session;
+     sister-shape tool_running green-border for "actively computing." */
+  .agent-card.status-online_in_flight    { border-left-color: var(--green); }
   .agent-card.status-online_compacting   { border-left-color: var(--blue); }
   .agent-card.status-daemon_only         { border-left-color: var(--muted); }
   .agent-card.status-stalled,
@@ -310,7 +313,8 @@
   .label-online .badge,
   .label-online_idle .badge,
   .label-online_idle_between_tools .badge,
-  .label-online_tool_running .badge { background: var(--green-bg); color: var(--green); }
+  .label-online_tool_running .badge,
+  .label-online_in_flight .badge { background: var(--green-bg); color: var(--green); }
   .label-online_compacting .badge { background: #1a2540; color: var(--blue); }
   .label-daemon_only .badge { background: #25282d; color: #8a93a6; }
   .label-stop_failure .badge { background: var(--red-bg); color: var(--red); border: 1px solid var(--red); }

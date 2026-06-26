@@ -18,7 +18,13 @@ const DAEMON_STATES = new Set(['up', 'down']);
 // v0.5.7: stop_failure added per daemon StopFailure hook recognition.
 // Sticky like idle/down; sets last_stop_reason="failure" upstream for the
 // Amendment-1 silence-ambiguity sunset signal.
-const SESSION_STATES = new Set(['active', 'idle', 'unknown', 'tool_running', 'idle_between_tools', 'compacting', 'stop_failure']);
+// CP14.x (Task #174): 'in_flight' enum value for long-running CLI runtimes
+// (Codex/Gemini sessions that take minutes-to-hours; distinct from per-tool
+// tool_running which is short-duration per-invocation). Semantic: SESSION is
+// actively computing for an extended period; expect long wait for next state
+// change. Forward-track door-opener — existing emitters don't produce yet;
+// /presence/event accepts; daemon-side adoption is per-runtime cycle.
+const SESSION_STATES = new Set(['active', 'idle', 'unknown', 'tool_running', 'idle_between_tools', 'compacting', 'stop_failure', 'in_flight']);
 
 const router = express.Router();
 
