@@ -378,13 +378,85 @@ app.get('/api/v1/presence/public', (req, res) => {
       sse_stream_stale_class: null,
     });
   }
-  const etag = publicPresenceEtag(presence, globalHwm);
-  res.set('ETag', etag);
+  // Task #257 / CP16 Pillar 3 — server-side filter + sort per PLAN-CP16-PILLAR-3
+  // + parch #11169 OQ disposition. Backward-compat: omitted params → unchanged
+  // shape (no _filter object, no presence-array mutation).
+  const filterRuntime = req.query?.filter?.runtime;
+  const filterStatus = req.query?.filter?.status;
+  const filterSearch = req.query?.filter?.search;
+  const sortField = req.query?.sort;
+  const sortDir = req.query?.sort_dir; // 'asc' | 'desc' | undefined
+  const hasFilter = !!(filterRuntime || filterStatus || filterSearch);
+  const hasSort = !!sortField;
+  const totalPreFilter = presence.length;
+  let filtered = presence;
+  if (hasFilter) {
+    if (filterSearch && (typeof filterSearch !== 'string' || filterSearch.length > 64)) {
+      return res.status(400).json({ error: 'ValidationError', message: 'filter[search] must be ≤64 chars.' });
+    }
+    const search = filterSearch ? String(filterSearch).toLowerCase() : null;
+    filtered = presence.filter((row) => {
+      // filter[runtime]: exact match against enriched row.runtime; null excluded
+      if (filterRuntime && row.runtime !== filterRuntime) return false;
+      // filter[status]: composite — session_state OR runtime_state OR label
+      // (operator-semantics per PLAN §3.2 OQ1 engineering self-dispose)
+      if (filterStatus && row.session_state !== filterStatus
+          && row.runtime_state !== filterStatus
+          && row.label !== filterStatus) return false;
+      // filter[search]: lowercase substring on agent_id
+      if (search && !(String(row.agent_id || '').toLowerCase().includes(search))) return false;
+      return true;
+    });
+  }
+  if (hasSort) {
+    const SORT_FIELDS = new Set(['last_active', 'agent_id', 'cost_7d']);
+    if (!SORT_FIELDS.has(sortField)) {
+      return res.status(400).json({
+        error: 'ValidationError',
+        message: `sort must be one of: ${[...SORT_FIELDS].join(', ')}.`,
+      });
+    }
+    if (sortDir !== undefined && sortDir !== 'asc' && sortDir !== 'desc') {
+      return res.status(400).json({ error: 'ValidationError', message: 'sort_dir must be asc or desc.' });
+    }
+    // Defaults per PLAN §3.3: last_active/cost_7d desc; agent_id asc.
+    const dir = sortDir || ((sortField === 'agent_id') ? 'asc' : 'desc');
+    const mul = dir === 'asc' ? 1 : -1;
+    // Nulls-last regardless of direction (operator semantics: explicit data first)
+    const cmp = (av, bv) => {
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      if (typeof av === 'number' && typeof bv === 'number') return mul * (av - bv);
+      const as = String(av), bs = String(bv);
+      return mul * (as < bs ? -1 : as > bs ? 1 : 0);
+    };
+    filtered = filtered.slice().sort((a, b) => {
+      if (sortField === 'last_active') return cmp(a.last_heartbeat_at, b.last_heartbeat_at);
+      if (sortField === 'agent_id')    return cmp(a.agent_id, b.agent_id);
+      if (sortField === 'cost_7d')     return cmp(a.cost_7d ?? null, b.cost_7d ?? null);
+      return 0;
+    });
+  }
+  // ETag includes filter+sort params so cache-mismatch can't return stale-filtered
+  // data to a different-filter requester (different query → different ETag).
+  const etagBase = publicPresenceEtag(filtered, globalHwm);
+  const etagVariant = (hasFilter || hasSort)
+    ? etagBase.slice(0, -1) + ':' + JSON.stringify({ r: filterRuntime, s: filterStatus, q: filterSearch, sort: sortField, dir: sortDir }) + '"'
+    : etagBase;
+  res.set('ETag', etagVariant);
   res.set('Cache-Control', 'no-cache');
-  if (req.headers['if-none-match'] === etag) {
+  if (req.headers['if-none-match'] === etagVariant) {
     return res.status(304).end();
   }
-  return res.json({ presence, count: presence.length, global_hwm: globalHwm });
+  const body = { presence: filtered, count: filtered.length, global_hwm: globalHwm };
+  if (hasFilter) {
+    // Per parch #11169 OQ2 RATIFY: namespaced _filter object surfaces filter
+    // metadata to browser-tier without polluting data fields. Backward-compat
+    // sentinel: omitted when no filter applied.
+    body._filter = { applied: true, total_pre_filter: totalPreFilter };
+  }
+  return res.json(body);
 });
 
 // Eyes-on-glass dashboard: HTML at /dashboard, JS at /dashboard.js (split so
