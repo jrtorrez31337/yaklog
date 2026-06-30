@@ -106,3 +106,48 @@ test('/dashboard.js default audience is buyer (s345 #9234 Criterion 5)', async (
   const r = await request(app).get('/dashboard.js');
   assert.match(r.text, /audience:\s*'buyer'/);
 });
+
+// ── CP13.7 (parch #10812): Effort empty/loading/error states ───────────────
+// Marker-style (no jsdom): assert the shared state vocabulary + sanitizer ship
+// so a regression that strips empty-state handling can't land silently.
+
+test('/dashboard CSS includes shared .effort-state empty/loading/error block', async () => {
+  const r = await request(app).get('/dashboard');
+  assert.match(r.text, /\.effort-state\s*\{/, '.effort-state base style missing');
+  assert.match(r.text, /\.effort-state\.is-error\s+\.es-title/, 'error-state title color missing');
+  // Reduced-motion must disable the skeleton shimmer (WCAG 2.3.3 / §2 motion rule).
+  assert.match(r.text, /prefers-reduced-motion:\s*reduce[\s\S]*\.effort-skeleton\s*\{\s*animation:\s*none/);
+  // Retry affordance meets target-size floor (WCAG 2.5.8: ≥24px; we use 32px).
+  assert.match(r.text, /\.es-retry\s*\{[^}]*min-height:\s*32px/);
+});
+
+test('/dashboard composition tbody ships a loading state, not a bare "Loading…" cell', async () => {
+  const r = await request(app).get('/dashboard');
+  assert.match(r.text, /id="effort-composition-tbody"[\s\S]*effort-state/, 'composition tbody should seed an effort-state');
+  assert.match(r.text, /id="effort-composition-tbody"[\s\S]*role="status"/, 'loading state needs aria-live status role');
+});
+
+test('/dashboard.js includes error sanitizer + shared state helper', async () => {
+  const r = await request(app).get('/dashboard.js');
+  assert.match(r.text, /function sanitizeEffortError/);
+  assert.match(r.text, /function effortStateHtml/);
+  assert.match(r.text, /function bindEffortRetry/);
+});
+
+test('/dashboard.js sanitizer maps HTTP codes (no raw status leaked to glass)', async () => {
+  const r = await request(app).get('/dashboard.js');
+  assert.match(r.text, /HTTP 40\[13\]/, '401/403 → Access denied mapping missing');
+  assert.match(r.text, /HTTP 5\\d\\d/, '5xx → Service error mapping missing');
+  // The coverage-gap tile sub must run through the sanitizer, not echo _error raw.
+  assert.match(r.text, /cgapSub[\s\S]{0,120}sanitizeEffortError\(coverage\._error\)/);
+});
+
+test('/dashboard.js composition/anomaly render through the shared state helper', async () => {
+  const r = await request(app).get('/dashboard.js');
+  // Composition error path: sanitized + retry-enabled.
+  assert.match(r.text, /effortStateHtml\('error',[\s\S]{0,120}sanitizeEffortError\(comp\._error\)/);
+  // Composition empty path is distinct from error.
+  assert.match(r.text, /effortStateHtml\('empty',[\s\S]{0,80}No agent activity/);
+  // Anomaly insufficient-history empty state.
+  assert.match(r.text, /Not enough history yet/);
+});
