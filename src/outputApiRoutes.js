@@ -115,6 +115,82 @@ publicRouter.get('/anomalies', (req, res) => {
   return res.json(attachMetadata(result, isEmpty));
 });
 
+// ── PUBLIC: GET /pace?period=eom|eoq&audience= ────────────────────────────
+// Task #259 / PLAN-EFFORT-PACE-ENDPOINT (parch #11211 RATIFY `/output/pace`
+// naming + s345 #11212 surface-class CONFIRM + parch OQ2-4 silence-is-ack).
+//
+// Linear projection sister-shape /api/v1/plexus/public/cost/projection
+// (src/plexusRoutes.js:597). Effort-strand equivalent: project end-of-period
+// counts (linear extrapolation) + rate-class metrics as steady-state.
+//
+// Per-audience filter sister to /ratios filterRatiosByAudience (BUYER returns
+// empty current/projected per Fold B HARD GATE; PRACTITIONER + INVESTOR see
+// value-ratios; activity-numerator NOT in Pace per substrate-honest scope).
+
+publicRouter.get('/pace', (req, res) => {
+  const period = req.query.period || 'eom';
+  const audience = (req.query.audience || 'practitioner').toLowerCase();
+  if (!['eom', 'eoq'].includes(period)) {
+    return res.status(400).json({
+      error: 'ValidationError',
+      message: 'period must be one of: eom, eoq',
+    });
+  }
+  if (!AUDIENCE_TIERS.has(audience)) {
+    return res.status(400).json({
+      error: 'ValidationError',
+      message: `audience must be one of: ${[...AUDIENCE_TIERS].join(', ')}`,
+    });
+  }
+  const costQuery = require('./costQuery');
+  const range = costQuery.projectionPeriodToRange(period);
+  const db = dbModule.initializeDb();
+  const mergeRow = db.prepare(
+    `SELECT COUNT(*) AS n FROM output_merge WHERE date(occurred_at) >= ? AND date(occurred_at) <= ?`,
+  ).get(range.current_from, range.current_to);
+  const merges = mergeRow.n;
+  const costRow = db.prepare(
+    `SELECT COALESCE(SUM(cost_usd), 0) AS s FROM cost_daily WHERE date >= ? AND date <= ?`,
+  ).get(range.current_from, range.current_to);
+  const costUsd = Number(costRow.s);
+  const fromDate = new Date(`${range.current_from}T00:00:00Z`);
+  const toDate = new Date(`${range.current_to}T00:00:00Z`);
+  const endDate = new Date(`${range.period_end}T00:00:00Z`);
+  const dayMs = 86400000;
+  const elapsedDays = Math.max(1, Math.round((toDate - fromDate) / dayMs) + 1);
+  const totalDays = Math.max(1, Math.round((endDate - fromDate) / dayMs) + 1);
+  const projectionFactor = totalDays / elapsedDays;
+  const dollarPerMergedPr = merges > 0 ? costUsd / merges : null;
+  // BUYER tier: Fold B HARD GATE — no output-strand ratios visible.
+  // Empty current/projected objects but echo _audience + period_basis so
+  // client can render "metric not visible at buyer lens" placeholder.
+  const isBuyer = audience === 'buyer';
+  const current = isBuyer ? {} : {
+    _merges: merges,
+    _cost_usd: costUsd,
+    dollar_per_merged_pr: dollarPerMergedPr,
+  };
+  const projected = isBuyer ? {} : {
+    // Count-class: linear extrapolation
+    _merges_projected: Math.round(merges * projectionFactor),
+    _cost_usd_projected: costUsd * projectionFactor,
+    // Rate-class (per PLAN §4): steady-state — projected rate = current rate
+    dollar_per_merged_pr: dollarPerMergedPr,
+  };
+  return res.json(attachMetadata({
+    period_basis: {
+      current_from: range.current_from,
+      current_to: range.current_to,
+      period_end: range.period_end,
+      basis_days: elapsedDays,
+      basis_label: `Linear projection from last ${elapsedDays}d`,
+    },
+    current,
+    projected,
+    _audience: audience,
+  }, merges === 0));
+});
+
 // ── PUBLIC: GET /merges?agent=<id> ────────────────────────────────────────
 
 publicRouter.get('/merges', (req, res) => {
