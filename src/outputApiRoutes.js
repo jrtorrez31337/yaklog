@@ -42,6 +42,20 @@ const dbModule = require('./db');
 const publicRouter = express.Router();
 const opsRouter = express.Router();
 
+// Task #258 / PLAN-EFFORT-METADATA-RESPONSE (parch #11208 RATIFY).
+// Attach namespaced _metadata to PUBLIC /output/* successful 2xx responses.
+// Sister-shape Pillar 3 _filter at src/app.js:456 per parch #11169 OQ2 pattern.
+// OQ2 RATIFY: error envelopes (4xx/5xx) do NOT get _metadata (canon-shape
+// preservation). OQ1 RATIFY: unconditional (single semantics).
+function attachMetadata(body, isEmpty) {
+  if (!body || typeof body !== 'object') return body;
+  body._metadata = {
+    as_of_unix: Math.floor(Date.now() / 1000),
+    computed_empty_period: !!isEmpty,
+  };
+  return body;
+}
+
 // ── PUBLIC: GET /ratios ───────────────────────────────────────────────────
 
 publicRouter.get('/ratios', (req, res) => {
@@ -57,7 +71,9 @@ publicRouter.get('/ratios', (req, res) => {
   try {
     const raw = computeRatios(db, { period });
     const filtered = filterRatiosByAudience(raw, audience);
-    return res.json(filtered);
+    // Empty: zero merges denominator → all numerator ratios degenerate (null/zero)
+    const isEmpty = (filtered._merges === 0) || (raw && raw._merges === 0);
+    return res.json(attachMetadata(filtered, isEmpty));
   } catch (err) {
     return res.status(500).json({ error: 'InternalError', message: err.message });
   }
@@ -78,7 +94,8 @@ publicRouter.get('/composition', (req, res) => {
   const result = by === 'agent'
     ? computeCompositionByAgent(db, { period })
     : computeCompositionByRepo(db, { period });
-  return res.json({ by, ...result });
+  const isEmpty = !Array.isArray(result.rows) || result.rows.length === 0;
+  return res.json(attachMetadata({ by, ...result }, isEmpty));
 });
 
 // ── PUBLIC: GET /anomalies ────────────────────────────────────────────────
@@ -93,7 +110,9 @@ publicRouter.get('/anomalies', (req, res) => {
     return res.status(400).json({ error: 'ValidationError', message: 'lookback_days must be a positive integer' });
   }
   const db = dbModule.initializeDb();
-  return res.json(detectAnomalies(db, { threshold, lookback_days: lookback }));
+  const result = detectAnomalies(db, { threshold, lookback_days: lookback });
+  const isEmpty = !result || !Array.isArray(result.anomalies) || result.anomalies.length === 0;
+  return res.json(attachMetadata(result, isEmpty));
 });
 
 // ── PUBLIC: GET /merges?agent=<id> ────────────────────────────────────────
@@ -106,7 +125,7 @@ publicRouter.get('/merges', (req, res) => {
   }
   const db = dbModule.initializeDb();
   const rows = listMergesByAgent(db, agent, { period });
-  return res.json({ agent, period, rows });
+  return res.json(attachMetadata({ agent, period, rows }, rows.length === 0));
 });
 
 // ── PUBLIC: GET /coverage-gap ─────────────────────────────────────────────
@@ -115,7 +134,10 @@ publicRouter.get('/coverage-gap', (req, res) => {
   const period = req.query.period || '30d';
   const sampleLimit = req.query.sample_limit ? Number(req.query.sample_limit) : 20;
   const db = dbModule.initializeDb();
-  return res.json(computeCoverageGap(db, { period, sample_limit: sampleLimit }));
+  const result = computeCoverageGap(db, { period, sample_limit: sampleLimit });
+  // Empty: no commits walked OR all commits are covered (no gap detected)
+  const isEmpty = !result || result.total_commits === 0;
+  return res.json(attachMetadata(result, isEmpty));
 });
 
 // ── OPS: PUT /attribution (manual correction for parser misses) ───────────
