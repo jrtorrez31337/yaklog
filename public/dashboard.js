@@ -5099,13 +5099,47 @@
   // (red/yellow/green/error); drill-through routes to existing detail
   // surfaces; AT-equivalent semantic HTML in place.
   //
-  // Phase B forward-track: SSE+poll hybrid per Q2 ratify (event-stream
-  // tiles via existing BusStream presence-update subscription; aggregate
-  // tiles stay polled). Refactor when sub-cycle activated.
+  // Phase B (RATIFIED parch #11160 post substrate-correction #11159): bounded
+  // browser-tier UX optimization. 4 elements:
+  //   1. Page Visibility API integration (sister-shape PlexusLiveStream pause/resume)
+  //   2. chain-integrity cadence-slow 30s → 5min (anchor publishes daily)
+  //   3. Stale-data indicator (sister-shape sse-pill; >2× cadence → state-stale class)
+  //   4. Two-tier cadence: presence-tiles 10s / aggregate-tiles 30s / chain 5min
+  //
+  // Phase C (gated on N-pressure trigger per parch #11158/#11160): server-side
+  // presence-delta SSE channel — wire red-state + active-sessions as event-driven
+  // listeners. Not in this ship (would be new server-side substrate).
   // ─────────────────────────────────────────────────────────────────────
   let operateTabMounted = false;
-  let operatePollInterval = null;
-  const OPERATE_POLL_MS = 30000;
+  let operatePresenceInterval = null;
+  let operateAggregateInterval = null;
+  let operateChainInterval = null;
+  let operateStaleChecker = null;
+  let operateVisibilityHandler = null;
+
+  const OPERATE_PRESENCE_CADENCE_MS = 10000;        // 10s — presence-derived tiles (red-state + active)
+  const OPERATE_AGGREGATE_CADENCE_MS = 30000;       // 30s — policy + cost-spikes
+  const OPERATE_CHAIN_CADENCE_MS = 5 * 60 * 1000;   // 5min — anchor publishes daily; old 30s wasteful
+  const OPERATE_STALE_FACTOR = 2;                   // stale = last refresh > 2× cadence
+
+  // Per-tile-group last successful refresh wallclock (Date.now())
+  const operateLastRefreshAt = { presence: 0, aggregate: 0, chain: 0 };
+
+  const OPERATE_TILE_GROUP = {
+    'red-state': 'presence',
+    'active-sessions': 'presence',
+    'policy-violations': 'aggregate',
+    'cost-spikes': 'aggregate',
+    'chain-integrity': 'chain',
+  };
+  const OPERATE_GROUP_CADENCE = {
+    presence: OPERATE_PRESENCE_CADENCE_MS,
+    aggregate: OPERATE_AGGREGATE_CADENCE_MS,
+    chain: OPERATE_CHAIN_CADENCE_MS,
+  };
+
+  function _operateTabActive() { return !!document.querySelector('#tab-operate.active'); }
+  function _operateShouldPoll() { return _operateTabActive() && document.visibilityState === 'visible'; }
 
   function mountOperateTab() {
     if (!operateTabMounted) {
@@ -5114,33 +5148,77 @@
       document.querySelectorAll('#operate-tile-grid .operate-tile').forEach((tile) => {
         const target = tile.dataset.drill;
         const handler = () => {
-          if (target === 'live-filtered-red') {
-            // For v1: navigate to Live; filter-to-red UX hook is forward-track
-            location.hash = '#live';
-          } else if (target === 'live') {
-            location.hash = '#live';
-          } else if (target === 'audit-incident') {
-            location.hash = '#audit';
-          } else if (target === 'audit-anchor') {
-            location.hash = '#audit';
-          } else if (target === 'cost-anomaly') {
-            location.hash = '#cost';
-          }
+          if (target === 'live-filtered-red') { location.hash = '#live'; }
+          else if (target === 'live') { location.hash = '#live'; }
+          else if (target === 'audit-incident') { location.hash = '#audit'; }
+          else if (target === 'audit-anchor') { location.hash = '#audit'; }
+          else if (target === 'cost-anomaly') { location.hash = '#cost'; }
         };
         tile.addEventListener('click', handler);
         tile.addEventListener('keydown', (e) => {
           if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handler(); }
         });
       });
+      // Page Visibility API: tab-hidden suspends intervals (cascade-prevention
+      // sister-shape PlexusLiveStream lines 919-922 + 974-980). On-restore,
+      // immediate-refresh + restart.
+      operateVisibilityHandler = () => {
+        if (document.visibilityState === 'visible' && _operateTabActive()) {
+          _operateImmediateRefresh();
+          _operateStartIntervals();
+        } else {
+          _operateClearIntervals();
+        }
+      };
+      document.addEventListener('visibilitychange', operateVisibilityHandler);
     }
-    // Refresh on every (re-)activation + start poll loop
-    refreshOperateTiles();
-    if (operatePollInterval) clearInterval(operatePollInterval);
-    operatePollInterval = setInterval(() => {
-      // Only poll while Operate tab is visible (cascade-prevention discipline)
-      if (document.querySelector('#tab-operate.active')) refreshOperateTiles();
-      else { clearInterval(operatePollInterval); operatePollInterval = null; }
-    }, OPERATE_POLL_MS);
+    // Immediate refresh + start intervals on every (re-)activation
+    _operateImmediateRefresh();
+    _operateStartIntervals();
+    if (!operateStaleChecker) operateStaleChecker = setInterval(_operateCheckStaleness, 1000);
+  }
+
+  function _operateClearIntervals() {
+    if (operatePresenceInterval) { clearInterval(operatePresenceInterval); operatePresenceInterval = null; }
+    if (operateAggregateInterval) { clearInterval(operateAggregateInterval); operateAggregateInterval = null; }
+    if (operateChainInterval) { clearInterval(operateChainInterval); operateChainInterval = null; }
+  }
+
+  function _operateStartIntervals() {
+    _operateClearIntervals();
+    operatePresenceInterval = setInterval(() => {
+      if (_operateShouldPoll()) _refreshPresenceTiles(); else _operateClearIntervals();
+    }, OPERATE_PRESENCE_CADENCE_MS);
+    operateAggregateInterval = setInterval(() => {
+      if (_operateShouldPoll()) _refreshAggregateTiles(); else _operateClearIntervals();
+    }, OPERATE_AGGREGATE_CADENCE_MS);
+    operateChainInterval = setInterval(() => {
+      if (_operateShouldPoll()) _refreshChainIntegrity(); else _operateClearIntervals();
+    }, OPERATE_CHAIN_CADENCE_MS);
+  }
+
+  async function _operateImmediateRefresh() {
+    await Promise.all([_refreshPresenceTiles(), _refreshAggregateTiles(), _refreshChainIntegrity()]);
+  }
+
+  function _operateCheckStaleness() {
+    if (!_operateTabActive()) return;
+    const now = Date.now();
+    for (const [tileId, group] of Object.entries(OPERATE_TILE_GROUP)) {
+      const cadence = OPERATE_GROUP_CADENCE[group];
+      const last = operateLastRefreshAt[group];
+      const isStale = last > 0 && (now - last) > (cadence * OPERATE_STALE_FACTOR);
+      const tile = document.querySelector(`.operate-tile[data-tile="${tileId}"]`);
+      if (!tile) continue;
+      tile.classList.toggle('state-stale', isStale);
+      // a11y: append "[stale]" suffix to aria-label when stale (AT-equivalent
+      // signal per [[feedback_accessibility_is_structural_canon_not_polish]]).
+      const label = tile.getAttribute('aria-label') || '';
+      const marked = label.endsWith(' [stale]');
+      if (isStale && !marked) tile.setAttribute('aria-label', label + ' [stale]');
+      else if (!isStale && marked) tile.setAttribute('aria-label', label.slice(0, -' [stale]'.length));
+    }
+    _updateOperateFooter();
   }
 
   function _setOperateTileState(tileId, state, value, sub, ariaSuffix) {
@@ -5152,17 +5230,11 @@
     const subEl = document.getElementById(`operate-tile-${tileId}-sub`);
     if (valEl) valEl.textContent = value;
     if (subEl) subEl.textContent = sub;
-    // a11y: append state-suffix to aria-label so AT users get state-signal
-    // not just color (per `feedback_accessibility_is_structural_canon_not_polish`)
     const baseLabel = tile.getAttribute('aria-label')?.split(' — state: ')[0] || '';
     if (ariaSuffix) tile.setAttribute('aria-label', `${baseLabel} — state: ${ariaSuffix}`);
   }
 
-  async function refreshOperateTiles() {
-    const metaEl = document.getElementById('operate-footer-meta');
-    const t0 = Date.now();
-
-    // Presence-driven tiles (red-state + active sessions)
+  async function _refreshPresenceTiles() {
     try {
       const r = await fetch('/api/v1/presence/public');
       const j = await r.json();
@@ -5184,12 +5256,15 @@
         String(active.length),
         active.length === 0 ? 'cluster idle' : `${active.length} of ${rows.length} agents in active/tool_running`,
         'informational');
+      operateLastRefreshAt.presence = Date.now();
     } catch (e) {
       _setOperateTileState('red-state', 'error', '?', `fetch error: ${e.message}`, 'unknown');
       _setOperateTileState('active-sessions', 'error', '?', `fetch error: ${e.message}`, 'unknown');
     }
+    _updateOperateFooter();
+  }
 
-    // Policy violations (60min lookback)
+  async function _refreshAggregateTiles() {
     try {
       const from = new Date(Date.now() - 60 * 60 * 1000).toISOString();
       const r = await fetch(`/api/v1/plexus/public/policy/violations?from=${encodeURIComponent(from)}&limit=20`);
@@ -5204,26 +5279,6 @@
     } catch (e) {
       _setOperateTileState('policy-violations', 'error', '?', `fetch error: ${e.message}`, 'unknown');
     }
-
-    // Audit chain integrity (today's anchor verify)
-    try {
-      const today = new Date().toISOString().slice(0, 10);
-      const r = await fetch(`/api/v1/plexus/public/audit/anchor-verify?day=${today}`);
-      const j = await r.json();
-      if (j.found === false) {
-        _setOperateTileState('chain-integrity', 'yellow', '—', 'no anchor for today yet (publisher cadence)', 'awaiting publish');
-      } else if (j.match === true) {
-        _setOperateTileState('chain-integrity', 'green', '✓', `verified: ${(j.stored_digest || '').slice(0, 12)}…`, 'verified');
-      } else if (j.match === false) {
-        _setOperateTileState('chain-integrity', 'red', '✗', 'TAMPER DETECTED — investigate immediately', 'tamper-detected');
-      } else {
-        _setOperateTileState('chain-integrity', 'yellow', '?', j.note || 'verify state unclear', 'unknown-state');
-      }
-    } catch (e) {
-      _setOperateTileState('chain-integrity', 'error', '?', `fetch error: ${e.message}`, 'unknown');
-    }
-
-    // Cost spikes (7d window, agent_id dim)
     try {
       const r = await fetch('/api/v1/cost/anomalies?period=7d&threshold=2.0&dim=agent_id');
       const j = await r.json();
@@ -5237,9 +5292,46 @@
     } catch (e) {
       _setOperateTileState('cost-spikes', 'error', '?', `fetch error: ${e.message}`, 'unknown');
     }
-
-    if (metaEl) metaEl.textContent = `refreshed ${new Date().toLocaleTimeString()} · ${Date.now() - t0}ms`;
+    operateLastRefreshAt.aggregate = Date.now();
+    _updateOperateFooter();
   }
+
+  async function _refreshChainIntegrity() {
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const r = await fetch(`/api/v1/plexus/public/audit/anchor-verify?day=${today}`);
+      const j = await r.json();
+      if (j.found === false) {
+        _setOperateTileState('chain-integrity', 'yellow', '—', 'no anchor for today yet (publisher cadence)', 'awaiting publish');
+      } else if (j.match === true) {
+        _setOperateTileState('chain-integrity', 'green', '✓', `verified: ${(j.stored_digest || '').slice(0, 12)}…`, 'verified');
+      } else if (j.match === false) {
+        _setOperateTileState('chain-integrity', 'red', '✗', 'TAMPER DETECTED — investigate immediately', 'tamper-detected');
+      } else {
+        _setOperateTileState('chain-integrity', 'yellow', '?', j.note || 'verify state unclear', 'unknown-state');
+      }
+      operateLastRefreshAt.chain = Date.now();
+    } catch (e) {
+      _setOperateTileState('chain-integrity', 'error', '?', `fetch error: ${e.message}`, 'unknown');
+    }
+    _updateOperateFooter();
+  }
+
+  function _updateOperateFooter() {
+    const metaEl = document.getElementById('operate-footer-meta');
+    if (!metaEl) return;
+    const now = Date.now();
+    const parts = [];
+    for (const [group, last] of Object.entries(operateLastRefreshAt)) {
+      if (last === 0) continue;
+      const age = Math.floor((now - last) / 1000);
+      parts.push(`${group}: ${age}s`);
+    }
+    metaEl.textContent = parts.length === 0 ? 'awaiting refresh' : parts.join(' · ');
+  }
+
+  // Backward-compat alias for any external caller of refreshOperateTiles
+  async function refreshOperateTiles() { return _operateImmediateRefresh(); }
 
   function mountBusTab() {
     if (busTabMounted) return;
