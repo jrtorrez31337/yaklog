@@ -409,7 +409,10 @@ app.get('/api/v1/presence/public', (req, res) => {
     });
   }
   if (hasSort) {
-    const SORT_FIELDS = new Set(['last_active', 'agent_id', 'cost_7d']);
+    // cost_7d deferred per PLAN OQ3 self-dispose: presence row enrichment
+    // does not carry cost_7d field today; sort would no-op (all null).
+    // Forward-track: re-add when cost enrichment lands (separate cycle).
+    const SORT_FIELDS = new Set(['last_active', 'agent_id']);
     if (!SORT_FIELDS.has(sortField)) {
       return res.status(400).json({
         error: 'ValidationError',
@@ -419,7 +422,7 @@ app.get('/api/v1/presence/public', (req, res) => {
     if (sortDir !== undefined && sortDir !== 'asc' && sortDir !== 'desc') {
       return res.status(400).json({ error: 'ValidationError', message: 'sort_dir must be asc or desc.' });
     }
-    // Defaults per PLAN §3.3: last_active/cost_7d desc; agent_id asc.
+    // Defaults per PLAN §3.3: last_active desc; agent_id asc.
     const dir = sortDir || ((sortField === 'agent_id') ? 'asc' : 'desc');
     const mul = dir === 'asc' ? 1 : -1;
     // Nulls-last regardless of direction (operator semantics: explicit data first)
@@ -434,7 +437,6 @@ app.get('/api/v1/presence/public', (req, res) => {
     filtered = filtered.slice().sort((a, b) => {
       if (sortField === 'last_active') return cmp(a.last_heartbeat_at, b.last_heartbeat_at);
       if (sortField === 'agent_id')    return cmp(a.agent_id, b.agent_id);
-      if (sortField === 'cost_7d')     return cmp(a.cost_7d ?? null, b.cost_7d ?? null);
       return 0;
     });
   }

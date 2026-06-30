@@ -118,6 +118,12 @@ test('Pillar 3 — sort=invalid → 400 (no silent fallback per validation canon
   assert.equal(res.body.error, 'ValidationError');
 });
 
+test('Pillar 3 — sort=cost_7d → 400 (deferred per PLAN OQ3; presence row lacks cost enrichment)', async () => {
+  const res = await request(app).get('/api/v1/presence/public?sort=cost_7d');
+  assert.equal(res.statusCode, 400);
+  assert.equal(res.body.error, 'ValidationError');
+});
+
 test('Pillar 3 — sort_dir=invalid → 400', async () => {
   const res = await request(app).get('/api/v1/presence/public?sort=agent_id&sort_dir=sideways');
   assert.equal(res.statusCode, 400);
