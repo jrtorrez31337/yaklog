@@ -184,6 +184,28 @@ function emitOutputIngester({ elapsed_ms, commits_walked, merges_walked, prs_wal
   outputIngesterInvocationsTotal.inc({ outcome });
 }
 
+// ─── Brevity-warning counter (Task #242 / PLAN-COMMS-BREVITY-SUBSTRATE) ─────
+// Per Q4 RATIFY: agent_id + kind in labels; body NEVER in labels (PII +
+// label-cardinality discipline). Sample text lives in the response object
+// only, never aggregated in metrics.
+
+const messageBrevityWarningsTotal = new Counter({
+  name: 'yaklog_message_brevity_warnings_total',
+  help: 'Total brevity-canon warnings emitted by POST /messages (per agent + kind)',
+  labelNames: ['agent_id', 'kind'],
+  registers: [registry],
+});
+
+function emitBrevityWarnings(senderAgentId, warnings) {
+  if (!Array.isArray(warnings) || warnings.length === 0) return;
+  const agentLabel = String(senderAgentId || 'unknown');
+  for (const w of warnings) {
+    if (w && typeof w.kind === 'string') {
+      messageBrevityWarningsTotal.inc({ agent_id: agentLabel, kind: w.kind });
+    }
+  }
+}
+
 function emitOrpWrite({ agent_id, version, success, outcome }) {
   // outcome can be 'ok', 'error', or 'validation-fail' (sub-class of error
   // for distinguishing 422 schema-validation rejects from 500 actual errors).
@@ -202,5 +224,6 @@ module.exports = {
     walCheckpoint: emitWalCheckpoint,
     outputIngester: emitOutputIngester,
     orpWrite: emitOrpWrite,
+    brevityWarnings: emitBrevityWarnings,
   },
 };

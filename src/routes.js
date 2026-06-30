@@ -12,6 +12,8 @@ const { enforceSenderBinding, enforceMutationBinding, resolveAllowedSenders } = 
 const { enforceDaemonBinding } = require('./middleware/daemonBinding');
 const { applyDmVisibilityFilter, writeAuditEntries } = require('./middleware/dmFilter');
 const { parseMentions } = require('./mentions');
+const brevityHints = require('./middleware/brevityHints');
+const { emit } = require('./metrics');
 
 const AGENT_ID_RE = /^[a-zA-Z0-9._:@/-]{1,64}$/;
 const DAEMON_STATES = new Set(['up', 'down']);
@@ -172,6 +174,16 @@ router.post('/messages', (req, res) => {
     isPrivate: isPrivate === true
   });
 
+  // Task #242 / PLAN-COMMS-BREVITY-SUBSTRATE — server-side soft-warn for
+  // brevity-canon violations per parch #11140 Q1-Q5 RATIFY. Pure-function
+  // linter; never hard-blocks; attaches warnings to response when present;
+  // emits Prom counter per (agent_id, kind). Per Q4: sample text in response
+  // only, NEVER in metric labels.
+  const warnings = brevityHints.lint(body);
+  if (warnings.length > 0) {
+    emit.brevityWarnings(sender, warnings);
+    return res.status(201).json({ message, warnings });
+  }
   return res.status(201).json({ message });
 });
 
