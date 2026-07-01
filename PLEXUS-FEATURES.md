@@ -45,7 +45,7 @@ The Plexus dashboard lives at `http://<devel-host>:3100/dashboard`. Operator-fac
 | Tab | What it shows |
 |---|---|
 | **Live** | Cluster cost-rate hero card + AgentCard grid (one card per agent in `/presence`). Bus ticker pane below the hero shows last 15 messages across all channels except `#agents` + `#_diag`. |
-| **Operate** | **CP14 / Task #214 SHIPPED 2026-06-26** (PLAN-OPERATE-EYES-ON-GLASS-VIEW.md trio-converged + parch #10925 ratify). Operator-on-shift "eyes-on-glass" surface; answers "is anything broken right now? where do I look first?" 5 v1 tiles: red-state agent count (presence-substrate filter) / active sessions (presence-substrate filter) / recent policy violations 60min (CP12 policy-DSL) / audit chain integrity (Phase 3 (A) anchor-verify) / cost spikes (CP16 Pillar 2 anomalies). 30s poll loop with cascade-prevention discipline (self-stops when tab not visible). Drill-through per-tile to existing Live/Audit/Cost detail surfaces. AT-equivalent semantic HTML with state-suffix in aria-label (no color-only state per `feedback_accessibility_is_structural_canon_not_polish` — Jon legally-blind primary operator). Phase B forward-track: SSE+poll hybrid per Q2 ratify. |
+| **Operate** | **CP14 / Task #214 SHIPPED 2026-06-26** (PLAN-OPERATE-EYES-ON-GLASS-VIEW.md trio-converged + parch #10925 ratify). Operator-on-shift "eyes-on-glass" surface; answers "is anything broken right now? where do I look first?" 5 v1 tiles: red-state agent count (presence-substrate filter) / active sessions (presence-substrate filter) / recent policy violations 60min (CP12 policy-DSL) / audit chain integrity (Phase 3 (A) anchor-verify) / cost spikes (CP16 Pillar 2 anomalies). 30s poll loop with cascade-prevention discipline (self-stops when tab not visible). Drill-through per-tile to existing Live/Audit/Cost detail surfaces. AT-equivalent semantic HTML with state-suffix in aria-label (no color-only state per `feedback_accessibility_is_structural_canon_not_polish` — Jon legally-blind primary operator). **Phase B SHIPPED 2026-06-30 (yaklog@ac9530d, PLAN-OPERATE-PHASE-B-SSE-HYBRID.md, parch #11160 RATIFY post substrate-correction #11159):** visibility-pause (Page Visibility API sister-shape PlexusLiveStream pause/resume) + two-tier cadence (presence-tiles 10s / aggregate-tiles 30s / chain-integrity 5min) + stale-data indicator (>2× cadence → state-stale class + `[stale]` aria-label suffix). Phase C (server-side presence-delta SSE channel) forward-track per N-pressure trigger. |
 | **Cost** | CFO-tier three-lens cost accounting (ADR-0029, CP11.x). Hero strip of 4 KPI tiles (burn-vs-budget, run-rate/projected EOM, top cost-centers, MTD). Six sub-tabs: **Pace** (cluster envelope + projection + per-cost-center MTD), **Composition** (group-by dimension picker — cost_center default), **Anomaly** (today vs prior-6d mean ≥ 2× scan), **Detail** (legacy per-agent $/hr table relocated here), **Reconcile** (ops-key gated invoice-vs-Plexus reconciliation), **Budgets** (ops-key gated per-cost-center envelope management + cluster-cap-vs-sum-of-CC divergence indicator). |
 | **Channels** | iMessage-style chat view per channel. Left sidebar lists every channel (sorted by last activity); right pane renders the selected channel's messages as agent-colored bubbles with sender/timestamp groupings. Deep-link via `#bus/<channel>`. **2026-06-26 Pillar 7 sub-A bus body-collapse SHIPPED `715e339`**: long bubble bodies CSS line-clamp ≤5 lines by default; click bubble to expand (full body remains in DOM per accessibility canon — CSS-only crop). Auto-expand when message mentions `SELF_AGENT_ID`. Post-mount overflow detection tags `.has-overflow` so click-hint pseudo-element only appears where useful. Addresses Jon-direct "#handoff highly abused" observation. |
 | **Audit** | GRC-tier three-lens audit + governance (ADR-0030, CP12.x). Hero strip of 4 KPI tiles (open-violations, coverage-gaps, recent-high-risk, attestation-status). Six sub-tabs: **Incident** (default; pending violations + drill-through), **Review** (4-card aggregate grid + coverage-gap banner + control_area-default dim picker), **Attest** (SOC2/ISO27001/GDPR control-area browser + evidence-bundle export), **Policies** (ops-key gated rule mgmt with sandboxed DSL), **Reconcile** (ops-key gated external-system reconciliation), **Detail** (legacy DM-audit-log reader relocated unchanged). |
@@ -612,6 +612,63 @@ Empirical post-deploy (2026-06-26): soc2 mtd 2.1-2.8s; iso27001 mtd 2.1-2.6s (vs
 #### 3.14.4 Forward-track Phase 2
 
 Per PLAN §13 deploy-time backfill revision: ssw-devops install canon (sister-shape #10857 5-element substrate: `/usr/local/bin/yaklog-audit-rollup.sh` + systemd `plexus-audit-rollup.{service,timer}` + envfile + per-service ops-key + dedicated uid `plexus-audit-rollup`) + ops endpoint `POST /api/v1/ops/audit-rollup/backfill` (sister-shape `/wal-checkpoint`) for one-shot operator-trigger. Hourly cron at <2s incremental once rollup populated; 90-day backfill operationally ~15min single-writer-blocking (per ssw-devops #10883 empirical, not the original §6 <30s claim).
+
+### 3.15 CP16 Pillar 3 — server-side AgentCard filter+sort (Task #257 SHIPPED 2026-06-30)
+
+`GET /api/v1/presence/public` extended with optional query params per PLAN-CP16-PILLAR-3-AGENTCARD-SORT-FILTER (yaklog@591a929, parch #11169 §1 substrate-anchor verify + OQ2 RATIFY namespaced `_filter` shape; canon-cascade adoption at yaklog-dev lane):
+- `?filter[runtime]=<claude_code|gemini|codex|ptah>` exact match on enriched `row.runtime`
+- `?filter[status]=<value>` composite match: `session_state OR runtime_state OR label` (operator-semantics per OQ1 self-dispose)
+- `?filter[search]=<token>` lowercase substring on agent_id; ≤64 char guard
+- `?sort=<last_active|agent_id>` allowlist-validated; invalid → 400 (`cost_7d` deferred per OQ3 self-dispose — presence row lacks cost enrichment today)
+- `?sort_dir=<asc|desc>` optional (defaults: last_active desc, agent_id asc; nulls-last regardless)
+
+Backward-compat sentinel: omitted params → response unchanged bytewise. When filter applied, response adds namespaced `_filter: {applied: true, total_pre_filter: <int>}` object (sister-shape underscore-prefix pattern). ETag includes filter+sort params so cache-mismatch can't cross-serve. Phase 2 browser HYBRID wire (≤N=25 client / >N server) = separate cycle per PLAN §4.
+
+Operator-tooling note: curl `?filter[k]=v` requires URL-encoding brackets → `?filter%5Bk%5D=v` (browser handles natively).
+
+### 3.16 CP16 `_metadata` namespaced response field on /output/* (Task #258 SHIPPED 2026-06-30)
+
+Per PLAN-EFFORT-METADATA-RESPONSE + parch #11208 RATIFY closing plexus-ui OQ1 (empty-vs-error discriminator) + OQ3 (as_of for stale-chip). Adds `_metadata: {as_of_unix, computed_empty_period}` to all PUBLIC /output/* 2xx responses (`/ratios`, `/composition`, `/anomalies`, `/merges`, `/coverage-gap`):
+- `as_of_unix` — integer epoch seconds when data was computed (browser stale-chip renders "as of Nmin ago")
+- `computed_empty_period` — true when period genuinely had zero data (vs backend error producing empty array); distinguishes "no agent activity" from "fetch error" beyond HTTP-status-only convention
+
+Error envelopes (4xx/5xx) do NOT include `_metadata` per OQ2 RATIFY (envelope canon-shape preservation). Unconditional add on 2xx per OQ1 RATIFY (simpler semantics, no partial-shape flag). Sister-shape Pillar 3 `_filter` underscore-prefix pattern.
+
+### 3.17 `/output/pace` Pace-lens trend endpoint (Task #259 SHIPPED 2026-06-30)
+
+Per PLAN-EFFORT-PACE-ENDPOINT + parch #11211 RATIFY (`/output/pace` naming per consumer-surface authority) + s345 #11212 surface-class CONFIRM. Effort-strand sister-shape `/api/v1/plexus/public/cost/projection` for end-of-period linear extrapolation:
+
+```
+GET /api/v1/output/pace?period=<eom|eoq>&audience=<buyer|practitioner|investor>
+
+Response: {
+  period_basis: { current_from, current_to, period_end, basis_days, basis_label },
+  current:      { _merges, _cost_usd, dollar_per_merged_pr },  // {} for buyer per Fold B
+  projected:    { _merges_projected, _cost_usd_projected, dollar_per_merged_pr },
+  _audience:    <echoed>,
+  _metadata:    { as_of_unix, computed_empty_period }   // via §3.16 attachMetadata helper
+}
+```
+
+Projection semantics per PLAN §4:
+- **Count-class** (`_merges`, `_cost_usd`): linear extrapolation by `(totalPeriodDays / elapsedDays)` factor
+- **Rate-class** (`dollar_per_*`): steady-state (rate IS the projection; no smoothing per OQ3 RATIFY)
+- **Zero-merges-in-basis** → `dollar_per_merged_pr: null` (degenerate)
+
+Per-audience Fold B HARD GATE (sister-shape `/output/ratios`): buyer sees empty `current`/`projected` + `_audience` echo (no output-strand ratios per audit-substrate-is-buyer-narrative canon).
+
+### 3.18 Task #223 v1 — `agent_channel_subscription` canonical-authority tier (SHIPPED 2026-07-01)
+
+Per PLAN-PLEXUS-ADMIN-CHANNEL-SUBSCRIPTION + parch #11225 RATIFY + s345-aieng #11214 OQ3 dedicated-UID-per-Ptah-instance. Distinct from CP12.15 `audit_channel_subscription_change` (log tier — tracks scan-diff of operator-edited channels file). This is the CANONICAL-AUTHORITY tier: admin writes per-agent subscription; daemon (yaklog-sub v0.5.17 forward-track) pulls; existing ChannelWatcher mtime-detection picks up local file write.
+
+Schema (`src/db.js`):
+- `agent_channel_subscription (agent_id, channel, subscribed_at, subscribed_by)` PK `(agent_id, channel)` + `idx_agent_channel_subscription_agent`
+
+Endpoints (`src/registerRoutes.js`):
+- `POST /api/v1/register/:id/channels` — ops-key auth (ops-tier write authority); REPLACE semantics via atomic DELETE+INSERT transaction; format-only validation `CHANNEL_NAME_RE = /^[a-zA-Z0-9_-]{1,64}$/` per OQ-C (not allowlist); returns `{agent_id, channels, subscribed_by, updated_at, subscribes_count, unsubscribes_count}`
+- `GET /api/v1/register/:id/channels` — ops-key (cross-read) OR bearer bound-to-agent (daemon self-read); uses `req.rawBearer` pre-mask per ADR-0030 v1.1 R1 opsKeyAuditMiddleware canon; returns `{agent_id, channels}`
+
+Sister-shape audit-emission per OQ-D RATIFY: subscribe/unsubscribe deltas emit CP12.15 `insertAuditChannelSubscriptionChange` rows (non-blocking; audit never blocks write). Phase 2 (yaklog-sub v0.5.17 ServerChannelPuller + admin cluster cascade per Path-A sister-shape) = separate cycle.
 
 ---
 
