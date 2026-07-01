@@ -45,7 +45,12 @@ test.after(() => {
 
 // ── seed ──────────────────────────────────────────────────────────────────
 
-const NOW = new Date('2026-06-04T12:00:00.000Z');
+// Anchor NOW to current-date-at-noon-UTC (was fixed '2026-06-04' — broke on
+// month rollover per secops #11256 root-cause: fixtures fell outside July mtd
+// window on 2026-07-01, cascading to 6 failing mtd-scoped assertions).
+// Live endpoints correct; test-fixture hygiene per Jon-direct #11262.
+const _nowD = new Date();
+const NOW = new Date(Date.UTC(_nowD.getUTCFullYear(), _nowD.getUTCMonth(), _nowD.getUTCDate(), 12, 0, 0, 0));
 const iso = (offsetMs) => new Date(NOW.getTime() + offsetMs).toISOString();
 
 test('seed: insert audit fixture rows', () => {

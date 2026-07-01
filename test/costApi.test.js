@@ -35,6 +35,19 @@ test.after(() => {
 const today = costQuery._internal.todayUtc();
 const T = (offsetDays) => costQuery._internal.ymd(new Date(Date.now() - offsetDays * 86400_000));
 
+// Month-boundary-aware helper for mtd assertions per secops #11256 root-cause fix
+// (Jon-direct #11262). Returns true if `T(offset)` falls in the current calendar
+// month — used so mtd-scoped assertions don't fail on the 1st when yesterday
+// (T(1)) or older offsets straddle into last month.
+const _isInCurrentMonth = (offsetDays) => {
+  const d = new Date(Date.now() - offsetDays * 86400_000);
+  const now = new Date();
+  return d.getUTCFullYear() === now.getUTCFullYear() && d.getUTCMonth() === now.getUTCMonth();
+};
+// Sum of seeded rows that would fall in current-month for eng-ops cost-center:
+// T(0)=7 always in-month; T(1)=15 depends; T(3)=40 depends.
+const _mtdEngOpsExpected = 7 + (_isInCurrentMonth(1) ? 15 : 0) + (_isInCurrentMonth(3) ? 40 : 0);
+
 test('seed: insert test cost_daily rows', () => {
   // Today: $10 across 2 agents
   upsertCostDaily({ date: T(0), agent_id: 'agent-a', model: 'opus', cost_usd: 7, cost_center: 'eng-ops' });
@@ -146,7 +159,8 @@ test('GET /cost/burn-vs-budget?cost_center=eng-ops → returns burn state', asyn
   assert.equal(r.statusCode, 200);
   assert.equal(r.body.cost_center, 'eng-ops');
   assert.equal(r.body.budget_usd, 50);
-  assert.ok(r.body.actual_usd >= 22);  // 7 (today) + 15 (yest) within current month
+  // Boundary-aware: 7 (today, always in-month) + 15 (yest, if in-month) + 40 (3d-ago, if in-month)
+  assert.ok(r.body.actual_usd >= _mtdEngOpsExpected, `actual_usd=${r.body.actual_usd} expected>=${_mtdEngOpsExpected}`);
   assert.ok(['green', 'warn', 'at', 'over'].includes(r.body.threshold_state));
 });
 
@@ -169,7 +183,8 @@ test('GET /cost/by-cost-center?period=mtd → CC breakdown with budgets', async 
   assert.equal(r.statusCode, 200);
   assert.ok(r.body.rows.length >= 2);
   const eng = r.body.rows.find(row => row.cost_center === 'eng-ops');
-  assert.ok(eng.actual_usd >= 22);
+  // Boundary-aware per secops #11256: T(0) always in-month; T(1)+T(3) may not
+  assert.ok(eng.actual_usd >= _mtdEngOpsExpected, `eng.actual_usd=${eng.actual_usd} expected>=${_mtdEngOpsExpected}`);
   assert.equal(eng.budget_usd, 50);
 });
 
