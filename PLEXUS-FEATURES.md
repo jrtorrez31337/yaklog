@@ -63,7 +63,7 @@ Each agent in the Live tab gets a card with 6 clickable view-pills (replaced the
 | **Cost** | Per-agent cost rate over the same window |
 | **Identity** | agent_id, runtime, OTel-derived user_email / org_id (Anthropic API account), aliases |
 | **Runtime** | Daemon process detail (pid, version, started_at), runtime_uid/gid/hostname, current_cwd, daemon-process-restart-detection |
-| **Trace** | Per-event activity timeline (CP10.3). Newest-first bubble stream in the agent's color; each bubble = one hook event with icon + distilled payload (tool name, cmd preview, file path, etc.) |
+| **Trace** | Per-event activity timeline (CP10.3). Newest-first bubble stream in the agent's color; each bubble = one hook event with icon + distilled payload (tool name, cmd preview, file path, etc.). **Ptah-agent branch (Task #260 Phase B/B.1 SHIPPED 2026-07-01 yaklog@f575435 + yaklog@1c3e828):** agents matching `/^ptah-/` render Ptah ORP episode timeline instead — sourced from `/api/v1/plexus/ptah-orp/<agent>/{episodes,trace}` (Task #246 substrate; s345-aieng #11214 emitter). Episode picker dropdown (Phase B.1) lists last 20 episodes for historical navigation with sticky per-instance selection preserved across 5s auto-refresh; per-tick bubble color-by-`result_dispatch` (accept=green / reject=red / defer=yellow); trace limit 200 for overnight review. Auth via `sessionStorage.plexus_operator_bearer` sister-shape PlexusOperatorDM; 401/403 → operator-login placeholder. |
 
 ### 2.3 Cross-cutting features
 
@@ -669,6 +669,20 @@ Endpoints (`src/registerRoutes.js`):
 - `GET /api/v1/register/:id/channels` — ops-key (cross-read) OR bearer bound-to-agent (daemon self-read); uses `req.rawBearer` pre-mask per ADR-0030 v1.1 R1 opsKeyAuditMiddleware canon; returns `{agent_id, channels}`
 
 Sister-shape audit-emission per OQ-D RATIFY: subscribe/unsubscribe deltas emit CP12.15 `insertAuditChannelSubscriptionChange` rows (non-blocking; audit never blocks write). Phase 2 (yaklog-sub v0.5.17 ServerChannelPuller + admin cluster cascade per Path-A sister-shape) = separate cycle.
+
+### 3.19 Task #260 Phase B/B.1 — Ptah ORP AgentCard Live pane + episode picker (SHIPPED 2026-06-30 → 2026-07-01)
+
+Per PLAN-PTAH-ORP-DASHBOARD-LIVE-PANE + Phase B.1 Jon-direct amendment. Browser-tier only (no new server surface — Task #246 endpoints from `src/ptahTraceRoute.js` sufficient); reads via `/api/v1/plexus/ptah-orp/<agent>/{episodes,trace}`.
+
+**Phase B (yaklog@f575435, parch #11233 RATIFY, Gate cascade closed at parch #11261/#11280):** AgentCard view=5 (Trace) branches on `/^ptah-/` regex to `_renderPtahTrace()` — non-Ptah agents keep existing generic-activity render (no regression). Per-tick bubble color by `result_dispatch`: accept/applied=green / reject=red / defer/retry=yellow / null=default. Episode header shows `<episode_id_short> · started <age> · orp_v<n> · @tick <n> · goal:<state>`. 5s auto-refresh sister-shape existing _renderTrace polling. Auth via `sessionStorage.getItem('plexus_operator_bearer')` sister-shape PlexusOperatorDM at dashboard.js:6294-6302 (per ADR-0030 v1.1 R1 opsKeyAuditMiddleware canon); 401/403 → "Operator login required" placeholder (session-context PII scope preserved per `src/ptahTraceRoute.js:24-33` _isOwnAgent).
+
+**Phase B.1 (yaklog@1c3e828, Jon-direct 2026-07-01 overnight-visibility gap):** episodes list `?limit=20` (was limit=1) + sticky per-instance episode picker dropdown for historical navigation. Sticky selection `this._ptahSelectedEpisodeId` preserved across 5s poll so operator's active review isn't hijacked by "most recent" default. Trace limit raised 50→200 for overnight-run review (episodes can be 100+ ticks). Vanished-episode graceful revert to most-recent (e.g. post-purge). Picker option format: `<episode_short> · <started_age> · @<tick><goal_mark>` where goal_mark = ✓ completed / ⚠ blocked / (blank) pending.
+
+**Empirical Gate (3) anchor:** s345-aieng #11260 Win11 first-emit landed 28-tick episode `t7-2026-07-01T08-53-19-662Z` (role_id doc-author-printer, goal_terminal blocked) with real snapshot_summary/chosen_decision/proposal data + manifest (trace_ndjson 53KB + story.txt 4KB + story.pdf 4MB). Post-Phase-B.1 deploy grep-verified: 5 picker tokens in dashboard.js + 3 CSS selectors live.
+
+Substrate-truth reframe canon-anchored at parch #11275: **substrate retention is COMPREHENSIVE (Ptah traces + audit + bus + presence-transitions + cost-daily all permanent); gap is UX composition, not data availability**. Task #264 PLAN-DASHBOARD-TIME-NAVIGATION.md broader scope-doc (dashboard-tier time-range picker across all views + URL persistence + presence historical-snapshot endpoint) authored 2026-07-01 as forward-track cycle.
+
+Broader Phase C forward-track candidates per parch OQ2/OQ3 dispositions: presence historical-snapshot endpoint (`?at=<iso>`) gated on operator-shift UX pain trigger; Operate tab pinned-Live discipline.
 
 ---
 
