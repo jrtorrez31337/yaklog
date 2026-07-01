@@ -2291,9 +2291,12 @@
       const bearer = sessionStorage.getItem('plexus_operator_bearer');
       const headers = bearer ? { Authorization: `Bearer ${bearer}` } : {};
       try {
-        // 1. Fetch most-recent episode (limit=1 = MVP; multi-episode = forward-track per PLAN §2)
+        // Phase B.1 (Jon-direct 2026-07-01 overnight-visibility): fetch recent
+        // episode LIST (was limit=1); operator picks from dropdown to review
+        // historical episodes. Sticky per-instance selection preserved across
+        // 5s auto-refresh so poll doesn't hijack the operator's active review.
         const epRes = await fetch(
-          `/api/v1/plexus/ptah-orp/${encodeURIComponent(this.agentId)}/episodes?limit=1`,
+          `/api/v1/plexus/ptah-orp/${encodeURIComponent(this.agentId)}/episodes?limit=20`,
           { headers },
         );
         if (this.currentView !== 5) return;
@@ -2316,10 +2319,16 @@
           this._schedulePtahTracePoll();
           return;
         }
-        const ep = episodes[0];
-        // 2. Fetch traces for this episode
+        // Resolve selected episode: sticky prior selection if still present, else most-recent (episodes[0])
+        let ep = episodes[0];
+        if (this._ptahSelectedEpisodeId) {
+          const found = episodes.find((e) => e.episode_id === this._ptahSelectedEpisodeId);
+          if (found) ep = found;
+          else this._ptahSelectedEpisodeId = null;  // vanished (e.g. purged); revert to newest
+        }
+        // Fetch traces for selected episode
         const trRes = await fetch(
-          `/api/v1/plexus/ptah-orp/${encodeURIComponent(this.agentId)}/trace?episode_id=${encodeURIComponent(ep.episode_id)}&limit=50`,
+          `/api/v1/plexus/ptah-orp/${encodeURIComponent(this.agentId)}/trace?episode_id=${encodeURIComponent(ep.episode_id)}&limit=200`,
           { headers },
         );
         if (this.currentView !== 5) return;
@@ -2331,19 +2340,38 @@
         }
         const trJson = await trRes.json();
         const traces = trJson.traces || [];
-        // 3. Episode header
+        // Episode picker (dropdown) — Phase B.1 historical navigation
+        const pickerRow = el('div', { class: 'ptah-episode-picker' });
+        pickerRow.appendChild(el('span', { class: 'ptah-picker-label' }, `Episode (${episodes.length}):`));
+        const select = el('select', { class: 'ptah-episode-select', 'aria-label': 'Select Ptah episode to view' });
+        for (const e of episodes) {
+          const shortId = String(e.episode_id || '').slice(0, 24);
+          const started = e.started_at ? _fmtAgeShort(e.started_at) : '?';
+          const goalMark = e.goal_terminal === 'completed' ? ' ✓' : (e.goal_terminal === 'blocked' ? ' ⚠' : '');
+          const opt = el('option', { value: e.episode_id }, `${shortId} · ${started} · @${e.last_tick ?? '?'}${goalMark}`);
+          if (e.episode_id === ep.episode_id) opt.selected = true;
+          select.appendChild(opt);
+        }
+        select.addEventListener('change', (ev) => {
+          this._ptahSelectedEpisodeId = ev.target.value;
+          this._renderPtahTrace();  // re-fetch with new selection
+        });
+        pickerRow.appendChild(select);
+        this.bodyEl.appendChild(pickerRow);
+        // Episode header (metadata for selected)
         const epShort = String(ep.episode_id || '').slice(0, 12);
         const goalState = ep.goal_terminal || 'pending';
+        const startedAgo = ep.started_at ? _fmtAgeShort(ep.started_at) : '?';
         const header = el('div', { class: 'ptah-episode-header', title: ep.episode_id },
-          `Episode ${epShort}… · orp_v${ep.orp_version || '?'} · @tick ${ep.last_tick ?? '?'} · goal:${goalState}`);
+          `${epShort}… · started ${startedAgo} · orp_v${ep.orp_version || '?'} · @tick ${ep.last_tick ?? '?'} · goal:${goalState}`);
         this.bodyEl.appendChild(header);
-        // 4. Tick timeline (sister-shape existing trace-stream bubbles)
+        // Tick timeline (sister-shape existing trace-stream bubbles)
         if (traces.length === 0) {
           this.bodyEl.appendChild(el('div', { class: 'view-empty' },
             'Episode exists but no trace records yet.'));
         } else {
           const wrap = el('div', { class: 'trace-stream' });
-          // Server returns ordered by (episode_id, tick); render newest last for chronological
+          // Server returns ordered by (episode_id, tick); render chronological
           for (const t of traces) {
             const row = el('div', { class: 'trace-row' });
             row.appendChild(el('span', { class: 'trace-icon' }, _ptahTickIcon(t.result_dispatch)));
