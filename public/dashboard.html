@@ -474,6 +474,12 @@
   /* Buyer-tier banner explains the Fold-B canon scope */
   #tab-effort .effort-buyer-banner { display: none; padding: 14px 18px; background: var(--panel); border-bottom: 1px solid var(--border); color: var(--muted); font-size: 12px; line-height: 1.5; }
   #tab-effort.audience-buyer .effort-buyer-banner { display: block; }
+  /* CP13.8: buyer-banner link was UA-default #0000ee on --panel #161922 (contrast
+     1.86 — WCAG 1.4.3 fail, buyer-visible glass). Use the lightened brand-blue
+     token (~6.9:1 on --panel) per s345 brand-palette canon; keep underline as the
+     link affordance + a visible keyboard focus ring. */
+  #tab-effort .effort-buyer-banner a { color: var(--blue); text-decoration: underline; }
+  #tab-effort .effort-buyer-banner a:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 
   /* CP14.x ORP tab styles (substrate-shell; a11y-first per
      [[feedback_accessibility_is_structural_canon_not_polish]]) */

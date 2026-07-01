@@ -151,3 +151,12 @@ test('/dashboard.js composition/anomaly render through the shared state helper',
   // Anomaly insufficient-history empty state.
   assert.match(r.text, /Not enough history yet/);
 });
+
+// ── CP13.8: buyer-banner link contrast (WCAG 1.4.3) ────────────────────────
+test('/dashboard buyer-banner link uses accessible brand token, not UA-default', async () => {
+  const r = await request(app).get('/dashboard');
+  // The <a> must be styled off the UA-default #0000ee (1.86:1 on --panel).
+  assert.match(r.text, /\.effort-buyer-banner a\s*\{[^}]*color:\s*var\(--blue\)/);
+  // ...with a visible keyboard focus ring.
+  assert.match(r.text, /\.effort-buyer-banner a:focus-visible\s*\{[^}]*outline:/);
+});
