@@ -792,6 +792,24 @@ function initializeDb() {
     )
   `).run();
 
+  // Task #223 v1 (2026-07-01): agent_channel_subscription — per-agent
+  // CANONICAL-AUTHORITY channel subscription list. Written by admin via
+  // POST /api/v1/register/:id/channels; read by daemon ServerChannelPuller.
+  // Distinct from CP12.15 audit_channel_subscription_change (LOG tier);
+  // this is AUTHORITY tier per PLAN-PLEXUS-ADMIN-CHANNEL-SUBSCRIPTION.
+  // Empty rows for agent_id = no server-canonical filter (daemon writes
+  // empty file → ChannelWatcher no-filter mode; subscribe-to-all).
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS agent_channel_subscription (
+      agent_id      TEXT NOT NULL,
+      channel       TEXT NOT NULL,
+      subscribed_at TEXT NOT NULL,
+      subscribed_by TEXT NOT NULL,
+      PRIMARY KEY (agent_id, channel)
+    )
+  `).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_agent_channel_subscription_agent ON agent_channel_subscription(agent_id)`).run();
+
   // CP12.12 (2026-06-07): audit_anchor — Phase 3 (A) external integrity
   // anchor per parch #7984 4-OQ ratify. Each row records a published daily
   // hash digest anchored to an external append-only substrate (S3 Object
@@ -3990,6 +4008,91 @@ function processChannelSubscriptionScan({ subscriptions, actor, scan_at } = {}) 
   };
 }
 
+// ─── Task #223 v1: agent_channel_subscription (canonical authority tier) ────
+// Per PLAN-PLEXUS-ADMIN-CHANNEL-SUBSCRIPTION + parch #11225 RATIFY.
+// Distinct from CP12.15 audit_channel_subscription_change (log tier).
+
+function getAgentChannels(agent_id) {
+  const database = getDb();
+  const rows = database
+    .prepare('SELECT channel FROM agent_channel_subscription WHERE agent_id = ? ORDER BY channel')
+    .all(String(agent_id || ''));
+  return rows.map(r => r.channel);
+}
+
+function setAgentChannels({ agent_id, channels, subscribed_by }) {
+  if (!agent_id || typeof agent_id !== 'string') {
+    throw new Error('setAgentChannels: agent_id required');
+  }
+  if (!Array.isArray(channels)) {
+    throw new Error('setAgentChannels: channels array required');
+  }
+  if (!subscribed_by || typeof subscribed_by !== 'string') {
+    throw new Error('setAgentChannels: subscribed_by required');
+  }
+  // Per PLAN OQ-C RATIFY: format-only validation, not allowlist
+  // (preserves ad-hoc subscription discipline). CHANNEL_NAME_RE per CP12.15.
+  const invalid = channels.filter(c => typeof c !== 'string' || !CHANNEL_NAME_RE.test(c));
+  if (invalid.length > 0) {
+    throw new Error(`setAgentChannels: invalid channel names: ${invalid.join(', ')}`);
+  }
+  const canonical = [...new Set(channels)].sort();
+  const prior = getAgentChannels(agent_id);
+  const priorSet = new Set(prior);
+  const canonicalSet = new Set(canonical);
+  const subscribes = canonical.filter(c => !priorSet.has(c));
+  const unsubscribes = prior.filter(c => !canonicalSet.has(c));
+  const now = new Date().toISOString();
+  const database = getDb();
+  const tx = database.transaction(() => {
+    database.prepare('DELETE FROM agent_channel_subscription WHERE agent_id = ?').run(agent_id);
+    const ins = database.prepare(`
+      INSERT INTO agent_channel_subscription (agent_id, channel, subscribed_at, subscribed_by)
+      VALUES (?, ?, ?, ?)
+    `);
+    for (const c of canonical) {
+      ins.run(agent_id, c, now, subscribed_by);
+    }
+  });
+  tx();
+  // Per PLAN OQ-D RATIFY: sister-shape audit-emission via CP12.15 helper.
+  // Emit one audit row per delta (subscribe/unsubscribe); actor field = subscribed_by.
+  for (const ch of subscribes) {
+    try {
+      insertAuditChannelSubscriptionChange({
+        occurred_at: now,
+        agent_id,
+        change_type: 'subscribe',
+        channel_name: ch,
+        actor: subscribed_by,
+        source_path: 'agent_channel_subscription-authority-tier',
+        reason: `admin-canonical set: subscribed ${agent_id} to ${ch}`,
+      });
+    } catch (e) { /* audit-emission never blocks the write */ }
+  }
+  for (const ch of unsubscribes) {
+    try {
+      insertAuditChannelSubscriptionChange({
+        occurred_at: now,
+        agent_id,
+        change_type: 'unsubscribe',
+        channel_name: ch,
+        actor: subscribed_by,
+        source_path: 'agent_channel_subscription-authority-tier',
+        reason: `admin-canonical set: unsubscribed ${agent_id} from ${ch}`,
+      });
+    } catch (e) { /* audit-emission never blocks */ }
+  }
+  return {
+    agent_id,
+    channels: canonical,
+    subscribed_by,
+    updated_at: now,
+    subscribes_count: subscribes.length,
+    unsubscribes_count: unsubscribes.length,
+  };
+}
+
 module.exports = {
   initializeDb,
   getDb,
@@ -4066,6 +4169,9 @@ module.exports = {
   listAuditChannelSubscriptionChanges,
   processChannelSubscriptionScan,
   diffChannelSubscriptions,
+  // Task #223 v1 (2026-07-01): canonical-authority tier
+  getAgentChannels,
+  setAgentChannels,
   // COUNT-only helpers for /audit/by-control-area perf fix (sister-shape list* but SELECT COUNT(*)).
   countAuditToolInvocations,
   countAuditFileAccess,

@@ -694,4 +694,60 @@ router.get('/', auth, (req, res) => {
   });
 });
 
+// ─── Task #223 v1: /register/:id/channels (canonical-authority tier) ────────
+// Per PLAN-PLEXUS-ADMIN-CHANNEL-SUBSCRIPTION + parch #11225 RATIFY.
+// POST = ops-key write (admin authority); GET = bearer OR ops-key read.
+
+const { setAgentChannels, getAgentChannels } = require('./db');
+
+router.post('/:id/channels', enforceOpsKey, (req, res) => {
+  const agent_id = req.params.id;
+  if (!AGENT_ID_RE.test(agent_id)) {
+    return res.status(400).json({ error: 'ValidationError', message: 'agent_id must match [a-zA-Z0-9._:@/-]{1,64}' });
+  }
+  const { channels } = req.body || {};
+  if (!Array.isArray(channels)) {
+    return res.status(400).json({ error: 'ValidationError', message: 'body.channels must be an array' });
+  }
+  const subscribed_by = req.headers['x-ops-key-id'] || 'ops-endpoint';
+  try {
+    const result = setAgentChannels({ agent_id, channels, subscribed_by });
+    return res.status(200).json(result);
+  } catch (err) {
+    return res.status(400).json({ error: 'ValidationError', message: err.message });
+  }
+});
+
+router.get('/:id/channels', (req, res) => {
+  const agent_id = req.params.id;
+  if (!AGENT_ID_RE.test(agent_id)) {
+    return res.status(400).json({ error: 'ValidationError', message: 'agent_id must match [a-zA-Z0-9._:@/-]{1,64}' });
+  }
+  // Auth per PLAN §3.3: ops-key (admin cross-read) OR bearer bound to this agent (daemon self-read).
+  // Use req.rawBearer stashed by opsKeyAuditMiddleware (per ADR-0030 v1.1 R1)
+  // because req.headers.authorization is masked to `Bearer sha256:<prefix>`
+  // by the audit middleware BEFORE this handler runs. Sister-shape enforceOpsKey.
+  let token = req.rawBearer;
+  if (!token) {
+    const authHeader = req.headers['authorization'] || '';
+    const match = authHeader.match(/^Bearer\s+(.+)$/);
+    token = match ? match[1].trim() : null;
+  }
+  if (!token) {
+    return res.status(401).json({ error: 'Unauthorized', message: 'Bearer token required (ops-key or per-agent)' });
+  }
+  const isOps = config.opsApiKeys && config.opsApiKeys.has(token);
+  if (!isOps) {
+    if (!config.apiKeys.has(token)) {
+      return res.status(401).json({ error: 'Unauthorized', message: 'invalid token' });
+    }
+    const boundAgents = config.tokenBindings.get(token) || config.daemonBindings.get(token);
+    if (boundAgents && !boundAgents.has(agent_id)) {
+      return res.status(403).json({ error: 'Forbidden', message: 'bearer token not bound to this agent_id' });
+    }
+  }
+  const channels = getAgentChannels(agent_id);
+  return res.status(200).json({ agent_id, channels });
+});
+
 module.exports = router;
