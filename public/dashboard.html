@@ -520,6 +520,20 @@
   .effort-section-title { color: var(--text); font-size: 16px; font-weight: 600; margin-bottom: 10px; }
   .effort-section-body { color: var(--text); font-size: 13px; line-height: 1.5; }
   .effort-muted { color: var(--muted); font-size: 12px; }
+  /* CP13.7 (parch #10812): shared effort empty/loading/error state. Mirrors
+     the house empty-state pattern (.chan-empty/.bus-empty/.alerts-empty:
+     centered, muted, 12px) so all four lenses speak one state vocabulary.
+     Fixed min-height keeps box dims stable across loading→loaded (no shift). */
+  .effort-state { min-height: 96px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 24px 18px; text-align: center; color: var(--muted); font-size: 12px; }
+  .effort-state .es-title { color: var(--text); font-size: 13px; }
+  .effort-state .es-sub { color: var(--muted); font-size: 12px; max-width: 42ch; }
+  .effort-state.is-error .es-title { color: var(--red); }
+  .effort-state .es-retry { margin-top: 8px; min-height: 32px; min-width: 88px; padding: 0 14px; background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; font-size: 12px; }
+  .effort-state .es-retry:hover { border-color: var(--red); }
+  .effort-state .es-retry:focus-visible { outline: 2px solid var(--red); outline-offset: 2px; }
+  .effort-skeleton { width: 80%; height: 8px; border-radius: 4px; background: linear-gradient(90deg, var(--border) 25%, var(--panel) 37%, var(--border) 63%); background-size: 400% 100%; animation: effortShimmer 1.4s ease infinite; }
+  @keyframes effortShimmer { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
+  @media (prefers-reduced-motion: reduce) { .effort-skeleton { animation: none; } }
   .effort-composition-table { width: 100%; border-collapse: collapse; font-size: 12px; }
   .effort-composition-table th, .effort-composition-table td { padding: 6px 10px; text-align: left; border-bottom: 1px solid var(--border); }
   .effort-composition-table th { color: var(--muted); font-weight: 500; font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; }
@@ -1671,7 +1685,7 @@
           <thead>
             <tr><th>Agent</th><th>Coord msgs</th><th>Commits</th><th>Merges</th><th>Cost $</th></tr>
           </thead>
-          <tbody id="effort-composition-tbody"><tr><td colspan="5" class="effort-muted">Loading…</td></tr></tbody>
+          <tbody id="effort-composition-tbody"><tr><td colspan="5"><div class="effort-state" role="status" aria-live="polite"><div class="effort-skeleton"></div><div class="es-sub">Loading effort data…</div></div></td></tr></tbody>
         </table>
       </div>
     </div>

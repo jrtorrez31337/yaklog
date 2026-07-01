@@ -4569,6 +4569,40 @@
     return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   }
 
+  // CP13.7 (parch #10812): map raw fetch errors to operator-calm copy. Never
+  // surface raw "HTTP 500" / stack fragments on the glass — noise + minor leak.
+  function sanitizeEffortError(msg) {
+    const m = String(msg || '');
+    if (/HTTP 40[13]/.test(m)) return 'Access denied for this view.';
+    if (/HTTP 5\d\d/.test(m)) return 'Service error — please retry.';
+    if (/Failed to fetch|NetworkError|ECONN|Load failed/i.test(m)) return 'Network unavailable — check the connection.';
+    return 'Couldn’t load this data.';
+  }
+
+  // CP13.7: shared empty/loading/error state, mirroring the .chan-empty house
+  // pattern. kind: 'loading' | 'empty' | 'error'. Returns a sanitized HTML
+  // string (escaped throughout). When withRetry, an onclick hook id is emitted
+  // so the caller can bind refreshEffortData (recovery affordance, WCAG 2.5.8).
+  function effortStateHtml(kind, title, sub, withRetry) {
+    const k = (kind === 'error' || kind === 'empty') ? kind : 'loading';
+    let body = '';
+    if (k === 'loading') body += '<div class="effort-skeleton"></div>';
+    if (title) body += '<div class="es-title">' + escapeEffortHtml(title) + '</div>';
+    if (sub) body += '<div class="es-sub">' + escapeEffortHtml(sub) + '</div>';
+    if (k === 'error' && withRetry) {
+      body += '<button type="button" class="es-retry" data-effort-retry="1">Retry</button>';
+    }
+    const live = k === 'loading' ? 'polite' : 'assertive';
+    return '<div class="effort-state is-' + k + '" role="status" aria-live="' + live + '">' + body + '</div>';
+  }
+
+  // Bind any Retry button rendered by effortStateHtml to a fresh data fetch.
+  function bindEffortRetry(container) {
+    if (!container) return;
+    const btn = container.querySelector('[data-effort-retry]');
+    if (btn) btn.addEventListener('click', () => { refreshEffortData(); });
+  }
+
   async function refreshEffortData() {
     const { audience, lens, period } = effortState;
     const readout = document.getElementById('effort-audience-readout');
@@ -4596,7 +4630,7 @@
     if (ttm) ttm.textContent = fmtEffortHours(ratios.time_to_merge_hours);
     if (cgap) cgap.textContent = coverage._error ? '—' : coverage.null_fallback_pct + '%';
     if (cgapSub) cgapSub.textContent = coverage._error
-      ? coverage._error
+      ? sanitizeEffortError(coverage._error)
       : coverage.null_fallback_count + ' / ' + coverage.total_commits + ' commits';
 
     // Phase 2.3 ratio sub-text: cohort size for pr_merge_rate (substrate-honesty
@@ -4622,9 +4656,13 @@
     if (aepr) aepr.textContent = fmtEffortNum(ratios.agents_engaged_per_merged_pr);
 
     if (lens === 'composition') {
+      const tbody = document.getElementById('effort-composition-tbody');
+      if (tbody) tbody.innerHTML = '<tr><td colspan="5">' + effortStateHtml('loading', null, 'Loading effort data…') + '</td></tr>';
       const comp = await fetchEffortJson('/api/v1/output/composition?period=' + period + '&by=agent');
       renderEffortComposition(comp);
     } else if (lens === 'anomaly') {
+      const readout = document.getElementById('effort-anomaly-readout');
+      if (readout) readout.innerHTML = effortStateHtml('loading', null, 'Loading anomaly data…');
       const anom = await fetchEffortJson('/api/v1/output/anomalies?lookback_days=7&threshold=2.0');
       renderEffortAnomaly(anom);
     }
@@ -4633,12 +4671,15 @@
   function renderEffortComposition(comp) {
     const tbody = document.getElementById('effort-composition-tbody');
     if (!tbody) return;
-    if (comp._error || !comp.rows) {
-      tbody.innerHTML = '<tr><td colspan="5" class="effort-muted">' + escapeEffortHtml(comp._error || 'no data') + '</td></tr>';
+    if (comp._error) {
+      tbody.innerHTML = '<tr><td colspan="5">' + effortStateHtml('error',
+        'Couldn’t load composition.', sanitizeEffortError(comp._error), true) + '</td></tr>';
+      bindEffortRetry(tbody);
       return;
     }
-    if (comp.rows.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="5" class="effort-muted">no agent activity in period</td></tr>';
+    if (!comp.rows || comp.rows.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="5">' + effortStateHtml('empty',
+        'No agent activity in this period.', 'Try a wider period, or check back after the next merge cycle.') + '</td></tr>';
       return;
     }
     tbody.innerHTML = comp.rows.slice(0, 30).map((r) =>
@@ -4654,7 +4695,16 @@
     const readout = document.getElementById('effort-anomaly-readout');
     if (!readout) return;
     if (anom._error) {
-      readout.innerHTML = '<p class="effort-muted">error: ' + escapeEffortHtml(anom._error) + '</p>';
+      readout.innerHTML = effortStateHtml('error',
+        'Couldn’t load anomaly data.', sanitizeEffortError(anom._error), true);
+      bindEffortRetry(readout);
+      return;
+    }
+    // Insufficient history: no prior-window mean to compare against (e.g. a new
+    // cluster with < lookback days of cost data). Distinct from an error.
+    if (anom.ratio == null && anom.prior_mean_usd == null) {
+      readout.innerHTML = effortStateHtml('empty',
+        'Not enough history yet.', 'Anomaly detection needs a full prior window of cost data. Check back after more activity accrues.');
       return;
     }
     const ratio = anom.ratio == null ? '—' : anom.ratio.toFixed(2) + '×';
