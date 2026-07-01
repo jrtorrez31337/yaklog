@@ -2221,6 +2221,11 @@
     // trust). Renders each event as an agent-colored bubble, newest-first.
     // Distillation is daemon-side (allowlist-redacted secrets); UI just renders.
     async _renderTrace() {
+      // Task #260 Phase B (parch #11233 RATIFY): ptah-* agents render Ptah ORP
+      // trace records via the dedicated ORP endpoints (sister-shape existing
+      // generic-activity view). Non-ptah agents keep existing render unchanged.
+      // Per PLAN-PTAH-ORP-DASHBOARD-LIVE-PANE §5.
+      if (/^ptah-/.test(this.agentId)) return this._renderPtahTrace();
       clearChildren(this.bodyEl);
       this.bodyEl.className = 'agent-card-body view-trace';
       this.bodyEl.appendChild(el('div', { class: 'view-loading-inline' }, 'loading activity…'));
@@ -2272,6 +2277,124 @@
         this.bodyEl.appendChild(el('div', { class: 'view-empty' }, 'error: ' + e.message));
       }
     }
+
+    // Task #260 Phase B: Ptah ORP trace render (parch #11233 RATIFY view=5
+    // branch per OQ3). Sister-shape existing _renderTrace polling + trace-row
+    // bubble render but sources from /api/v1/plexus/ptah-orp/<agent>/{episodes,trace}
+    // per Task #246 substrate. Auth via sessionStorage plexus_operator_bearer
+    // (OQ2 empirical-verified sister-shape PlexusOperatorDM at dashboard.js:6294).
+    async _renderPtahTrace() {
+      clearChildren(this.bodyEl);
+      this.bodyEl.className = 'agent-card-body view-trace view-ptah-trace';
+      this.bodyEl.appendChild(el('div', { class: 'view-loading-inline' }, 'loading Ptah trace…'));
+      const seq = ++this._traceSeq || (this._traceSeq = 1);
+      const bearer = sessionStorage.getItem('plexus_operator_bearer');
+      const headers = bearer ? { Authorization: `Bearer ${bearer}` } : {};
+      try {
+        // 1. Fetch most-recent episode (limit=1 = MVP; multi-episode = forward-track per PLAN §2)
+        const epRes = await fetch(
+          `/api/v1/plexus/ptah-orp/${encodeURIComponent(this.agentId)}/episodes?limit=1`,
+          { headers },
+        );
+        if (this.currentView !== 5) return;
+        if (this._traceSeq !== seq) return;
+        clearChildren(this.bodyEl);
+        if (epRes.status === 401 || epRes.status === 403) {
+          this.bodyEl.appendChild(el('div', { class: 'view-empty' },
+            'Operator login required to view Ptah traces (session-context PII scope).'));
+          return;
+        }
+        if (!epRes.ok) {
+          this.bodyEl.appendChild(el('div', { class: 'view-empty' }, `error: HTTP ${epRes.status}`));
+          return;
+        }
+        const epJson = await epRes.json();
+        const episodes = epJson.episodes || [];
+        if (episodes.length === 0) {
+          this.bodyEl.appendChild(el('div', { class: 'view-empty' },
+            'No Ptah episodes yet — awaiting first trace emit.'));
+          this._schedulePtahTracePoll();
+          return;
+        }
+        const ep = episodes[0];
+        // 2. Fetch traces for this episode
+        const trRes = await fetch(
+          `/api/v1/plexus/ptah-orp/${encodeURIComponent(this.agentId)}/trace?episode_id=${encodeURIComponent(ep.episode_id)}&limit=50`,
+          { headers },
+        );
+        if (this.currentView !== 5) return;
+        if (this._traceSeq !== seq) return;
+        if (!trRes.ok) {
+          this.bodyEl.appendChild(el('div', { class: 'view-empty' }, `trace fetch: HTTP ${trRes.status}`));
+          this._schedulePtahTracePoll();
+          return;
+        }
+        const trJson = await trRes.json();
+        const traces = trJson.traces || [];
+        // 3. Episode header
+        const epShort = String(ep.episode_id || '').slice(0, 12);
+        const goalState = ep.goal_terminal || 'pending';
+        const header = el('div', { class: 'ptah-episode-header', title: ep.episode_id },
+          `Episode ${epShort}… · orp_v${ep.orp_version || '?'} · @tick ${ep.last_tick ?? '?'} · goal:${goalState}`);
+        this.bodyEl.appendChild(header);
+        // 4. Tick timeline (sister-shape existing trace-stream bubbles)
+        if (traces.length === 0) {
+          this.bodyEl.appendChild(el('div', { class: 'view-empty' },
+            'Episode exists but no trace records yet.'));
+        } else {
+          const wrap = el('div', { class: 'trace-stream' });
+          // Server returns ordered by (episode_id, tick); render newest last for chronological
+          for (const t of traces) {
+            const row = el('div', { class: 'trace-row' });
+            row.appendChild(el('span', { class: 'trace-icon' }, _ptahTickIcon(t.result_dispatch)));
+            const decisionLabel = t.chosen_decision || '?';
+            const summary = String(t.snapshot_summary || '').slice(0, 60);
+            const bubble = el('div', {
+              class: 'trace-bubble ' + _ptahDispatchClass(t.result_dispatch),
+              title: `T${t.tick} · decision=${decisionLabel} · dispatch=${t.result_dispatch || 'null'} · ${t.received_at || ''}`,
+            });
+            bubble.appendChild(el('span', { class: 'trace-evt' }, `T${t.tick}`));
+            bubble.appendChild(el('span', { class: 'trace-sum' }, ' · ' + decisionLabel + (summary ? ' · ' + summary : '')));
+            row.appendChild(bubble);
+            const ageMs = t.ts_unix_ms ? Date.now() - Number(t.ts_unix_ms) : null;
+            row.appendChild(el('span', { class: 'trace-age' }, ageMs != null ? _fmtAgeShort(new Date(t.ts_unix_ms).toISOString()) : ''));
+            wrap.appendChild(row);
+          }
+          this.bodyEl.appendChild(wrap);
+        }
+        this._schedulePtahTracePoll();
+      } catch (e) {
+        if (this.currentView !== 5) return;
+        clearChildren(this.bodyEl);
+        this.bodyEl.appendChild(el('div', { class: 'view-empty' }, 'error: ' + e.message));
+      }
+    }
+
+    _schedulePtahTracePoll() {
+      // 5s auto-refresh per OQ1 RATIFY (MVP sister-shape existing _renderTrace cadence)
+      if (this._traceInterval) clearInterval(this._traceInterval);
+      this._traceInterval = setInterval(() => {
+        if (this.currentView === 5) this._renderTrace();
+        else { clearInterval(this._traceInterval); this._traceInterval = null; }
+      }, 5000);
+    }
+  }
+  // Task #260 helpers for Ptah tick render — outside class for purity.
+  function _ptahTickIcon(dispatch) {
+    switch (dispatch) {
+      case 'accept':
+      case 'applied':  return '✅';
+      case 'reject':   return '❌';
+      case 'defer':
+      case 'retry':    return '⏸';
+      default:         return '·';
+    }
+  }
+  function _ptahDispatchClass(dispatch) {
+    if (dispatch === 'accept' || dispatch === 'applied') return 'ptah-dispatch-accept';
+    if (dispatch === 'reject') return 'ptah-dispatch-reject';
+    if (dispatch === 'defer' || dispatch === 'retry') return 'ptah-dispatch-defer';
+    return '';
   }
   // Tiny helpers for trace view — outside the class so they can stay pure.
   function traceIcon(event) {
