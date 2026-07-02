@@ -34,7 +34,7 @@ const {
 const { enforceRegistrantToken } = require('./middleware/registrantToken');
 const { enforceOpsKey } = require('./middleware/opsKey');
 const auth = require('./middleware/auth');
-const { enforceSenderBinding } = require('./middleware/senderBinding');
+const { enforceSenderBinding, resolveAllowedSenders } = require('./middleware/senderBinding');
 // Task #137 Phase B per parch #10266 Q2+Q3 ratify: at /register-transition-to-
 // ACTIVE, pre-provision per-Ptah-agent audit SQLite file when submission
 // declares runtime_class='ptah'. Q2 ratify: "at /register pre-provisioned +
@@ -724,9 +724,12 @@ router.get('/:id/channels', (req, res) => {
     return res.status(400).json({ error: 'ValidationError', message: 'agent_id must match [a-zA-Z0-9._:@/-]{1,64}' });
   }
   // Auth per PLAN §3.3: ops-key (admin cross-read) OR bearer bound to this agent (daemon self-read).
-  // Use req.rawBearer stashed by opsKeyAuditMiddleware (per ADR-0030 v1.1 R1)
-  // because req.headers.authorization is masked to `Bearer sha256:<prefix>`
-  // by the audit middleware BEFORE this handler runs. Sister-shape enforceOpsKey.
+  // Task #262 secops #11229 advisory fold: consult shared resolveAllowedSenders()
+  // FIRST for canon-consistency across operator/registration/env-token paths,
+  // then FALL THROUGH to daemonBindings for cross-canon coverage (senderBinding's
+  // shared resolver doesn't include daemonBindings; extending it is broader
+  // canon-review-required change per Task #262). Uses req.rawBearer stashed by
+  // opsKeyAuditMiddleware per ADR-0030 v1.1 R1 (header masked to sha256:<prefix>).
   let token = req.rawBearer;
   if (!token) {
     const authHeader = req.headers['authorization'] || '';
@@ -738,12 +741,26 @@ router.get('/:id/channels', (req, res) => {
   }
   const isOps = config.opsApiKeys && config.opsApiKeys.has(token);
   if (!isOps) {
-    if (!config.apiKeys.has(token)) {
-      return res.status(401).json({ error: 'Unauthorized', message: 'invalid token' });
-    }
-    const boundAgents = config.tokenBindings.get(token) || config.daemonBindings.get(token);
-    if (boundAgents && !boundAgents.has(agent_id)) {
-      return res.status(403).json({ error: 'Forbidden', message: 'bearer token not bound to this agent_id' });
+    // Delegate operator/registration/env-tokenBindings path to shared resolver
+    // (canon-consistency per secops #11229 advisory).
+    const { allowedSenders } = resolveAllowedSenders(req);
+    if (allowedSenders) {
+      if (!allowedSenders.has(agent_id)) {
+        return res.status(403).json({ error: 'Forbidden', message: 'bearer token not bound to this agent_id' });
+      }
+      // Bound + matches → authorized; fall to read
+    } else {
+      // Shared resolver returned unbound. Fall through to legacy checks
+      // (apiKeys + daemonBindings) — preserves daemon-self-read canon that
+      // the shared resolver doesn't cover. Extending resolveAllowedSenders
+      // to include daemonBindings is broader canon-review-required change.
+      if (!config.apiKeys.has(token)) {
+        return res.status(401).json({ error: 'Unauthorized', message: 'invalid token' });
+      }
+      const boundAgents = config.tokenBindings.get(token) || config.daemonBindings.get(token);
+      if (boundAgents && !boundAgents.has(agent_id)) {
+        return res.status(403).json({ error: 'Forbidden', message: 'bearer token not bound to this agent_id' });
+      }
     }
   }
   const channels = getAgentChannels(agent_id);
