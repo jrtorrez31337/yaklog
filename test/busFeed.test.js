@@ -70,6 +70,69 @@ test('GET /api/v1/plexus/public/messages — invalid channel → 400', async () 
   assert.equal(res.body.error, 'ValidationError');
 });
 
+// Task #264 Phase 2.6 (Jon-direct 2026-07-03): dashboard-tier Bus tab
+// time-navigation. before_ts_ms / after_ts_ms accept millisecond-epoch
+// integers, converted server-side to ISO-8601 for lexicographic compare
+// against created_at TEXT column.
+test('GET /api/v1/plexus/public/messages — before_ts_ms=future returns all messages', async () => {
+  // created_at is second-precision (SQLite datetime('now')). Test uses a
+  // well-future cursor + a well-past cursor to sidestep same-second ties
+  // that same-batch-seeded messages naturally have — the cursor's job is
+  // time-window slicing, not per-record tie-breaking (that's before_id).
+  const all = await request(app).get('/api/v1/plexus/public/messages?limit=50');
+  const futureMs = Date.now() + 10_000;
+  const res = await request(app).get(`/api/v1/plexus/public/messages?limit=50&before_ts_ms=${futureMs}`);
+  assert.equal(res.statusCode, 200);
+  // All seeded (past) messages should be returned when cursor is well-future.
+  assert.ok(res.body.messages.length >= all.body.messages.length);
+});
+
+test('GET /api/v1/plexus/public/messages — before_ts_ms=past returns zero messages', async () => {
+  // Cursor from before test seeded data (1970-ish) → strict < filter empties.
+  const pastMs = 0;
+  const res = await request(app).get(`/api/v1/plexus/public/messages?limit=50&before_ts_ms=${pastMs}`);
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.messages.length, 0);
+});
+
+test('GET /api/v1/plexus/public/messages — after_ts_ms=past returns all messages', async () => {
+  const all = await request(app).get('/api/v1/plexus/public/messages?limit=50');
+  const pastMs = 0;
+  const res = await request(app).get(`/api/v1/plexus/public/messages?limit=50&after_ts_ms=${pastMs}`);
+  assert.equal(res.statusCode, 200);
+  assert.ok(res.body.messages.length >= all.body.messages.length);
+});
+
+test('GET /api/v1/plexus/public/messages — after_ts_ms=future returns zero messages', async () => {
+  const futureMs = Date.now() + 10_000;
+  const res = await request(app).get(`/api/v1/plexus/public/messages?limit=50&after_ts_ms=${futureMs}`);
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.messages.length, 0);
+});
+
+test('GET /api/v1/plexus/public/messages — combined after_ts_ms + before_ts_ms window', async () => {
+  const all = await request(app).get('/api/v1/plexus/public/messages?limit=50');
+  const nowMs = Date.now();
+  // Window: [now - 1h, now + 10s) — captures all seeded (very recent) msgs.
+  const oneHourAgo = nowMs - 3600_000;
+  const futureCap = nowMs + 10_000;
+  const res = await request(app).get(`/api/v1/plexus/public/messages?limit=50&after_ts_ms=${oneHourAgo}&before_ts_ms=${futureCap}`);
+  assert.equal(res.statusCode, 200);
+  assert.ok(res.body.messages.length >= all.body.messages.length);
+});
+
+test('GET /api/v1/plexus/public/messages — before_ts_ms invalid → 400', async () => {
+  const res = await request(app).get('/api/v1/plexus/public/messages?before_ts_ms=not-a-number');
+  assert.equal(res.statusCode, 400);
+  assert.equal(res.body.error, 'ValidationError');
+});
+
+test('GET /api/v1/plexus/public/messages — after_ts_ms invalid → 400', async () => {
+  const res = await request(app).get('/api/v1/plexus/public/messages?after_ts_ms=abc');
+  assert.equal(res.statusCode, 400);
+  assert.equal(res.body.error, 'ValidationError');
+});
+
 // Note: SSE mount at /api/v1/plexus/public/messages-stream is the same
 // streamHandler covered by stream.test.js — the public-mirror just removes
 // the auth middleware. dmFilter unbound-path applies (per dm.test.js suite).

@@ -463,7 +463,20 @@ publicRouter.get('/messages', (req, res) => {
   if (req.query.before_id !== undefined && beforeId === null && req.query.before_id !== '') {
     return res.status(400).json({ error: 'ValidationError', message: 'before_id must be a non-negative integer.' });
   }
-  const raw = listMessages({ channel, limit, afterId, beforeId });
+  // Task #264 Phase 2.6 (Jon-direct 2026-07-03): time-anchored cursor for
+  // dashboard-tier Bus tab time-navigation. Sister-shape /api/v1/messages
+  // extension at routes.js:73 — before_ts_ms / after_ts_ms epoch-ms → ISO.
+  const beforeTsMs = parsePosInt(req.query.before_ts_ms, null);
+  const afterTsMs = parsePosInt(req.query.after_ts_ms, null);
+  if (req.query.before_ts_ms !== undefined && beforeTsMs === null && req.query.before_ts_ms !== '') {
+    return res.status(400).json({ error: 'ValidationError', message: 'before_ts_ms must be a non-negative integer (millisecond epoch).' });
+  }
+  if (req.query.after_ts_ms !== undefined && afterTsMs === null && req.query.after_ts_ms !== '') {
+    return res.status(400).json({ error: 'ValidationError', message: 'after_ts_ms must be a non-negative integer (millisecond epoch).' });
+  }
+  const beforeTs = beforeTsMs !== null ? new Date(beforeTsMs).toISOString() : null;
+  const afterTs = afterTsMs !== null ? new Date(afterTsMs).toISOString() : null;
+  const raw = listMessages({ channel, limit, afterId, beforeId, beforeTs, afterTs });
   // req.auth is absent on publicRouter → dmFilter unbound path returns public only.
   const { filtered } = applyDmVisibilityFilter(raw, req);
   return res.json({ messages: filtered, count: filtered.length });

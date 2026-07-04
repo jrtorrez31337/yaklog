@@ -5389,6 +5389,43 @@
         for (const sub of this.subscribers) sub.onAdd?.(msg);
       }
     }
+
+    // Task #264 Phase 2.6 (Jon-direct 2026-07-03): time-anchored historical
+    // fetch. Pauses SSE + re-populates buffer from routes.js `before_ts_ms`
+    // cursor. Subscribers see full onBackfill replay with historical window.
+    // Return-to-Live: resumeLive() clears historical mode, re-opens SSE +
+    // re-backfills fresh.
+    async setHistoricalWindow(fromMs, toMs) {
+      this.pause();
+      const qs = new URLSearchParams({
+        limit: String(BUS_BUFFER_CAP),
+        before_ts_ms: String(toMs),
+        after_ts_ms: String(fromMs),
+      });
+      try {
+        const res = await fetch('/api/v1/plexus/public/messages?' + qs.toString(), { cache: 'no-store' });
+        if (res.ok) {
+          const body = await res.json();
+          const msgs = body.messages || [];
+          this.buffer = [];
+          this.channelCounts.clear();
+          this.maxId = 0;
+          for (const m of msgs) this._ingest(m, /*notifySubs=*/false);
+          for (const sub of this.subscribers) sub.onBackfill?.(this.buffer);
+        }
+      } catch (e) { /* keep prior state on error */ }
+    }
+    resumeLive() {
+      // Clear historical, wipe buffer, notify subscribers of empty state,
+      // then re-run backfill-then-stream (unsets paused; opens a fresh SSE).
+      this.buffer = [];
+      this.channelCounts.clear();
+      this.maxId = 0;
+      for (const sub of this.subscribers) sub.onBackfill?.(this.buffer);
+      this.paused = false;
+      if (this.es) { try { this.es.close(); } catch {} ; this.es = null; }
+      this._backfillThenStream();
+    }
     _notifyState() {
       for (const sub of this.subscribers) sub.onState?.(this.state);
     }
@@ -5397,6 +5434,30 @@
     }
   }
   const busStream = new BusStream();
+
+  // Task #264 Phase 2.6 (Jon-direct 2026-07-03): Bus tab (+ Live tab ticker,
+  // which shares the BusStream singleton) responds to dashboard picker.
+  // Non-live: SSE paused, buffer replaced with historical window slice.
+  // Live: fresh backfill + SSE resume. Both ticker + Bus tab body see the
+  // same time-anchored view — consistent unified time-nav semantic.
+  document.addEventListener('dashboardTimeRangeChange', (e) => {
+    const preset = e.detail && e.detail.preset;
+    const win = e.detail && e.detail.window;
+    if (preset === 'live') {
+      busStream.resumeLive();
+    } else if (win) {
+      busStream.setHistoricalWindow(win.fromMs, win.toMs);
+    }
+  });
+  // Initial-load `#bus?range=<preset>` (or `#live?range=<preset>` — ticker
+  // still shares the stream): apply historical window on mount if non-live.
+  // Deferred so BusStream can subscribe first via the ticker mount path.
+  setTimeout(() => {
+    if (window.getDashboardTimeWindow) {
+      const win = window.getDashboardTimeWindow();
+      if (win) busStream.setHistoricalWindow(win.fromMs, win.toMs);
+    }
+  }, 100);
 
   // Cascade-prevention #10559 Q2: pause both SSE streamers when the tab is
   // hidden. Sister-shape to the refreshAuditHero visibility-pause above.

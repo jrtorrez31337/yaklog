@@ -81,7 +81,22 @@ router.get('/messages', (req, res) => {
     return res.status(400).json({ error: 'ValidationError', message: 'before_id must be a non-negative integer.' });
   }
 
-  const messages = listMessages({ channel, limit, afterId, beforeId });
+  // Task #264 Phase 2.6 (Jon-direct 2026-07-03): time-anchored cursor for
+  // dashboard-tier Bus tab time-navigation. before_ts_ms / after_ts_ms accept
+  // millisecond-epoch integers; converted server-side to ISO-8601 strings for
+  // lexicographic comparison against created_at TEXT column.
+  const beforeTsMs = parseOptionalInt(req.query.before_ts_ms);
+  const afterTsMs = parseOptionalInt(req.query.after_ts_ms);
+  if (req.query.before_ts_ms !== undefined && beforeTsMs === null) {
+    return res.status(400).json({ error: 'ValidationError', message: 'before_ts_ms must be a non-negative integer (millisecond epoch).' });
+  }
+  if (req.query.after_ts_ms !== undefined && afterTsMs === null) {
+    return res.status(400).json({ error: 'ValidationError', message: 'after_ts_ms must be a non-negative integer (millisecond epoch).' });
+  }
+  const beforeTs = beforeTsMs !== null ? new Date(beforeTsMs).toISOString() : null;
+  const afterTs = afterTsMs !== null ? new Date(afterTsMs).toISOString() : null;
+
+  const messages = listMessages({ channel, limit, afterId, beforeId, beforeTs, afterTs });
   // ADR-0026 read-filter: bound → public + sender/mentions-match private;
   // ops-key → all + audit-log per private row; unbound → public only.
   const { filtered, auditEntries } = applyDmVisibilityFilter(messages, req);

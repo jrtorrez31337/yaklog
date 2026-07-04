@@ -1224,7 +1224,7 @@ function insertMessage({ channel, sender, body, metadata = null, isPrivate = fal
   return message;
 }
 
-function listMessages({ channel, limit = 50, afterId = null, beforeId = null }) {
+function listMessages({ channel, limit = 50, afterId = null, beforeId = null, beforeTs = null, afterTs = null }) {
   const database = getDb();
   const where = [];
   const params = { limit };
@@ -1242,6 +1242,22 @@ function listMessages({ channel, limit = 50, afterId = null, beforeId = null }) 
   if (beforeId !== null) {
     where.push('id < @beforeId');
     params.beforeId = beforeId;
+  }
+
+  // Task #264 Phase 2.6 (Jon-direct 2026-07-03): time-anchored cursor for
+  // dashboard-tier time-navigation Bus tab. before_ts / after_ts accept
+  // ISO-8601 strings; use SQLite's datetime() function on BOTH sides to
+  // normalize — created_at is stored as "YYYY-MM-DD HH:MM:SS" (SQLite's
+  // datetime('now') default; SPACE separator) while ISO uses 'T'. Direct
+  // lexicographic string compare across separators returns wrong results
+  // (space < T means any created_at row is < any ISO cursor).
+  if (beforeTs !== null) {
+    where.push('datetime(created_at) < datetime(@beforeTs)');
+    params.beforeTs = beforeTs;
+  }
+  if (afterTs !== null) {
+    where.push('datetime(created_at) >= datetime(@afterTs)');
+    params.afterTs = afterTs;
   }
 
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
