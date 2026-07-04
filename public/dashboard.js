@@ -1678,6 +1678,10 @@
     }
     // Push to any cards currently showing Activity (1) or Cost (2) view.
     // Perf: cards on Live (0) or Identity (3) don't redraw on telemetry frames.
+    // Task #264 Phase 2.2: in non-live dashboard mode, historical snapshot
+    // is authoritative — SSE frames must not trigger view 1/2 re-render
+    // (would refetch historical via 60s-cached path; wasteful DOM churn).
+    if (window.isDashboardLive && !window.isDashboardLive()) return;
     for (const card of cardInstances.values()) {
       if (card.currentView === 1 || card.currentView === 2) card.rerenderBody();
     }
@@ -2705,6 +2709,9 @@
   // Triggers rerender of any card currently showing Activity or Cost view.
   document.querySelectorAll('#cards-window-toggle button').forEach((btn) => {
     btn.addEventListener('click', () => {
+      // Task #264 Phase 2.2: when dashboard picker is non-live, per-card
+      // toggle is overridden — silently ignore clicks (visually disabled).
+      if (btn.classList.contains('trp-clamp-disabled')) return;
       const ws = parseInt(btn.dataset.windowS, 10);
       if (ws === cardsWindow.windowS) return;
       cardsWindow.windowS = ws;
@@ -2722,6 +2729,50 @@
       }
     });
   });
+
+  // Task #264 Phase 2.2 (Jon-direct 2026-07-03): unify AgentCard Activity/Cost
+  // views under the top-level dashboard time-range picker. Per-card cardsWindow
+  // toggle (1h/6h/24h/7d) is clamped in non-live mode — picker owns windowS.
+  // On return to Live: restore user's last per-card choice (or default 1h).
+  let _savedCardsWindowS = cardsWindow.windowS;   // user's per-card pick to restore
+  let _prevDashboardWasLive = true;                // for save-only-on-transition-from-live
+  function _syncCardsPickerClamp(clamped) {
+    document.querySelectorAll('#cards-window-toggle button').forEach((btn) => {
+      btn.classList.toggle('trp-clamp-disabled', !!clamped);
+      btn.style.opacity = clamped ? '0.35' : '';
+      btn.style.cursor = clamped ? 'not-allowed' : '';
+      if (clamped) btn.setAttribute('aria-disabled', 'true');
+      else btn.removeAttribute('aria-disabled');
+    });
+  }
+  document.addEventListener('dashboardTimeRangeChange', (e) => {
+    const preset = e.detail && e.detail.preset;
+    const win = e.detail && e.detail.window;
+    const goingLive = preset === 'live';
+    if (goingLive) {
+      cardsWindow.windowS = _savedCardsWindowS;
+      _syncCardsPickerClamp(false);
+    } else if (win && win.windowS) {
+      if (_prevDashboardWasLive) _savedCardsWindowS = cardsWindow.windowS;
+      cardsWindow.windowS = win.windowS;
+      _syncCardsPickerClamp(true);
+    }
+    _prevDashboardWasLive = goingLive;
+    cardsFetchCache.clear();
+    for (const card of cardInstances.values()) {
+      if (card.currentView === 1 || card.currentView === 2) card.rerenderBody();
+    }
+  });
+  // Initial-load hash with `?range=<preset>`: apply clamp on mount.
+  if (window.getDashboardTimeWindow) {
+    const initWin = window.getDashboardTimeWindow();
+    if (initWin && initWin.windowS) {
+      _savedCardsWindowS = cardsWindow.windowS;
+      cardsWindow.windowS = initWin.windowS;
+      _syncCardsPickerClamp(true);
+      _prevDashboardWasLive = false;
+    }
+  }
 
   // CP8.3 (2026-05-27): card-grid filter state. Pure-client filter applied
   // in renderCards (cards re-render every presence poll = filter naturally
