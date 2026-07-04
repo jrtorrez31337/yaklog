@@ -3318,7 +3318,10 @@
 
     start() {
       this.refresh().catch(() => {});
-      this.refreshTimer = setInterval(() => this.refresh().catch(() => {}), COST_REFRESH_MS);
+      // Task #264 Phase 2.3: gate CostView per-chart refresh on isLiveMode().
+      this.refreshTimer = setInterval(() => {
+        if (!window.isDashboardLive || window.isDashboardLive()) this.refresh().catch(() => {});
+      }, COST_REFRESH_MS);
     }
     stop() {
       if (this.refreshTimer) clearInterval(this.refreshTimer);
@@ -3344,8 +3347,12 @@
     refreshHeroStrip();
     // CP11.x.2: per-vendor totals strip refreshed alongside hero (same cadence).
     refreshVendorStrip();
-    setInterval(refreshHeroStrip, 60_000);  // 1m hero refresh
-    setInterval(refreshVendorStrip, 60_000);
+    // Task #264 Phase 2.3: gate auto-refresh on isLiveMode(). Cost hero + vendor
+    // strip freeze-at-snapshot when dashboard picker is non-live — Cost data
+    // is accrual-model (cost_daily doesn't support as-of-ts queries), so
+    // freeze semantics are the honest interpretation of "static view" here.
+    setInterval(() => { if (window.isDashboardLive && window.isDashboardLive()) refreshHeroStrip(); }, 60_000);
+    setInterval(() => { if (window.isDashboardLive && window.isDashboardLive()) refreshVendorStrip(); }, 60_000);
     document.querySelectorAll('#cost-subnav button').forEach((b) => {
       b.addEventListener('click', () => costShowSub(b.dataset.sub));
     });
@@ -4046,7 +4053,12 @@
     let _auditHeroInterval = null;
     function startAuditHeroInterval() {
       if (_auditHeroInterval) return;
-      _auditHeroInterval = setInterval(refreshAuditHero, 60_000);
+      // Task #264 Phase 2.4: gate on isLiveMode() sister-shape Cost tab
+      // Phase 2.3 — audit-hero freezes at snapshot in non-live dashboard mode
+      // (audit posture is accrual/attest-model; no as-of-ts server support).
+      _auditHeroInterval = setInterval(() => {
+        if (!window.isDashboardLive || window.isDashboardLive()) refreshAuditHero();
+      }, 60_000);
     }
     function stopAuditHeroInterval() {
       if (!_auditHeroInterval) return;
@@ -4948,6 +4960,57 @@
         effortState.period = periodSel.value;
         refreshEffortData();
       });
+    }
+
+    // Task #264 Phase 2.5: dashboard picker overrides effort period when
+    // the preset maps cleanly (7d / 30d). Non-matching presets (1h / 24h)
+    // leave effort period alone — no meaningful sub-day semantics on effort
+    // aggregates. Return-to-Live restores user's pre-override effort period.
+    let _savedEffortPeriod = effortState.period;
+    const EFFORT_PRESET_MAP = { '7d': '7d', '30d': '30d' };
+    let _prevEffortLive = true;
+    document.addEventListener('dashboardTimeRangeChange', (e) => {
+      const preset = e.detail && e.detail.preset;
+      const mapped = EFFORT_PRESET_MAP[preset];
+      const goingLive = preset === 'live';
+      if (goingLive) {
+        if (!_prevEffortLive && periodSel) {
+          effortState.period = _savedEffortPeriod;
+          periodSel.value = _savedEffortPeriod;
+          if (periodSel) periodSel.disabled = false;
+          refreshEffortData();
+        }
+      } else if (mapped && periodSel) {
+        if (_prevEffortLive) _savedEffortPeriod = effortState.period;
+        effortState.period = mapped;
+        periodSel.value = mapped;
+        periodSel.disabled = true;
+        refreshEffortData();
+      } else if (periodSel) {
+        // Non-mappable preset (1h / 24h) — leave period alone but disable the
+        // selector so the operator isn't led to expect finer resolution.
+        if (_prevEffortLive) _savedEffortPeriod = effortState.period;
+        periodSel.disabled = true;
+      }
+      _prevEffortLive = goingLive;
+    });
+    // Initial-load `?range=<preset>`: apply mapping on mount.
+    if (window.getDashboardTimeWindow) {
+      const initWin = window.getDashboardTimeWindow();
+      if (initWin && initWin.preset) {
+        const mapped = EFFORT_PRESET_MAP[initWin.preset];
+        if (mapped && periodSel) {
+          _savedEffortPeriod = effortState.period;
+          effortState.period = mapped;
+          periodSel.value = mapped;
+          periodSel.disabled = true;
+          _prevEffortLive = false;
+        } else if (periodSel) {
+          _savedEffortPeriod = effortState.period;
+          periodSel.disabled = true;
+          _prevEffortLive = false;
+        }
+      }
     }
 
     // CP13.6 Phase 2.4 init-time audience-tier class application
