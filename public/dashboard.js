@@ -2540,14 +2540,14 @@
           return;
         }
         if (!epRes.ok) {
-          this.bodyEl.appendChild(el('div', { class: 'view-empty' }, `error: HTTP ${epRes.status}`));
+          this.bodyEl.appendChild(el('div', { class: 'view-empty' }, 'Couldn’t load Ptah episodes. Retry shortly.'));
           return;
         }
         const epJson = await epRes.json();
         const episodes = epJson.episodes || [];
         if (episodes.length === 0) {
           this.bodyEl.appendChild(el('div', { class: 'view-empty' },
-            'No Ptah episodes yet — awaiting first trace emit.'));
+            'No Ptah episodes yet. Awaiting the first trace emit.'));
           this._schedulePtahTracePoll();
           return;
         }
@@ -2566,7 +2566,7 @@
         if (this.currentView !== 5) return;
         if (this._traceSeq !== seq) return;
         if (!trRes.ok) {
-          this.bodyEl.appendChild(el('div', { class: 'view-empty' }, `trace fetch: HTTP ${trRes.status}`));
+          this.bodyEl.appendChild(el('div', { class: 'view-empty' }, 'Couldn’t load traces for this episode. Retry shortly.'));
           this._schedulePtahTracePoll();
           return;
         }
