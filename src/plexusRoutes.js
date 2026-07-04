@@ -474,6 +474,15 @@ publicRouter.get('/messages', (req, res) => {
   if (req.query.after_ts_ms !== undefined && afterTsMs === null && req.query.after_ts_ms !== '') {
     return res.status(400).json({ error: 'ValidationError', message: 'after_ts_ms must be a non-negative integer (millisecond epoch).' });
   }
+  // Task #264 hardening nit (parch #11506 forward-track): clamp epoch at
+  // JS Date range boundary. Sister-shape routes.js /messages same handler.
+  const MAX_JS_TS_MS = 8_640_000_000_000_000;
+  if (beforeTsMs !== null && beforeTsMs > MAX_JS_TS_MS) {
+    return res.status(400).json({ error: 'ValidationError', message: `before_ts_ms exceeds max JS timestamp (${MAX_JS_TS_MS}).` });
+  }
+  if (afterTsMs !== null && afterTsMs > MAX_JS_TS_MS) {
+    return res.status(400).json({ error: 'ValidationError', message: `after_ts_ms exceeds max JS timestamp (${MAX_JS_TS_MS}).` });
+  }
   const beforeTs = beforeTsMs !== null ? new Date(beforeTsMs).toISOString() : null;
   const afterTs = afterTsMs !== null ? new Date(afterTsMs).toISOString() : null;
   const raw = listMessages({ channel, limit, afterId, beforeId, beforeTs, afterTs });

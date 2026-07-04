@@ -133,6 +133,21 @@ test('GET /api/v1/plexus/public/messages — after_ts_ms invalid → 400', async
   assert.equal(res.body.error, 'ValidationError');
 });
 
+// Task #264 hardening nit (parch #11506 forward-track): epoch > 8.64e15 (JS
+// Date range) → clean 400 instead of RangeError → 500.
+test('GET /api/v1/plexus/public/messages — before_ts_ms > 8.64e15 → 400 (not 500)', async () => {
+  const res = await request(app).get('/api/v1/plexus/public/messages?before_ts_ms=9999999999999999');
+  assert.equal(res.statusCode, 400);
+  assert.equal(res.body.error, 'ValidationError');
+  assert.match(res.body.message, /exceeds max JS timestamp/);
+});
+test('GET /api/v1/plexus/public/messages — after_ts_ms > 8.64e15 → 400 (not 500)', async () => {
+  const res = await request(app).get('/api/v1/plexus/public/messages?after_ts_ms=9999999999999999');
+  assert.equal(res.statusCode, 400);
+  assert.equal(res.body.error, 'ValidationError');
+  assert.match(res.body.message, /exceeds max JS timestamp/);
+});
+
 // Note: SSE mount at /api/v1/plexus/public/messages-stream is the same
 // streamHandler covered by stream.test.js — the public-mirror just removes
 // the auth middleware. dmFilter unbound-path applies (per dm.test.js suite).
