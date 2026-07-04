@@ -1031,7 +1031,20 @@
      registration-stuck), in-memory state with dedupe + auto-resolve,
      click-row to jump to agent card. Phase 2 adds browser notification
      opt-in + audio chirp + mute-list (deferred 2+ weeks). */
-  .alerts-bell-wrap { position: relative; margin-left: auto; align-self: center; padding-right: 6px; }
+  /* Task #264 v1 (Jon-direct 2026-07-01): dashboard-tier time-range picker.
+     Sits in tabs nav after tab-btns; margin-left:auto pushes it + alerts-bell right.
+     Preset buttons compact; static-view pill signals non-live mode (OQ6 defensible-default).
+     .trp-btn.disabled state = Operate tab pinned-Live clamp (OQ3 defensible-default). */
+  .time-range-picker { display: flex; align-items: center; gap: 3px; margin-left: auto; padding: 0 10px 0 6px; }
+  .time-range-picker .trp-btn { background: transparent; border: 1px solid transparent; color: var(--muted); padding: 3px 9px; border-radius: 12px; font: inherit; font-size: 11px; cursor: pointer; line-height: 1.4; font-weight: 500; letter-spacing: 0.02em; transition: background 0.1s, color 0.1s; }
+  .time-range-picker .trp-btn:hover { background: rgba(255,255,255,0.04); color: var(--text); }
+  .time-range-picker .trp-btn.active { background: var(--panel-hover, rgba(255,255,255,0.08)); color: var(--text); border-color: rgba(96,165,250,0.25); }
+  .time-range-picker .trp-btn.disabled { opacity: 0.35; cursor: not-allowed; }
+  .time-range-picker .trp-btn.disabled:hover { background: transparent; color: var(--muted); }
+  .time-range-picker .trp-btn:focus { outline: none; border-color: #2563eb; }
+  .time-range-picker .trp-static-pill { font-size: 9px; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase; padding: 1px 6px; border-radius: 3px; background: rgba(248,113,113,0.14); color: #f87171; margin-left: 4px; }
+
+  .alerts-bell-wrap { position: relative; margin-left: 0; align-self: center; padding-right: 6px; }
   .alerts-bell { background: transparent; border: 1px solid transparent; color: var(--muted); padding: 4px 10px; border-radius: 14px; font: inherit; font-size: 16px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; line-height: 1; }
   .alerts-bell:hover { background: rgba(255,255,255,0.04); color: var(--text); }
   .alerts-bell.has-firing { color: var(--yellow); border-color: rgba(250,204,21,0.3); }
@@ -1184,6 +1197,19 @@
        per yaklog-dev #10048; content-tier waits on s345-aieng ORP schema +
        gemini episode-trace contract surface. -->
   <button class="tab-btn tab-btn-conditional" data-tab="orp" hidden>ORP<span class="badge-new">CP14</span></button>
+  <!-- Task #264 v1 (Jon-direct 2026-07-01): dashboard-tier time-range picker.
+       Preset-only MVP (OQ1 defensible-default; canon-N1-light per feedback_canon_class_n1_light_forward_track).
+       Live is auto-refresh mode; 1h/24h/7d/30d are static-view historical snapshots.
+       Operate tab pinned-Live (OQ3 defensible-default) — Operate tab auto-clamps picker back to Live.
+       URL-persisted as #<tab>?range=<preset> (OQ4 parch RATIFY v1). -->
+  <div class="time-range-picker" id="time-range-picker" role="group" aria-label="Time range">
+    <button class="trp-btn active" data-range="live" aria-pressed="true" title="Live: auto-refresh current state">Live</button>
+    <button class="trp-btn" data-range="1h" aria-pressed="false" title="Static view: last 1 hour">1h</button>
+    <button class="trp-btn" data-range="24h" aria-pressed="false" title="Static view: last 24 hours">24h</button>
+    <button class="trp-btn" data-range="7d" aria-pressed="false" title="Static view: last 7 days">7d</button>
+    <button class="trp-btn" data-range="30d" aria-pressed="false" title="Static view: last 30 days">30d</button>
+    <span class="trp-static-pill" id="trp-static-pill" hidden aria-live="polite">static view</span>
+  </div>
   <!-- CP10.1 (2026-06-01): alerts bell — human-only, client-only, never crosses
        to bus per feedback_dashboard_alerts_are_human_only. -->
   <div class="alerts-bell-wrap" id="alerts-bell-wrap">

@@ -275,9 +275,145 @@
   setInterval(() => { if (lastData) renderCards(lastData.presence); }, 1000);
 
   // ────────────────────────────────────────────────────────────────────
+  // Task #264 v1 (Jon-direct 2026-07-01): dashboard-tier time-range picker.
+  // Preset-only MVP per canon-N1-light forward-track discipline.
+  // Modes: live (auto-refresh; SSE flows) OR one of {1h, 24h, 7d, 30d}
+  // (static view; poll-loops honor isLiveMode() to skip refresh).
+  // URL persistence: `#<tab>?range=<preset>` shape (OQ4 parch RATIFY v1).
+  // Operate tab pinned-Live (OQ3 defensible-default) — picker auto-clamps.
+  // Per-view read integration is per-tab / per-view work; v1 lands infra
+  // (state + isLiveMode gate + URL persistence + Operate clamp + picker UX).
+  // ────────────────────────────────────────────────────────────────────
+  const TRP_PRESETS = ['live', '1h', '24h', '7d', '30d'];
+  const TRP_PRESET_MS = {
+    '1h':  3600_000,
+    '24h': 24 * 3600_000,
+    '7d':  7 * 24 * 3600_000,
+    '30d': 30 * 24 * 3600_000,
+  };
+  const TRP_OPERATE_LIVE_ONLY = true;  // OQ3 defensible-default (Operate pinned-Live)
+
+  // Global state readable by any view; write via _trpSetPreset() only.
+  window.dashboardTimeRange = { preset: 'live' };
+  function isLiveMode() {
+    return !window.dashboardTimeRange || window.dashboardTimeRange.preset === 'live';
+  }
+  // Returns null in live mode (view-native default); else {fromMs, toMs, windowS}.
+  function getTimeWindow() {
+    const preset = window.dashboardTimeRange?.preset;
+    if (!preset || preset === 'live') return null;
+    const span = TRP_PRESET_MS[preset];
+    if (!span) return null;
+    const to = Date.now();
+    return { fromMs: to - span, toMs: to, windowS: Math.floor(span / 1000), preset };
+  }
+  // Expose to any downstream consumer.
+  window.isDashboardLive = isLiveMode;
+  window.getDashboardTimeWindow = getTimeWindow;
+
+  // Parse "tab?range=preset" hash into { tab, range }
+  function _trpParseHash(hash) {
+    const s = String(hash || '').replace(/^#/, '');
+    const qIdx = s.indexOf('?');
+    const tab = (qIdx >= 0 ? s.slice(0, qIdx) : s) || 'live';
+    let range = 'live';
+    if (qIdx >= 0) {
+      const qs = new URLSearchParams(s.slice(qIdx + 1));
+      const r = qs.get('range');
+      if (r && TRP_PRESETS.includes(r)) range = r;
+    }
+    return { tab, range };
+  }
+  function _trpBuildHash(tab, range) {
+    const t = tab || 'live';
+    if (!range || range === 'live') return '#' + t;
+    return '#' + t + '?range=' + range;
+  }
+
+  function _trpUpdateButtons() {
+    const preset = window.dashboardTimeRange.preset;
+    document.querySelectorAll('#time-range-picker .trp-btn').forEach((b) => {
+      const isActive = b.dataset.range === preset;
+      b.classList.toggle('active', isActive);
+      b.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+    });
+    const pill = document.getElementById('trp-static-pill');
+    if (pill) pill.hidden = (preset === 'live');
+  }
+  function _trpUpdateOperateClamp(currentTab) {
+    // OQ3: Operate tab pinned-Live. When Operate active, grey the non-live buttons
+    // + auto-clamp back to live if operator navigates to Operate on a non-live picker.
+    const isOperate = currentTab === 'operate';
+    document.querySelectorAll('#time-range-picker .trp-btn').forEach((b) => {
+      if (isOperate && TRP_OPERATE_LIVE_ONLY && b.dataset.range !== 'live') {
+        b.classList.add('disabled');
+        b.setAttribute('aria-disabled', 'true');
+      } else {
+        b.classList.remove('disabled');
+        b.removeAttribute('aria-disabled');
+      }
+    });
+    if (isOperate && TRP_OPERATE_LIVE_ONLY && !isLiveMode()) {
+      // silent clamp — no chrome flash for the operator
+      _trpSetPreset('live', { updateHash: true, quiet: true });
+    }
+  }
+  function _trpSetPreset(preset, opts) {
+    if (!TRP_PRESETS.includes(preset)) preset = 'live';
+    window.dashboardTimeRange.preset = preset;
+    _trpUpdateButtons();
+    // Sync URL hash with current active tab + new preset
+    if (opts && opts.updateHash) {
+      const activeTab = document.querySelector('.tab-btn.active');
+      const tabName = activeTab ? activeTab.dataset.tab : (location.hash.slice(1).split('?')[0] || 'live');
+      const newHash = _trpBuildHash(tabName, preset);
+      if (location.hash !== newHash) {
+        history.replaceState(null, '', newHash);
+      }
+    }
+    // Broadcast to any listeners (view render fns can subscribe via
+    // `document.addEventListener('dashboardTimeRangeChange', ...)`).
+    if (!(opts && opts.quiet)) {
+      document.dispatchEvent(new CustomEvent('dashboardTimeRangeChange', {
+        detail: { preset, window: getTimeWindow() },
+      }));
+    }
+  }
+  function _trpWireHandlers() {
+    document.querySelectorAll('#time-range-picker .trp-btn').forEach((b) => {
+      b.addEventListener('click', () => {
+        if (b.classList.contains('disabled')) return;
+        const r = b.dataset.range;
+        if (r === window.dashboardTimeRange.preset) return;  // no-op
+        _trpSetPreset(r, { updateHash: true });
+      });
+      b.addEventListener('keydown', (e) => {
+        if ((e.key === 'Enter' || e.key === ' ') && !b.classList.contains('disabled')) {
+          e.preventDefault();
+          b.click();
+        }
+      });
+    });
+  }
+  // Init from URL on load
+  {
+    const parsed = _trpParseHash(location.hash);
+    window.dashboardTimeRange.preset = parsed.range;
+  }
+
+  // ────────────────────────────────────────────────────────────────────
   // CP2: tab navigation (URL-fragment-persisted; #live default / #cost).
   // ────────────────────────────────────────────────────────────────────
   function activateTab(name) {
+    // Task #264 v1: strip "?range=..." off hash before tab-name matching;
+    // preserves preset when navigating between tabs via hash.
+    if (typeof name === 'string' && name.includes('?')) {
+      const parsed = _trpParseHash('#' + name);
+      name = parsed.tab;
+      if (parsed.range !== window.dashboardTimeRange.preset) {
+        _trpSetPreset(parsed.range, { updateHash: false, quiet: true });
+      }
+    }
     // CP14.x: 'orp' tab is conditional (only reachable via Ptah AgentCard
     // click or direct hash navigation #orp/<agent_id>); not in the default
     // chrome but accepted as valid tab-name when navigated to.
@@ -299,8 +435,12 @@
     document.querySelectorAll('.tab-panel').forEach(p => {
       p.classList.toggle('active', p.dataset.tab === name);
     });
-    if (location.hash !== '#' + name) {
-      history.replaceState(null, '', '#' + name);
+    // Task #264 v1: preserve `?range=<preset>` in URL when navigating tabs.
+    // Also update Operate-tab clamp (silently clamps to Live if non-live picker).
+    _trpUpdateOperateClamp(name);
+    const desiredHash = _trpBuildHash(name, window.dashboardTimeRange.preset);
+    if (location.hash !== desiredHash) {
+      history.replaceState(null, '', desiredHash);
     }
     // CP8: lazy-mount the Bus tab on first activation. Ticker is mounted
     // unconditionally on initial page load (it lives on Live tab and is
@@ -599,6 +739,9 @@
     b.addEventListener('click', () => activateTab(b.dataset.tab));
   });
   window.addEventListener('hashchange', () => activateTab(location.hash.slice(1)));
+  // Task #264 v1: wire time-range picker click/keyboard handlers + sync UI to initial state
+  _trpWireHandlers();
+  _trpUpdateButtons();
   // CP14.x: support direct #orp/<agent_id> deep-link on initial page load
   activateTab(location.hash.slice(1) || 'live');
 
