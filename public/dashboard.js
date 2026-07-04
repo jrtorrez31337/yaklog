@@ -1269,8 +1269,69 @@
   // refresh (refresh is gone in the push model).
   const _origOnFrame = PlexusChart.prototype.onFrame;
   PlexusChart.prototype.onFrame = function (payload) {
-    _origOnFrame.call(this, payload);
-    wireChartLegendPopovers(this);
+    // Task #264 Phase 2.1 (Jon-direct 2026-07-03): in non-live mode, ignore
+    // SSE frame updates so the historical snapshot rendered via
+    // setHistoricalWindow() isn't clobbered by continuing SSE deltas.
+    // Cache last SSE frame so return-to-live can restore without waiting
+    // for the next server-side frame emission (which may lag ~15s per
+    // plexusStreamer poll cadence).
+    if (payload && payload.data) this._lastSseFrame = payload;
+    if (!window.isDashboardLive || window.isDashboardLive()) {
+      _origOnFrame.call(this, payload);
+      wireChartLegendPopovers(this);
+    }
+  };
+  // Task #264 Phase 2.1: on-demand historical fetch that renders through the
+  // same onFrame pipeline. Uses existing /query_range endpoint sister-shape
+  // fetchAgentSeries (dashboard.js:1624) but preserves the full multi-series
+  // result (not filtered to one agent, since these are cluster-level charts).
+  PlexusChart.prototype.setHistoricalWindow = async function (windowS) {
+    if (!windowS || !Number.isFinite(windowS)) return;
+    const to = Math.floor(Date.now() / 1000);
+    const from = to - windowS;
+    const step = pickStep(windowS);
+    const rateWindow = pickRateWindow(windowS);
+    const qs = new URLSearchParams({
+      template: this.template,
+      window: rateWindow,
+      from: String(from),
+      to: String(to),
+      step,
+    });
+    this.setStatus(`loading ${windowS}s window…`);
+    try {
+      const res = await fetch('/api/v1/plexus/public/query_range?' + qs.toString(), { cache: 'no-store' });
+      if (!res.ok) {
+        this.setStatus(`historical fetch: HTTP ${res.status}`, true);
+        return;
+      }
+      const body = await res.json();
+      // Reconstruct payload sister-shape SSE frame so onFrame's rendering path
+      // works unchanged. `_lastSseFrame` capture in the monkeypatch happens for
+      // this too (so live-mode restore has a "just-loaded" snapshot rather
+      // than the pre-historical SSE frame — fresher; harmless).
+      const historicalPayload = {
+        template: this.template,
+        kind: 'range',
+        query: body.query || null,
+        range: { from: String(from), to: String(to), step },
+        ...body,  // includes {status, data:{resultType, result}}
+      };
+      _origOnFrame.call(this, historicalPayload);
+      wireChartLegendPopovers(this);
+    } catch (e) {
+      this.setStatus('historical fetch error', true);
+    }
+  };
+  // Task #264 Phase 2.1: restore live mode by replaying the last cached SSE
+  // frame. If no SSE frame has arrived yet (chart lifecycle: created but
+  // stream hasn't emitted), no-op — the next SSE frame will render normally
+  // via the (now-passing) onFrame gate.
+  PlexusChart.prototype.restoreLiveWindow = function () {
+    if (this._lastSseFrame) {
+      _origOnFrame.call(this, this._lastSseFrame);
+      wireChartLegendPopovers(this);
+    }
   };
 
   // Live-tab top: tokens (left) + cost-accounting card (right).
@@ -1292,6 +1353,30 @@
     }),
   ];
   for (const c of charts) liveStream.subscribe(c.template, c);
+
+  // Task #264 Phase 2.1: subscribe top-level Live tab charts to the picker.
+  // On preset change: non-live → one-shot /query_range with computed window;
+  // live → replay cached SSE frame (fresher render than waiting for next
+  // ~15s SSE emit cadence).
+  document.addEventListener('dashboardTimeRangeChange', (e) => {
+    const preset = e.detail && e.detail.preset;
+    const win = e.detail && e.detail.window;
+    if (preset === 'live') {
+      for (const c of charts) c.restoreLiveWindow();
+    } else if (win && win.windowS) {
+      for (const c of charts) c.setHistoricalWindow(win.windowS);
+    }
+  });
+  // Initial-load hash may have `?range=<preset>` → render historical on mount.
+  // Deferred one tick so PlexusChart lifecycle + tabs activate first.
+  setTimeout(() => {
+    if (window.getDashboardTimeWindow) {
+      const win = window.getDashboardTimeWindow();
+      if (win && win.windowS) {
+        for (const c of charts) c.setHistoricalWindow(win.windowS);
+      }
+    }
+  }, 0);
 
   // ── Cost-accounting card (middle slot) state + render ────────────────
   // Defect fix (Jon-direct via parch #6747, 2026-05-28): values 'reset on
