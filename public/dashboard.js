@@ -3728,13 +3728,22 @@
       ];
       const trh = el('tr');
       for (const c of cols) {
-        const th = el('th', { class: c.num ? 'num' : '', 'data-sort-key': c.k, style: 'cursor:pointer;user-select:none' },
-          c.label + (c.k === _accountsSortKey ? (_accountsSortAsc ? ' ▲' : ' ▼') : ''));
-        th.addEventListener('click', () => {
+        const isSorted = c.k === _accountsSortKey;
+        // Accessible sortable header (Phase 2.7 F1+F2): th carries aria-sort state;
+        // a real <button> is the keyboard-operable sort control (WCAG 2.1.1 + 4.1.2).
+        const th = el('th', {
+          class: c.num ? 'num' : '',
+          'data-sort-key': c.k,
+          'aria-sort': isSorted ? (_accountsSortAsc ? 'ascending' : 'descending') : 'none',
+        });
+        const btn = el('button', { type: 'button', class: 'th-sort' },
+          c.label + (isSorted ? (_accountsSortAsc ? ' ▲' : ' ▼') : ''));
+        btn.addEventListener('click', () => {
           if (_accountsSortKey === c.k) _accountsSortAsc = !_accountsSortAsc;
           else { _accountsSortKey = c.k; _accountsSortAsc = c.num ? false : true; }
           renderAccounts();
         });
+        th.appendChild(btn);
         trh.appendChild(th);
       }
       thead.appendChild(trh);
