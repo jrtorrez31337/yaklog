@@ -596,7 +596,7 @@ publicRouter.get('/cost/daily', (req, res) => {
       const key = by.map(d => String(r[d] != null ? r[d] : '')).join('|');
       let g = grouped.get(key);
       if (!g) {
-        g = { date_min: r.date, date_max: r.date,
+        g = { date_min: r.date, date_max: r.date, _dates: new Set(),
           cost_usd: 0, tokens_input: 0, tokens_output: 0, tokens_cache_read: 0, tokens_cache_creation: 0 };
         for (const d of by) g[d] = r[d];
         grouped.set(key, g);
@@ -608,6 +608,16 @@ publicRouter.get('/cost/daily', (req, res) => {
       g.tokens_cache_creation += r.tokens_cache_creation;
       if (r.date < g.date_min) g.date_min = r.date;
       if (r.date > g.date_max) g.date_max = r.date;
+      // Task #264 Phase 2.7 (Jon-direct 2026-07-06): days_active for
+      // agent-account timeline view — count distinct dates the (agent,
+      // user_email) tuple actually appeared, not just the span-days
+      // between date_min/date_max (which may include no-usage days).
+      g._dates.add(r.date);
+    }
+    // Finalize: replace Set with count; strip internal field before response
+    for (const g of grouped.values()) {
+      g.days_active = g._dates.size;
+      delete g._dates;
     }
     result = [...grouped.values()].sort((a, b) => b.cost_usd - a.cost_usd);
   } else {

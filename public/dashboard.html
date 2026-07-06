@@ -1381,6 +1381,7 @@
   <nav class="cost-subnav" id="cost-subnav">
     <button data-sub="pace" class="active">Pace</button>
     <button data-sub="composition">Composition</button>
+    <button data-sub="accounts">Accounts</button>
     <button data-sub="anomaly">Anomaly</button>
     <button data-sub="detail">Detail</button>
     <button data-sub="reconcile">Reconcile</button>
@@ -1393,6 +1394,14 @@
   </div>
 
   <div class="cost-subpanel" data-sub="composition" id="sub-composition">
+    <div class="cost-loading">switch to this sub-view to load.</div>
+  </div>
+
+  <!-- Task #264 Phase 2.7 (Jon-direct 2026-07-06): agent-account timeline.
+       Shows which agents operated under which Anthropic account, over what
+       date range, and their spend. Supports operator workflow of rotating
+       accounts to unlock more time. Respects dashboard time-range picker. -->
+  <div class="cost-subpanel" data-sub="accounts" id="sub-accounts">
     <div class="cost-loading">switch to this sub-view to load.</div>
   </div>
 

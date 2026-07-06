@@ -3356,6 +3356,47 @@
     document.querySelectorAll('#cost-subnav button').forEach((b) => {
       b.addEventListener('click', () => costShowSub(b.dataset.sub));
     });
+    // Task #264 Phase 2.7 (Jon-direct 2026-07-06): Cost Composition sub-panel
+    // period selector responds to dashboard picker. Mapping preserves finer
+    // native periods where the dashboard preset doesn't have an equivalent
+    // (1h → 'today', 24h → 'today'; 7d → '7d'; 30d → '30d'). Return-to-Live
+    // restores user's pre-clamp period. Sister-shape Effort period-override
+    // (Phase 2.5) + AgentCard cards-window clamp (Phase 2.2).
+    const COMP_PRESET_MAP = { '1h': 'today', '24h': 'today', '7d': '7d', '30d': '30d' };
+    let _compPrevLive = true;
+    document.addEventListener('dashboardTimeRangeChange', (e) => {
+      const preset = e.detail && e.detail.preset;
+      const mapped = COMP_PRESET_MAP[preset];
+      const goingLive = preset === 'live';
+      if (goingLive) {
+        if (!_compPrevLive) {
+          _compPeriod = _compSavedPeriod;
+          _compClampedByDashboard = false;
+          if (_costSubActive === 'composition') renderComposition();
+        else if (_costSubActive === 'accounts') renderAccounts();
+        }
+      } else if (mapped) {
+        if (_compPrevLive) _compSavedPeriod = _compPeriod;
+        _compPeriod = mapped;
+        _compClampedByDashboard = true;
+        if (_costSubActive === 'composition') renderComposition();
+        else if (_costSubActive === 'accounts') renderAccounts();
+      }
+      _compPrevLive = goingLive;
+    });
+    // Initial-load `?range=<preset>`: apply mapping on mount.
+    if (window.getDashboardTimeWindow) {
+      const initWin = window.getDashboardTimeWindow();
+      if (initWin && initWin.preset) {
+        const mapped = COMP_PRESET_MAP[initWin.preset];
+        if (mapped) {
+          _compSavedPeriod = _compPeriod;
+          _compPeriod = mapped;
+          _compClampedByDashboard = true;
+          _compPrevLive = false;
+        }
+      }
+    }
     costShowSub('pace');
   }
 
@@ -3403,6 +3444,7 @@
     switch (name) {
       case 'pace':         renderPace(); break;
       case 'composition':  renderComposition(); break;
+      case 'accounts':     renderAccounts(); break;
       case 'anomaly':      renderAnomaly(); break;
       case 'detail':       ensureDetail(); break;
       case 'reconcile':    renderReconcile(); break;
@@ -3571,6 +3613,11 @@
   // Operator can switch to agent_id via the dim picker.
   let _compDim = 'cost_center';
   let _compPeriod = 'mtd';
+  // Task #264 Phase 2.7 (Jon-direct 2026-07-06 re Cost detail → user_email view):
+  // extend picker-clamp to Composition sub-panel — sister-shape Effort period
+  // override (Phase 2.5) + AgentCard cards-window clamp (Phase 2.2).
+  let _compClampedByDashboard = false;
+  let _compSavedPeriod = _compPeriod;
   async function renderComposition() {
     const panel = document.getElementById('sub-composition');
     clearChildren(panel);
@@ -3582,6 +3629,7 @@
       if (p === _compPeriod) opt.selected = true;
       periodSel.appendChild(opt);
     }
+    if (_compClampedByDashboard) periodSel.disabled = true;
     periodSel.addEventListener('change', () => { _compPeriod = periodSel.value; renderComposition(); });
     ctrl.appendChild(periodSel);
     ctrl.appendChild(el('label', null, 'Group by'));
@@ -3627,6 +3675,85 @@
       panel.appendChild(tbl);
     } catch (e) {
       panel.appendChild(el('div', { class: 'cost-loading' }, 'error: ' + e.message));
+    }
+  }
+
+  // ─── Accounts sub-view (Task #264 Phase 2.7, Jon-direct 2026-07-06) ──
+  // Agent-account timeline: rows are (agent_id, user_email) tuples over the
+  // selected window. Supports operator workflow of rotating Anthropic accounts
+  // on CC sessions to unlock more time. Uses existing /cost/daily?by= endpoint
+  // with days_active field extension (server side same commit). Respects
+  // dashboard time-range picker via _compPeriod override (Ship 1 wire).
+  let _accountsSortKey = 'agent_id';
+  let _accountsSortAsc = true;
+  async function renderAccounts() {
+    const panel = document.getElementById('sub-accounts');
+    clearChildren(panel);
+    const header = el('div', { class: 'comp-controls' });
+    header.appendChild(el('label', null, `Window: ${_compPeriod}${_compClampedByDashboard ? ' (dashboard-clamped)' : ''}`));
+    panel.appendChild(header);
+    panel.appendChild(el('div', { class: 'cost-loading' }, 'loading…'));
+    try {
+      const sumR = await fetch(`/api/v1/plexus/public/cost/summary?period=${_compPeriod}`).then(r => r.json());
+      const r = await fetch(`/api/v1/plexus/public/cost/daily?from=${sumR.from}&to=${sumR.to}&by=agent_id,user_email`);
+      if (!r.ok) {
+        panel.removeChild(panel.lastChild);
+        panel.appendChild(el('div', { class: 'view-empty' }, "Couldn't load account timeline. Retry shortly."));
+        return;
+      }
+      const j = await r.json();
+      panel.removeChild(panel.lastChild);
+      const rows = (j.rows || []).filter(x => x.agent_id && x.user_email);
+      if (rows.length === 0) {
+        panel.appendChild(el('div', { class: 'view-empty' }, 'No agent-account activity in this window.'));
+        return;
+      }
+      // Sort
+      const sortRows = rows.slice().sort((a, b) => {
+        let va = a[_accountsSortKey], vb = b[_accountsSortKey];
+        if (typeof va === 'string') { va = va.toLowerCase(); vb = (vb || '').toLowerCase(); }
+        if (va < vb) return _accountsSortAsc ? -1 : 1;
+        if (va > vb) return _accountsSortAsc ? 1 : -1;
+        return 0;
+      });
+      const tbl = el('table', { class: 'comp-table' });
+      const thead = el('thead');
+      const cols = [
+        { k: 'agent_id',    label: 'agent',       num: false },
+        { k: 'user_email',  label: 'user email',  num: false },
+        { k: 'date_min',    label: 'first',       num: false },
+        { k: 'date_max',    label: 'last',        num: false },
+        { k: 'days_active', label: 'days',        num: true },
+        { k: 'cost_usd',    label: 'spend (USD)', num: true },
+      ];
+      const trh = el('tr');
+      for (const c of cols) {
+        const th = el('th', { class: c.num ? 'num' : '', 'data-sort-key': c.k, style: 'cursor:pointer;user-select:none' },
+          c.label + (c.k === _accountsSortKey ? (_accountsSortAsc ? ' ▲' : ' ▼') : ''));
+        th.addEventListener('click', () => {
+          if (_accountsSortKey === c.k) _accountsSortAsc = !_accountsSortAsc;
+          else { _accountsSortKey = c.k; _accountsSortAsc = c.num ? false : true; }
+          renderAccounts();
+        });
+        trh.appendChild(th);
+      }
+      thead.appendChild(trh);
+      tbl.appendChild(thead);
+      const tbody = el('tbody');
+      for (const row of sortRows) {
+        const tr = el('tr');
+        tr.appendChild(el('td', null, row.agent_id));
+        tr.appendChild(el('td', null, row.user_email));
+        tr.appendChild(el('td', null, row.date_min));
+        tr.appendChild(el('td', null, row.date_max));
+        tr.appendChild(el('td', { class: 'num' }, String(row.days_active || 0)));
+        tr.appendChild(el('td', { class: 'num' }, fmtUSD(row.cost_usd || 0)));
+        tbody.appendChild(tr);
+      }
+      tbl.appendChild(tbody);
+      panel.appendChild(tbl);
+    } catch (e) {
+      panel.appendChild(el('div', { class: 'view-empty' }, "Couldn't load account timeline. Retry shortly."));
     }
   }
 

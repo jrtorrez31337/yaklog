@@ -116,6 +116,20 @@ test('GET /cost/daily?from&to&by=cost_center → groups by dim', async () => {
   assert.equal(game.cost_usd, 8);  // 3 + 5
 });
 
+// Task #264 Phase 2.7 (Jon-direct 2026-07-06): days_active field for
+// agent-account timeline view — count distinct dates the group had activity.
+test('GET /cost/daily?by=agent_id → grouped rows include days_active count', async () => {
+  const r = await request(app).get(`/api/v1/plexus/public/cost/daily?from=${T(3)}&to=${T(0)}&by=agent_id`);
+  assert.equal(r.statusCode, 200);
+  for (const row of r.body.rows) {
+    assert.ok(Number.isInteger(row.days_active), `days_active must be integer (got ${row.days_active})`);
+    assert.ok(row.days_active >= 1, 'days_active must be >= 1 for any grouped row');
+    // date_min/date_max shape preserved
+    assert.match(row.date_min, /^\d{4}-\d{2}-\d{2}$/);
+    assert.match(row.date_max, /^\d{4}-\d{2}-\d{2}$/);
+  }
+});
+
 test('GET /cost/daily?by=invalid_dim → 400', async () => {
   const r = await request(app).get(`/api/v1/plexus/public/cost/daily?from=${T(1)}&to=${T(0)}&by=nope`);
   assert.equal(r.statusCode, 400);
