@@ -42,7 +42,7 @@ const MANIFEST = {
 
     {
       name: 'yaklog-sub daemon',
-      version: '0.5.16',
+      version: '0.5.17',
       source_repo: '/srv/git/agent-tooling.git',
       source_path: 'yaklog-sub/yaklog-sub',
       install_command:
@@ -50,11 +50,12 @@ const MANIFEST = {
         '"$WORK/at/yaklog-sub/install-plexus.sh"',
       description:
         'Per-agent Python daemon: tails state.jsonl, posts /presence/event ' +
-        'heartbeat. v0.5.16 adds ChannelWatcher (file-watcher on ' +
-        '~/.config/yaklog/channels; reconnects SSE with new subscription ' +
-        'list when file changes, no restart). v0.5.15 added activity ' +
-        'distillation (dashboard Trace view) + opt-in cascade auto-update.',
+        'heartbeat. v0.5.17 normalizes YAKLOG_URL at parse-time (Task #267 ' +
+        'pattern-recurrence N=2 fix; rstrip trailing slash + append /api/v1 ' +
+        'if missing; idempotent). v0.5.16 adds ChannelWatcher (file-watcher).',
       changed_in:
+        'v0.5.17 — YAKLOG_URL normalize at args parse-time (Jon-direct + parch ' +
+        '#11513 Item 2 disposition-a). ' +
         'v0.5.16 — channels-realtime file-watcher (live subscribe/unsubscribe ' +
         'without daemon restart). ' +
         'v0.5.15 — CP10.3 M2 activity distillation + CP10.4 UpdateWatcher ' +
