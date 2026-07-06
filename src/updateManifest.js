@@ -42,7 +42,7 @@ const MANIFEST = {
 
     {
       name: 'yaklog-sub daemon',
-      version: '0.5.18',
+      version: '0.5.19',
       source_repo: '/srv/git/agent-tooling.git',
       source_path: 'yaklog-sub/yaklog-sub',
       install_command:
@@ -50,11 +50,13 @@ const MANIFEST = {
         '"$WORK/at/yaklog-sub/install-plexus.sh"',
       description:
         'Per-agent Python daemon: tails state.jsonl, posts /presence/event ' +
-        'heartbeat. v0.5.18 adds never-downgrade guard + sha256-identity ' +
-        'short-circuit (parch #11575 (b) dispatch; prevents downgrade-loop ' +
-        'class caught at pveadmin-agent 2026-07-06). v0.5.17 normalizes ' +
-        'YAKLOG_URL at parse-time (Task #267 pattern-recurrence N=2 fix).',
+        'heartbeat. v0.5.19 fixes upgrade-exit to sys.exit(75) EX_TEMPFAIL so ' +
+        'Restart=on-failure units correctly restart post-swap (triple-ratify ' +
+        'parch #11706 + secops #11708 + ssw-devops #11707). v0.5.18 adds ' +
+        'never-downgrade guard + sha256-identity short-circuit.',
       changed_in:
+        'v0.5.19 — upgrade-exit sys.exit(75) EX_TEMPFAIL (Fix B; triple-ratify ' +
+        'parch #11706 + secops #11708 + ssw-devops #11707 fleet-scan). ' +
         'v0.5.18 — never-downgrade guard (semver_tuple compare) + ' +
         'sha256-identity short-circuit (skip swap on content match; ' +
         'parch #11575 (b) Class B dispatch). ' +
