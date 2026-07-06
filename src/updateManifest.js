@@ -42,7 +42,7 @@ const MANIFEST = {
 
     {
       name: 'yaklog-sub daemon',
-      version: '0.5.19',
+      version: '0.5.19.1',
       source_repo: '/srv/git/agent-tooling.git',
       source_path: 'yaklog-sub/yaklog-sub',
       install_command:
@@ -55,8 +55,10 @@ const MANIFEST = {
         'parch #11706 + secops #11708 + ssw-devops #11707). v0.5.18 adds ' +
         'never-downgrade guard + sha256-identity short-circuit.',
       changed_in:
-        'v0.5.19 — upgrade-exit sys.exit(75) EX_TEMPFAIL (Fix B; triple-ratify ' +
-        'parch #11706 + secops #11708 + ssw-devops #11707 fleet-scan). ' +
+        'v0.5.19.1 — own-correction: os._exit(75) instead of sys.exit(75) ' +
+        '(secops #11710 catch: sys.exit from daemon thread only kills thread). ' +
+        'v0.5.19 (SUPERSEDED) — upgrade-exit intent per triple-ratify parch #11706 + ' +
+        'secops #11708 + ssw-devops #11707 fleet-scan. ' +
         'v0.5.18 — never-downgrade guard (semver_tuple compare) + ' +
         'sha256-identity short-circuit (skip swap on content match; ' +
         'parch #11575 (b) Class B dispatch). ' +
