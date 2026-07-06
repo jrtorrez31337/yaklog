@@ -42,7 +42,7 @@ const MANIFEST = {
 
     {
       name: 'yaklog-sub daemon',
-      version: '0.5.17',
+      version: '0.5.18',
       source_repo: '/srv/git/agent-tooling.git',
       source_path: 'yaklog-sub/yaklog-sub',
       install_command:
@@ -50,10 +50,14 @@ const MANIFEST = {
         '"$WORK/at/yaklog-sub/install-plexus.sh"',
       description:
         'Per-agent Python daemon: tails state.jsonl, posts /presence/event ' +
-        'heartbeat. v0.5.17 normalizes YAKLOG_URL at parse-time (Task #267 ' +
-        'pattern-recurrence N=2 fix; rstrip trailing slash + append /api/v1 ' +
-        'if missing; idempotent). v0.5.16 adds ChannelWatcher (file-watcher).',
+        'heartbeat. v0.5.18 adds never-downgrade guard + sha256-identity ' +
+        'short-circuit (parch #11575 (b) dispatch; prevents downgrade-loop ' +
+        'class caught at pveadmin-agent 2026-07-06). v0.5.17 normalizes ' +
+        'YAKLOG_URL at parse-time (Task #267 pattern-recurrence N=2 fix).',
       changed_in:
+        'v0.5.18 — never-downgrade guard (semver_tuple compare) + ' +
+        'sha256-identity short-circuit (skip swap on content match; ' +
+        'parch #11575 (b) Class B dispatch). ' +
         'v0.5.17 — YAKLOG_URL normalize at args parse-time (Jon-direct + parch ' +
         '#11513 Item 2 disposition-a). ' +
         'v0.5.16 — channels-realtime file-watcher (live subscribe/unsubscribe ' +
