@@ -6321,7 +6321,29 @@
         repoSel.appendChild(opt);
       }
     }
-    // Agent filter options require by-agent enumeration — deferred (CP17.C).
+    // Agent filter dropdown enumeration (Task 6): distinct agents in window
+    // from /agents-in-window endpoint. Sorted by commit_count DESC; capped
+    // at 100 rows per endpoint discipline.
+    _fetchReposAgentOptions().catch(() => {});
+  }
+
+  async function _fetchReposAgentOptions() {
+    const agentSel = document.getElementById('repos-heatmap-filter-agent');
+    if (!agentSel) return;
+    try {
+      const res = await fetch(_reposReqUrl('/agents-in-window'), { cache: 'no-store' });
+      if (!res.ok) return;
+      const data = await res.json();
+      const cur = _reposState.filterAgent;
+      agentSel.innerHTML = '';
+      agentSel.appendChild(el('option', { value: '' }, 'All agents'));
+      for (const a of (data.agents || [])) {
+        const label = `${a.agent_id} (${a.commit_count} commits · ${a.repo_count} repos)`;
+        const opt = el('option', { value: a.agent_id }, label);
+        if (a.agent_id === cur) opt.selected = true;
+        agentSel.appendChild(opt);
+      }
+    } catch { /* silent; dropdown falls back to All agents only */ }
   }
 
   async function _renderReposPendingQueue() {

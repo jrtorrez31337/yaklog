@@ -164,6 +164,18 @@ router.get('/:repo_key(*)/detail', (req, res) => {
   }
 });
 
+// ── GET /agents-in-window — distinct agents for filter dropdowns (Task 6) ─
+router.get('/agents-in-window', (req, res) => {
+  try {
+    const { from, to, period } = resolveRange(req);
+    const limit = Math.min(500, Math.max(1, parseInt(req.query.limit, 10) || 100));
+    const agents = dbModule.queryOutputDailyAgentsInWindow({ from, to, limit });
+    return res.json({ period, from, to, agents });
+  } catch (e) {
+    return res.status(400).json({ error: 'ValidationError', message: e.message });
+  }
+});
+
 // ── GET /by-agent/:agent_id — cross-repo view for one agent ──────────────
 router.get('/by-agent/:agent_id', (req, res) => {
   try {

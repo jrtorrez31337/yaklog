@@ -1502,6 +1502,26 @@ function rollupOutputWindow({ daysBack = 30, endDateExclusive } = {}) {
   };
 }
 
+// Distinct agents active in window, ordered by commit_count DESC. Used by
+// Repos tab agent-filter dropdown enumeration (Task 6). Caps at limit rows
+// to keep dropdown UX bounded; excludes 'unattributed' bucket per attribution-
+// canon (filter should surface KNOWN agents; unattributed is a separate
+// dimension surfaced via attribution_gaps counter).
+function queryOutputDailyAgentsInWindow({ from, to, limit = 100 }) {
+  const database = getDb();
+  return database.prepare(`
+    SELECT
+      agent_id,
+      SUM(commits) AS commit_count,
+      COUNT(DISTINCT repo_key) AS repo_count
+    FROM output_daily
+    WHERE date >= @from AND date <= @to AND agent_id != 'unattributed'
+    GROUP BY agent_id
+    ORDER BY commit_count DESC
+    LIMIT @limit
+  `).all({ from, to, limit });
+}
+
 function queryOutputDailyByAgent({ agent_id, from, to }) {
   const database = getDb();
   return database.prepare(`
@@ -4584,6 +4604,7 @@ module.exports = {
   queryOutputDailySummary,
   queryOutputDailyHeatmap,
   queryOutputDailyRepoList,
+  queryOutputDailyAgentsInWindow,
   queryOutputDailyByAgent,
   closeDb,
   messageBus
