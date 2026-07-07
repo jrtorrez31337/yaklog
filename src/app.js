@@ -16,6 +16,7 @@ const auditIngesterRoutes = require('./auditIngesterRoutes'); // CP12.5 (ADR-003
 const auditOtelIngesterRoutes = require('./auditOtelIngesterRoutes'); // ADR-0032 Phase 0 Item B
 const outputApiRoutes = require('./outputApiRoutes');   // CP13.3 (ADR-0032 Phase 1.3)
 const repoRoutes = require('./repoRoutes');             // CP17.A (secops #11759 SIGN-OFF)
+const repoQueryRoutes = require('./repoQueryRoutes');   // CP17.B Task 3
 const metricsRoute = require('./metricsRoute');         // CP16-prep observability (parch #10166)
 const costAnomaliesRoute = require('./costAnomaliesRoute'); // CP16 Pillar 2 (parch #10268)
 const vendorKeysRoute = require('./secureStore/vendorKeysRoute'); // Task #138 Phase 2B (parch #10320)
@@ -589,6 +590,11 @@ app.use('/api/v1/plexus/public/policy', auditPolicyLimiter);
 // under same `/api/v1/plexus/public` namespace; reads from db.js helpers
 // only (no mutations). Network-isolation trust model — same as cost/.
 app.use('/api/v1/plexus/public', auditRoutes);
+// CP17.B Task 3: Repos tab public read endpoints (/summary /heatmap /list
+// /:key/detail /by-agent). Mounts under /api/v1/plexus/public/repos. Reads
+// from db.js CP17.B helpers only (no mutations). Time-nav aware via
+// ?period=<preset> OR ?from=&to= (sister-shape cost/audit public patterns).
+app.use('/api/v1/plexus/public/repos', repoQueryRoutes.router);
 // CP13.3 (ADR-0032 Phase 1.3): output ratios + composition + coverage-gap
 // + anomalies + merges public reads. Mounted BEFORE the /api/v1 auth
 // middleware so network-isolation trust model applies (mirrors
