@@ -6168,8 +6168,55 @@
       _renderReposSummary(),
       _renderReposHeatmap(),
       _renderReposList(),
+      _renderReposActivityFeed(),
       _renderReposPendingQueue(),
     ]);
+  }
+
+  // CP17.C Task 2: activity feed live-refresh.
+  // Chronological list of recent commits + PRs (window-scoped). Uses new
+  // /activity-feed endpoint (UNION of output_commit + output_pr sorted DESC).
+  // Live-refresh gated on isLiveMode() per Task #264 discipline.
+  async function _renderReposActivityFeed() {
+    const list = document.querySelector('#repos-activity-feed .repos-activity-feed-list');
+    if (!list) return;
+    try {
+      const res = await fetch(_reposReqUrl('/activity-feed?limit=50'), { cache: 'no-store' });
+      if (!res.ok) {
+        list.innerHTML = '';
+        list.appendChild(el('div', { class: 'view-empty' }, "Couldn't load activity feed. Retry shortly."));
+        return;
+      }
+      const data = await res.json();
+      list.innerHTML = '';
+      const rows = data.activity || [];
+      if (rows.length === 0) {
+        list.appendChild(el('div', { class: 'view-empty' }, 'No activity in this window.'));
+        return;
+      }
+      for (const r of rows) {
+        const entry = el('div', { class: 'repos-activity-entry' });
+        entry.appendChild(el('span', { class: 'ts', title: r.at_ts || '' },
+          (r.at_ts || '').slice(0, 16).replace('T', ' ')));
+        entry.appendChild(el('span', { class: 'actor' }, r.actor || 'unknown'));
+        const actionLabel = ({
+          'commit': ' committed to ',
+          'pr_opened': ' opened PR in ',
+          'pr_merged': ' merged PR in ',
+        })[r.kind] || ` ${r.kind} in `;
+        entry.appendChild(el('span', { class: 'action' }, actionLabel));
+        entry.appendChild(el('span', null, r.repo_key || ''));
+        if (r.summary) {
+          const sub = el('div', { class: 'action', style: 'margin-left:0;font-size:10px;padding-left:0' },
+            (r.summary || '').slice(0, 120));
+          entry.appendChild(sub);
+        }
+        list.appendChild(entry);
+      }
+    } catch {
+      list.innerHTML = '';
+      list.appendChild(el('div', { class: 'view-empty' }, "Couldn't load activity feed. Retry shortly."));
+    }
   }
 
   async function _renderReposSummary() {

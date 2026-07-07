@@ -1507,6 +1507,40 @@ function rollupOutputWindow({ daysBack = 30, endDateExclusive } = {}) {
 // to keep dropdown UX bounded; excludes 'unattributed' bucket per attribution-
 // canon (filter should surface KNOWN agents; unattributed is a separate
 // dimension surfaced via attribution_gaps counter).
+// Activity feed for Repos tab (CP17.C Task 2). UNION recent commits + PRs
+// from output_commit + output_pr; normalized into { kind, repo_key, actor,
+// summary, at_ts, ref } rows sorted DESC. Capped at limit rows for feed UX.
+function queryRepoActivityFeed({ from, to, limit = 50 }) {
+  const database = getDb();
+  const rows = database.prepare(`
+    SELECT * FROM (
+      SELECT
+        'commit' AS kind,
+        repo AS repo_key,
+        COALESCE(agent_attribution, author_name, 'unknown') AS actor,
+        subject AS summary,
+        occurred_at AS at_ts,
+        commit_sha AS ref
+      FROM output_commit
+      WHERE date(occurred_at) >= @from AND date(occurred_at) <= @to
+      UNION ALL
+      SELECT
+        CASE WHEN merged_at IS NOT NULL THEN 'pr_merged' ELSE 'pr_opened' END AS kind,
+        github_owner_repo AS repo_key,
+        author_login AS actor,
+        title AS summary,
+        COALESCE(merged_at, opened_at) AS at_ts,
+        CAST(pr_number AS TEXT) AS ref
+      FROM output_pr
+      WHERE (opened_at IS NOT NULL AND date(opened_at) >= @from AND date(opened_at) <= @to)
+         OR (merged_at IS NOT NULL AND date(merged_at) >= @from AND date(merged_at) <= @to)
+    )
+    ORDER BY at_ts DESC
+    LIMIT @limit
+  `).all({ from, to, limit });
+  return rows;
+}
+
 function queryOutputDailyAgentsInWindow({ from, to, limit = 100 }) {
   const database = getDb();
   return database.prepare(`
@@ -4604,6 +4638,7 @@ module.exports = {
   queryOutputDailySummary,
   queryOutputDailyHeatmap,
   queryOutputDailyRepoList,
+  queryRepoActivityFeed,
   queryOutputDailyAgentsInWindow,
   queryOutputDailyByAgent,
   closeDb,

@@ -164,6 +164,18 @@ router.get('/:repo_key(*)/detail', (req, res) => {
   }
 });
 
+// ── GET /activity-feed — CP17.C Task 2 activity feed (commits + PRs merged) ─
+router.get('/activity-feed', (req, res) => {
+  try {
+    const { from, to, period } = resolveRange(req);
+    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 50));
+    const activity = dbModule.queryRepoActivityFeed({ from, to, limit });
+    return res.json({ period, from, to, activity });
+  } catch (e) {
+    return res.status(400).json({ error: 'ValidationError', message: e.message });
+  }
+});
+
 // ── GET /agents-in-window — distinct agents for filter dropdowns (Task 6) ─
 router.get('/agents-in-window', (req, res) => {
   try {
