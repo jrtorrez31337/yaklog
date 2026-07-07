@@ -3615,7 +3615,8 @@
 
       panel.appendChild(grid);
     } catch (e) {
-      panel.innerHTML = `<div class="cost-loading">Pace render error: ${e.message}</div>`;
+      clearChildren(panel);
+      panel.appendChild(el('div', { class: 'cost-loading' }, `Pace render error: ${e.message}`));
     }
   }
 
@@ -3823,7 +3824,8 @@
       }
       panel.appendChild(list);
     } catch (e) {
-      panel.innerHTML = `<div class="cost-loading">anomaly scan error: ${e.message}</div>`;
+      clearChildren(panel);
+      panel.appendChild(el('div', { class: 'cost-loading' }, `anomaly scan error: ${e.message}`));
     }
   }
 
