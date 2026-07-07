@@ -1086,6 +1086,27 @@ function initializeDb() {
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_audit_repo_change_key ON audit_repo_change(repo_key, at_ts)`).run();
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_audit_repo_change_actor ON audit_repo_change(actor_agent_id, at_ts)`).run();
 
+  // CP17.B (Jon-direct 2026-07-07 kickoff): output_daily rollup for fast
+  // Repos-tab heatmap queries. Sister-shape cost_daily (CP16 Pillar 2) +
+  // audit_daily_by_agent (Task #253). Promotes daily-rollup pattern to N=3
+  // canonicalization per parch #11687 canon-fold observation.
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS output_daily (
+      date              TEXT NOT NULL,
+      repo_key          TEXT NOT NULL,
+      agent_id          TEXT NOT NULL,
+      commits           INTEGER NOT NULL DEFAULT 0,
+      merges            INTEGER NOT NULL DEFAULT 0,
+      prs_opened        INTEGER NOT NULL DEFAULT 0,
+      prs_merged        INTEGER NOT NULL DEFAULT 0,
+      attribution_gaps  INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (date, repo_key, agent_id)
+    )
+  `).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_output_daily_date ON output_daily(date)`).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_output_daily_repo ON output_daily(repo_key, date)`).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_output_daily_agent ON output_daily(agent_id, date)`).run();
+
   return db;
 }
 
@@ -1307,6 +1328,162 @@ function listAuditRepoChangesByRepo(repo_key, { limit = 100 } = {}) {
   return database.prepare(
     `SELECT * FROM audit_repo_change WHERE repo_key = ? ORDER BY seq DESC LIMIT ?`
   ).all(repo_key, limit);
+}
+
+// ── CP17.B output_daily rollup helpers ────────────────────────────────────
+// Per PLAN-CP17-CLUSTER-REPO-SUBSTRATE.md §3.2. Sister-shape cost_daily and
+// audit_daily rollup discipline (idempotent DELETE + INSERT within txn).
+// Nightly job runs rebuildOutputDailyForDate(date) at daemon-load-off hour.
+
+// Idempotent: DELETE existing rows for date, then INSERT aggregated rows from
+// output_commit + output_pr for that date. Wrapped in caller transaction where
+// atomicity across multi-date runs is desired.
+function rebuildOutputDailyForDate(date) {
+  const database = getDb();
+  if (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    throw new Error(`rebuildOutputDailyForDate: date must be YYYY-MM-DD (got ${date})`);
+  }
+  const tx = database.transaction(() => {
+    // Clean existing rows for date (idempotent).
+    database.prepare(`DELETE FROM output_daily WHERE date = ?`).run(date);
+
+    // Aggregate output_commit for date grouped by (repo, agent_attribution).
+    // NULL attribution → 'unattributed' bucket + attribution_gaps counter.
+    database.prepare(`
+      INSERT INTO output_daily (date, repo_key, agent_id, commits, attribution_gaps)
+      SELECT
+        date(occurred_at) AS date,
+        repo AS repo_key,
+        COALESCE(agent_attribution, 'unattributed') AS agent_id,
+        COUNT(*) AS commits,
+        SUM(CASE WHEN agent_attribution IS NULL THEN 1 ELSE 0 END) AS attribution_gaps
+      FROM output_commit
+      WHERE date(occurred_at) = @date
+      GROUP BY date(occurred_at), repo, COALESCE(agent_attribution, 'unattributed')
+    `).run({ date });
+
+    // Aggregate output_merge for date grouped by (repo, merged_by_agent).
+    // UPSERT on top of any existing commits row from above.
+    database.prepare(`
+      INSERT INTO output_daily (date, repo_key, agent_id, merges)
+      SELECT
+        date(occurred_at) AS date,
+        repo AS repo_key,
+        COALESCE(merged_by_agent, 'unattributed') AS agent_id,
+        COUNT(*) AS merges
+      FROM output_merge
+      WHERE date(occurred_at) = @date
+      GROUP BY date(occurred_at), repo, COALESCE(merged_by_agent, 'unattributed')
+      ON CONFLICT (date, repo_key, agent_id) DO UPDATE SET
+        merges = merges + excluded.merges
+    `).run({ date });
+
+    // Aggregate output_pr for date grouped by github_owner_repo + pr author.
+    // prs_opened rolls up by opened_at date; prs_merged by merged_at date (which
+    // may be different from opened_at, so runs as separate aggregation).
+    database.prepare(`
+      INSERT INTO output_daily (date, repo_key, agent_id, prs_opened)
+      SELECT
+        date(opened_at) AS date,
+        github_owner_repo AS repo_key,
+        COALESCE(author_login, 'unattributed') AS agent_id,
+        COUNT(*) AS prs_opened
+      FROM output_pr
+      WHERE opened_at IS NOT NULL AND date(opened_at) = @date
+      GROUP BY date(opened_at), github_owner_repo, COALESCE(author_agent, 'unattributed')
+      ON CONFLICT (date, repo_key, agent_id) DO UPDATE SET
+        prs_opened = prs_opened + excluded.prs_opened
+    `).run({ date });
+
+    database.prepare(`
+      INSERT INTO output_daily (date, repo_key, agent_id, prs_merged)
+      SELECT
+        date(merged_at) AS date,
+        github_owner_repo AS repo_key,
+        COALESCE(author_login, 'unattributed') AS agent_id,
+        COUNT(*) AS prs_merged
+      FROM output_pr
+      WHERE merged_at IS NOT NULL AND date(merged_at) = @date
+      GROUP BY date(merged_at), github_owner_repo, COALESCE(author_agent, 'unattributed')
+      ON CONFLICT (date, repo_key, agent_id) DO UPDATE SET
+        prs_merged = prs_merged + excluded.prs_merged
+    `).run({ date });
+  });
+  tx();
+  const count = database.prepare(`SELECT COUNT(*) AS n FROM output_daily WHERE date = ?`).get(date);
+  return { date, rows: count.n };
+}
+
+function queryOutputDailySummary({ from, to }) {
+  const database = getDb();
+  return database.prepare(`
+    SELECT
+      COUNT(DISTINCT repo_key) AS repo_count,
+      SUM(commits) AS commit_count,
+      SUM(merges) AS merge_count,
+      SUM(prs_opened) AS pr_opened_count,
+      SUM(prs_merged) AS pr_merged_count,
+      COUNT(DISTINCT CASE WHEN agent_id != 'unattributed' THEN agent_id END) AS engaged_agents,
+      SUM(attribution_gaps) AS attribution_gap_count
+    FROM output_daily
+    WHERE date >= @from AND date <= @to
+  `).get({ from, to });
+}
+
+function queryOutputDailyHeatmap({ from, to, dim = 'commits', filter_repo = null, filter_agent = null }) {
+  const database = getDb();
+  const validDims = new Set(['commits', 'merges', 'prs_opened', 'prs_merged', 'attribution_gaps']);
+  if (!validDims.has(dim)) {
+    throw new Error(`queryOutputDailyHeatmap: dim must be one of ${[...validDims].join(', ')}`);
+  }
+  const filters = ['date >= @from', 'date <= @to'];
+  const params = { from, to };
+  if (filter_repo) { filters.push('repo_key = @filter_repo'); params.filter_repo = filter_repo; }
+  if (filter_agent) { filters.push('agent_id = @filter_agent'); params.filter_agent = filter_agent; }
+  return database.prepare(`
+    SELECT date, SUM(${dim}) AS value
+    FROM output_daily
+    WHERE ${filters.join(' AND ')}
+    GROUP BY date
+    ORDER BY date ASC
+  `).all(params);
+}
+
+function queryOutputDailyRepoList({ from, to }) {
+  const database = getDb();
+  return database.prepare(`
+    SELECT
+      repo_key,
+      SUM(commits) AS commit_count,
+      SUM(merges) AS merge_count,
+      SUM(prs_opened) AS pr_opened_count,
+      SUM(prs_merged) AS pr_merged_count,
+      COUNT(DISTINCT CASE WHEN agent_id != 'unattributed' THEN agent_id END) AS engaged_agents_count,
+      SUM(attribution_gaps) AS attribution_gap_count,
+      MAX(date) AS last_activity_at
+    FROM output_daily
+    WHERE date >= @from AND date <= @to
+    GROUP BY repo_key
+    ORDER BY commit_count DESC
+  `).all({ from, to });
+}
+
+function queryOutputDailyByAgent({ agent_id, from, to }) {
+  const database = getDb();
+  return database.prepare(`
+    SELECT
+      repo_key,
+      SUM(commits) AS commit_count,
+      SUM(merges) AS merge_count,
+      SUM(prs_opened) AS pr_opened_count,
+      SUM(prs_merged) AS pr_merged_count,
+      MIN(date) AS first_activity_at,
+      MAX(date) AS last_activity_at
+    FROM output_daily
+    WHERE agent_id = @agent_id AND date >= @from AND date <= @to
+    GROUP BY repo_key
+    ORDER BY commit_count DESC
+  `).all({ agent_id, from, to });
 }
 
 function insertMessage({ channel, sender, body, metadata = null, isPrivate = false }) {
@@ -4367,6 +4544,12 @@ module.exports = {
   fulfillBareGitRequest,
   insertAuditRepoChange,
   listAuditRepoChangesByRepo,
+  // CP17.B rollup + query helpers
+  rebuildOutputDailyForDate,
+  queryOutputDailySummary,
+  queryOutputDailyHeatmap,
+  queryOutputDailyRepoList,
+  queryOutputDailyByAgent,
   closeDb,
   messageBus
 };
