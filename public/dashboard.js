@@ -91,6 +91,14 @@
     return node;
   }
   function clearChildren(node) { while (node.firstChild) node.removeChild(node.firstChild); }
+  // DOM-XSS-safe error rendering — text via createTextNode (el()), NOT innerHTML.
+  // Per secops #11877 completeness finding: use for every catch-branch that
+  // wants to display an error message. Prevents the copy-paste class from
+  // re-emerging.
+  function renderError(container, cls, text) {
+    clearChildren(container);
+    container.appendChild(el('div', { class: cls }, text));
+  }
 
   // CP6.3: makeRow + thead-click handler retired with the presence table.
   // Presence data now feeds AgentCard grid via render() → renderCards().
@@ -3615,8 +3623,7 @@
 
       panel.appendChild(grid);
     } catch (e) {
-      clearChildren(panel);
-      panel.appendChild(el('div', { class: 'cost-loading' }, `Pace render error: ${e.message}`));
+      renderError(panel, 'cost-loading', `Pace render error: ${e.message}`);
     }
   }
 
@@ -3824,8 +3831,7 @@
       }
       panel.appendChild(list);
     } catch (e) {
-      clearChildren(panel);
-      panel.appendChild(el('div', { class: 'cost-loading' }, `anomaly scan error: ${e.message}`));
+      renderError(panel, 'cost-loading', `anomaly scan error: ${e.message}`);
     }
   }
 
@@ -3900,7 +3906,7 @@
         });
         const j = await r.json();
         if (!r.ok) {
-          result.innerHTML = `<div class="cost-loading">error: ${j.message || r.status}</div>`;
+          renderError(result, 'cost-loading', `error: ${j.message || r.status}`);
           return;
         }
         result.innerHTML = '';
@@ -3909,7 +3915,7 @@
         result.appendChild(banner);
         loadReconHistory();
       } catch (e) {
-        result.innerHTML = `<div class="cost-loading">network error: ${e.message}</div>`;
+        renderError(result, 'cost-loading', `network error: ${e.message}`);
       }
     });
 
@@ -4064,7 +4070,7 @@
         }
       }
     } catch (e) {
-      list.innerHTML = `<div class="cost-loading">error: ${e.message}</div>`;
+      renderError(list, 'cost-loading', `error: ${e.message}`);
     }
   }
 
@@ -4403,7 +4409,7 @@
         list.appendChild(row);
       }
     } catch (e) {
-      list.innerHTML = `<div class="audit-loading">error: ${e.message}</div>`;
+      renderError(list, 'audit-loading', `error: ${e.message}`);
     }
   }
 
@@ -4558,7 +4564,7 @@
       }
       renderCard1Counts(body, counts, 'agents emitting tool-invocations in 7d');
     } catch (e) {
-      body.innerHTML = `<div class="audit-loading">error: ${e.message}</div>`;
+      renderError(body, 'audit-loading', `error: ${e.message}`);
     }
   }
 
@@ -4602,7 +4608,7 @@
         body.appendChild(row);
       }
     } catch (e) {
-      body.innerHTML = `<div class="audit-loading">error: ${e.message}</div>`;
+      renderError(body, 'audit-loading', `error: ${e.message}`);
     }
   }
 
@@ -4625,7 +4631,7 @@
         body.appendChild(row);
       }
     } catch (e) {
-      body.innerHTML = `<div class="audit-loading">error: ${e.message}</div>`;
+      renderError(body, 'audit-loading', `error: ${e.message}`);
     }
   }
 
@@ -4648,7 +4654,7 @@
         body.appendChild(row);
       }
     } catch (e) {
-      body.innerHTML = `<div class="audit-loading">error: ${e.message}</div>`;
+      renderError(body, 'audit-loading', `error: ${e.message}`);
     }
   }
 
@@ -4706,7 +4712,7 @@
         list.appendChild(row);
       }
     } catch (e) {
-      list.innerHTML = `<div class="audit-loading">error: ${e.message}</div>`;
+      renderError(list, 'audit-loading', `error: ${e.message}`);
     }
 
     // CP12.20: Chain integrity card — last 30 days anchor verify status.
@@ -4874,7 +4880,7 @@
         list.appendChild(row);
       }
     } catch (e) {
-      list.innerHTML = `<div class="audit-loading">error: ${e.message}</div>`;
+      renderError(list, 'audit-loading', `error: ${e.message}`);
     }
   }
 
@@ -4995,7 +5001,7 @@
         });
         const j = await r.json();
         if (!r.ok) {
-          result.innerHTML = `<div class="audit-loading">error: ${j.message || r.status}</div>`;
+          renderError(result, 'audit-loading', `error: ${j.message || r.status}`);
           return;
         }
         result.innerHTML = '';
@@ -5004,7 +5010,7 @@
           `Reconciled · external ${body.external_count} vs Plexus ${body.plexus_count} · delta ${j.delta_count >= 0 ? '+' : ''}${j.delta_count} (${(j.delta_pct || 0).toFixed(1)}%)`));
         result.appendChild(banner);
       } catch (e) {
-        result.innerHTML = `<div class="audit-loading">network error: ${e.message}</div>`;
+        renderError(result, 'audit-loading', `network error: ${e.message}`);
       }
     });
   }
