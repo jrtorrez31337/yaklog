@@ -1390,7 +1390,7 @@ function rebuildOutputDailyForDate(date) {
         COUNT(*) AS prs_opened
       FROM output_pr
       WHERE opened_at IS NOT NULL AND date(opened_at) = @date
-      GROUP BY date(opened_at), github_owner_repo, COALESCE(author_agent, 'unattributed')
+      GROUP BY date(opened_at), github_owner_repo, COALESCE(author_login, 'unattributed')
       ON CONFLICT (date, repo_key, agent_id) DO UPDATE SET
         prs_opened = prs_opened + excluded.prs_opened
     `).run({ date });
@@ -1404,7 +1404,7 @@ function rebuildOutputDailyForDate(date) {
         COUNT(*) AS prs_merged
       FROM output_pr
       WHERE merged_at IS NOT NULL AND date(merged_at) = @date
-      GROUP BY date(merged_at), github_owner_repo, COALESCE(author_agent, 'unattributed')
+      GROUP BY date(merged_at), github_owner_repo, COALESCE(author_login, 'unattributed')
       ON CONFLICT (date, repo_key, agent_id) DO UPDATE SET
         prs_merged = prs_merged + excluded.prs_merged
     `).run({ date });

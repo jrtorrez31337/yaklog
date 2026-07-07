@@ -89,9 +89,10 @@ test('/dashboard.js includes ensureEffortView function + state', async () => {
 test('/dashboard.js Effort tab is in activateTab allowlist', async () => {
   const r = await request(app).get('/dashboard.js');
   assert.match(r.text, /'effort'/);
-  // CP14 Operate tab added 2026-06-26 (PLAN-OPERATE-EYES-ON-GLASS-VIEW.md
-  // parch ratify #10925); allowlist extended with 'operate' as 7th entry.
-  assert.match(r.text, /\['live',\s*'cost',\s*'bus',\s*'audit',\s*'effort',\s*'register',\s*'operate'\]/);
+  // CP14 Operate tab added 2026-06-26; CP17.B Repos tab added 2026-07-07
+  // (PLAN-CP17-CLUSTER-REPO-SUBSTRATE.md Jon-direct kickoff). Allowlist
+  // ordering: live cost bus audit effort repos register operate.
+  assert.match(r.text, /\['live',\s*'cost',\s*'bus',\s*'audit',\s*'effort',\s*'repos',\s*'register',\s*'operate'\]/);
 });
 
 test('/dashboard.js calls /api/v1/output/* endpoints', async () => {
