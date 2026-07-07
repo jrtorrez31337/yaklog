@@ -423,6 +423,47 @@ opsRouter.post('/repos/bare-git-request/:id/fulfilled', (req, res) => {
   return res.json({ ok: true, request_id: requestId, fulfilled_by: fulfiller });
 });
 
+// ── CP17.B ops: output_daily rollup driver ────────────────────────────────
+// POST /api/v1/ops/output/output-rollup/backfill
+// Sister-shape /ops/audit-rollup/backfill (auditOpsRoutes.js:547) — ops-key
+// gated + structured response. Cron-driver invokes via yaklog-output-rollup.sh
+// systemd timer. Also usable for post-deploy initial backfill + on-demand.
+opsRouter.post('/output-rollup/backfill', (req, res) => {
+  const b = req.body || {};
+  const daysBack = Number.isInteger(b.days_back) ? b.days_back : 90;
+  if (daysBack < 1 || daysBack > 365) {
+    return res.status(400).json({
+      error: 'ValidationError',
+      message: 'days_back must be integer 1..365',
+    });
+  }
+  const endDateExclusive = (typeof b.end_date_exclusive === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(b.end_date_exclusive))
+    ? b.end_date_exclusive
+    : null;
+  const actor = `ops:${req.headers['x-ops-key-id'] || req.auth?.opsKeyId || 'admin'}`;
+  const t0 = Date.now();
+  try {
+    const result = dbModule.rollupOutputWindow({
+      daysBack,
+      endDateExclusive: endDateExclusive || undefined,
+    });
+    const elapsed_ms = Date.now() - t0;
+    let totalRows = 0;
+    for (const day of result.results) totalRows += day.rows || 0;
+    return res.json({
+      ok: true,
+      window_days: result.window_days,
+      end_date_exclusive: result.end_date_exclusive,
+      days_rolled: result.rolled,
+      output_daily_rows: totalRows,
+      elapsed_ms,
+      actor,
+    });
+  } catch (e) {
+    return res.status(500).json({ error: 'InternalError', message: e.message });
+  }
+});
+
 module.exports = {
   publicRouter,
   opsRouter,

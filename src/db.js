@@ -1468,6 +1468,40 @@ function queryOutputDailyRepoList({ from, to }) {
   `).all({ from, to });
 }
 
+// Multi-day rollup driver — sister-shape rollupAuditWindow. Rolls a rolling
+// window of complete UTC days ending at end_date_exclusive (default = today).
+// Idempotent per rebuildOutputDailyForDate. Returns { rolled, window_days,
+// end_date_exclusive, results:[{date, rows}] }.
+function rollupOutputWindow({ daysBack = 30, endDateExclusive } = {}) {
+  if (!Number.isInteger(daysBack) || daysBack < 1 || daysBack > 365) {
+    throw new Error(`rollupOutputWindow: daysBack must be integer 1..365 (got ${daysBack})`);
+  }
+  const database = getDb();
+  // end_date_exclusive default = today (UTC); we roll dates STRICTLY BEFORE it
+  const endIso = endDateExclusive || new Date().toISOString().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(endIso)) {
+    throw new Error(`rollupOutputWindow: end_date_exclusive must be YYYY-MM-DD (got ${endIso})`);
+  }
+  const dates = [];
+  const endMs = Date.parse(endIso + 'T00:00:00Z');
+  for (let i = 1; i <= daysBack; i += 1) {
+    const d = new Date(endMs - i * 86400 * 1000).toISOString().slice(0, 10);
+    dates.push(d);
+  }
+  dates.sort();  // oldest first
+  const results = [];
+  for (const date of dates) {
+    const r = rebuildOutputDailyForDate(date);
+    results.push(r);
+  }
+  return {
+    rolled: results.length,
+    window_days: daysBack,
+    end_date_exclusive: endIso,
+    results,
+  };
+}
+
 function queryOutputDailyByAgent({ agent_id, from, to }) {
   const database = getDb();
   return database.prepare(`
@@ -4546,6 +4580,7 @@ module.exports = {
   listAuditRepoChangesByRepo,
   // CP17.B rollup + query helpers
   rebuildOutputDailyForDate,
+  rollupOutputWindow,
   queryOutputDailySummary,
   queryOutputDailyHeatmap,
   queryOutputDailyRepoList,
