@@ -426,7 +426,7 @@
       const orpAgentId = m ? m[1] : null;
       mountOrpView(orpAgentId);
       name = 'orp';  // collapse to canonical tab-name for class-toggle below
-    } else if (!['live', 'cost', 'bus', 'audit', 'effort', 'register', 'operate'].includes(name)) {
+    } else if (!['live', 'cost', 'bus', 'audit', 'effort', 'repos', 'register', 'operate'].includes(name)) {
       name = 'live';
     }
     document.querySelectorAll('.tab-btn').forEach(b => {

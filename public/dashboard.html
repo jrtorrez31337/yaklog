@@ -578,6 +578,73 @@
   .cost-subpanel.active { display: block; }
   .cost-loading { color: var(--muted); font-size: 12px; padding: 24px 0; text-align: center; }
 
+  /* ── CP17.B Repos tab (Jon-direct 2026-07-07) ─────────────────────────
+     Sister-shape existing tab-panel patterns (Cost hero strip + Register
+     controls). Time-nav aware via Task #264 v1. */
+  #tab-repos { padding: 12px 18px; }
+  .repos-hero-strip { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; margin-bottom: 18px; }
+  .repos-hero-tile { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 12px 14px; }
+  .repos-hero-tile[data-tile="pending-mints"] { cursor: pointer; }
+  .repos-hero-tile[data-tile="pending-mints"]:hover { border-color: var(--blue); }
+  .repos-hero-tile[data-tile="pending-mints"]:focus { outline: 2px solid var(--blue); outline-offset: 2px; }
+  .repos-hero-label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .repos-hero-value { color: var(--text); font-size: 22px; font-weight: 600; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .repos-hero-sub { color: var(--muted); font-size: 10px; margin-top: 3px; }
+  .repos-hero-tile.attribution-gap-flagged .repos-hero-value { color: var(--amber, #eab308); }
+
+  .repos-heatmap-section { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; margin-bottom: 18px; }
+  .repos-heatmap-controls { display: flex; gap: 12px; align-items: center; padding: 12px 14px; border-bottom: 1px solid var(--border); flex-wrap: wrap; font-size: 12px; }
+  .repos-heatmap-controls label { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+  .repos-heatmap-controls select { background: var(--bg); color: var(--text); border: 1px solid var(--border); padding: 4px 8px; border-radius: 3px; font: inherit; font-size: 12px; }
+  .repos-heatmap-legend { margin-left: auto; color: var(--muted); font-size: 11px; }
+  .repos-heatmap-body { padding: 14px; min-height: 200px; overflow-x: auto; }
+  .repos-heatmap-grid { display: flex; gap: 2px; align-items: flex-start; }
+  .repos-heatmap-col { display: flex; flex-direction: column; gap: 2px; }
+  .repos-heatmap-cell { width: 12px; height: 12px; border-radius: 2px; background: var(--panel-hover, rgba(255,255,255,0.04)); cursor: pointer; transition: transform 0.05s; }
+  .repos-heatmap-cell:hover { transform: scale(1.15); outline: 1px solid var(--text); }
+
+  .repos-grid-section { margin-bottom: 18px; }
+  .repos-grid-controls { display: flex; gap: 12px; align-items: center; padding: 10px 0 12px; flex-wrap: wrap; font-size: 12px; }
+  .repos-grid-controls .lbl { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .repos-grid-controls .opts { display: flex; gap: 4px; }
+  .repos-grid-controls .opts button { background: transparent; color: var(--muted); border: 1px solid transparent; padding: 4px 10px; border-radius: 12px; font: inherit; font-size: 11px; cursor: pointer; }
+  .repos-grid-controls .opts button:hover { color: var(--text); background: rgba(255,255,255,0.04); }
+  .repos-grid-controls .opts button.active { color: var(--blue); border-color: rgba(96,165,250,0.3); }
+  .repos-grid-layout { display: grid; grid-template-columns: 3fr 2fr; gap: 14px; }
+  .repos-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+  .repos-repo-card { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 12px; cursor: pointer; }
+  .repos-repo-card:hover { border-color: var(--blue); }
+  .repos-repo-card-name { color: var(--text); font-weight: 600; font-size: 13px; word-break: break-all; }
+  .repos-repo-card-meta { display: flex; gap: 8px; margin-top: 6px; flex-wrap: wrap; font-size: 10px; color: var(--muted); }
+  .repos-repo-card-meta .badge-type { background: rgba(96,165,250,0.1); color: var(--blue); padding: 1px 5px; border-radius: 3px; text-transform: uppercase; font-weight: 600; letter-spacing: 0.3px; }
+  .repos-repo-card-meta .badge-gap { background: rgba(234,179,8,0.15); color: var(--amber, #eab308); padding: 1px 5px; border-radius: 3px; }
+  .repos-repo-card-stats { display: flex; gap: 10px; margin-top: 8px; font-size: 11px; color: var(--text); }
+  .repos-repo-card-stats .stat-num { font-weight: 600; font-variant-numeric: tabular-nums; }
+
+  .repos-activity-feed { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 0; max-height: 500px; overflow-y: auto; }
+  .repos-activity-feed-header { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+  .repos-activity-feed-list { padding: 6px 0; }
+  .repos-activity-entry { padding: 6px 14px; font-size: 11px; color: var(--text); border-bottom: 1px solid rgba(255,255,255,0.02); }
+  .repos-activity-entry .actor { color: var(--blue); font-weight: 500; }
+  .repos-activity-entry .action { color: var(--muted); }
+  .repos-activity-entry .ts { color: var(--muted); font-size: 10px; float: right; }
+
+  .repos-manage-section { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 0; }
+  .repos-manage-details summary { padding: 10px 14px; cursor: pointer; color: var(--text); font-size: 12px; font-weight: 500; user-select: none; }
+  .repos-manage-widgets { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; padding: 12px 14px 16px; }
+  .repos-manage-form h4, .repos-pending-queue h4 { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; margin: 0 0 8px; font-weight: 500; }
+  .repos-manage-form label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 8px; }
+  .repos-manage-form input { display: block; width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border); padding: 5px 8px; border-radius: 3px; font: inherit; font-size: 12px; margin-top: 3px; box-sizing: border-box; }
+  .repos-manage-form button { background: var(--blue); color: white; border: 0; padding: 6px 14px; border-radius: 3px; cursor: pointer; font: inherit; font-size: 12px; }
+  .repos-manage-form button:hover { opacity: 0.9; }
+  .repos-manage-msg { margin-top: 6px; font-size: 11px; min-height: 14px; }
+  .repos-manage-msg.ok { color: var(--green, #22c55e); }
+  .repos-manage-msg.err { color: var(--red, #f87171); }
+  .repos-pending-queue-list { max-height: 200px; overflow-y: auto; }
+  .repos-pending-entry { padding: 6px 0; font-size: 11px; color: var(--text); border-bottom: 1px solid rgba(255,255,255,0.02); }
+  .repos-pending-entry .name { font-weight: 500; }
+  .repos-pending-entry .meta { color: var(--muted); font-size: 10px; }
+
   /* Per-sub-view styling */
   .pace-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
   .pace-card { background: var(--panel); border: 1px solid var(--border); border-radius: 4px; padding: 14px; }
@@ -1190,6 +1257,7 @@
   <button class="tab-btn" data-tab="bus">Channels<span class="badge-new">CP9</span></button>
   <button class="tab-btn" data-tab="audit">Audit<span class="badge-new">CP8.2</span></button>
   <button class="tab-btn" data-tab="effort">Effort<span class="badge-new">CP13</span></button>
+  <button class="tab-btn" data-tab="repos">Repos<span class="badge-new">CP17</span></button>
   <button class="tab-btn" data-tab="register">Register<span class="badge-new">CP8.5</span></button>
   <!-- CP14.x: Ptah ORP authoring + live-view tab (Jon-direct #9904). Hidden
        in default chrome; only reachable via clickable Ptah AgentCard or
@@ -1880,6 +1948,139 @@
       </div>
     </section>
   </main>
+</section>
+
+<!-- CP17.B (Jon-direct 2026-07-07): Repos tab — cluster output substrate view.
+     Consumes /api/v1/plexus/public/repos/{summary,heatmap,list,detail,by-agent}.
+     Sister-shape existing tab-panel + Cost hero strip patterns.
+     Time-nav aware via Task #264 v1 dashboardTimeRangeChange event. -->
+<section class="tab-panel" data-tab="repos" id="tab-repos">
+  <!-- Band 1: Summary tiles (6) — sister-shape Cost hero strip -->
+  <nav class="repos-hero-strip" id="repos-hero-strip" aria-label="Repo activity summary">
+    <div class="repos-hero-tile" data-tile="repo-count">
+      <div class="repos-hero-label">Repos tracked</div>
+      <div class="repos-hero-value" data-tile-value="repo_count">—</div>
+      <div class="repos-hero-sub" data-tile-sub="repo_count_sub"></div>
+    </div>
+    <div class="repos-hero-tile" data-tile="commit-count">
+      <div class="repos-hero-label">Commits</div>
+      <div class="repos-hero-value" data-tile-value="commit_count">—</div>
+      <div class="repos-hero-sub" data-tile-sub="window_label"></div>
+    </div>
+    <div class="repos-hero-tile" data-tile="pr-count">
+      <div class="repos-hero-label">Merged PRs</div>
+      <div class="repos-hero-value" data-tile-value="pr_merged_count">—</div>
+      <div class="repos-hero-sub"></div>
+    </div>
+    <div class="repos-hero-tile" data-tile="engaged-agents">
+      <div class="repos-hero-label">Agents engaged</div>
+      <div class="repos-hero-value" data-tile-value="engaged_agents">—</div>
+      <div class="repos-hero-sub"></div>
+    </div>
+    <div class="repos-hero-tile" data-tile="attribution-gaps">
+      <div class="repos-hero-label">Attribution gaps</div>
+      <div class="repos-hero-value" data-tile-value="attribution_gap_count">—</div>
+      <div class="repos-hero-sub"></div>
+    </div>
+    <div class="repos-hero-tile" data-tile="pending-mints" role="button" tabindex="0"
+         aria-label="Pending bare-git mint requests; click to jump to management widgets">
+      <div class="repos-hero-label">Pending mints</div>
+      <div class="repos-hero-value" data-tile-value="pending_bare_git_requests">—</div>
+      <div class="repos-hero-sub">bare-git requests</div>
+    </div>
+  </nav>
+
+  <!-- Band 2: GitHub-style commit heatmap -->
+  <section class="repos-heatmap-section" aria-label="Cluster activity heatmap">
+    <div class="repos-heatmap-controls">
+      <label>Metric
+        <select id="repos-heatmap-dim">
+          <option value="commits">Commits</option>
+          <option value="prs_merged">Merged PRs</option>
+          <option value="prs_opened">Opened PRs</option>
+          <option value="merges">Merges</option>
+          <option value="attribution_gaps">Attribution gaps</option>
+        </select>
+      </label>
+      <label>Repo
+        <select id="repos-heatmap-filter-repo">
+          <option value="">All repos</option>
+        </select>
+      </label>
+      <label>Agent
+        <select id="repos-heatmap-filter-agent">
+          <option value="">All agents</option>
+        </select>
+      </label>
+      <span class="repos-heatmap-legend" id="repos-heatmap-legend" aria-live="polite"></span>
+    </div>
+    <div class="repos-heatmap-body" id="repos-heatmap-body">
+      <div class="cost-loading">switch to this tab to load activity heatmap.</div>
+    </div>
+  </section>
+
+  <!-- Band 3: Repo grid + activity feed side-by-side -->
+  <section class="repos-grid-section">
+    <div class="repos-grid-controls">
+      <span class="lbl">Sort</span>
+      <div class="opts" id="repos-grid-sort">
+        <button data-sort="activity" class="active">activity</button>
+        <button data-sort="last_activity">last activity</button>
+        <button data-sort="engagement">engagement</button>
+        <button data-sort="name">name</button>
+      </div>
+      <span class="lbl">Type</span>
+      <div class="opts" id="repos-grid-type">
+        <button data-type="all" class="active">all</button>
+        <button data-type="bare-git">bare-git</button>
+        <button data-type="github">github</button>
+      </div>
+    </div>
+    <div class="repos-grid-layout">
+      <div class="repos-grid" id="repos-grid">
+        <div class="cost-loading">…</div>
+      </div>
+      <aside class="repos-activity-feed" id="repos-activity-feed" aria-label="Recent activity">
+        <div class="repos-activity-feed-header">Recent activity</div>
+        <div class="repos-activity-feed-list">
+          <div class="cost-loading">…</div>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <!-- Band 4: Management widgets — add GitHub / request bare-git / pending queue -->
+  <section class="repos-manage-section" id="repos-manage-section" aria-label="Repo management">
+    <details class="repos-manage-details" open>
+      <summary>Manage tracked repos</summary>
+      <div class="repos-manage-widgets">
+        <form class="repos-manage-form" id="repos-add-github-form" aria-label="Add GitHub repo">
+          <h4>Add GitHub repo</h4>
+          <label>owner/repo <input type="text" name="github_owner_repo" required
+                                    pattern="[a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+" maxlength="96"
+                                    placeholder="e.g. jon/my-project"></label>
+          <label>bare_git_path (optional) <input type="text" name="bare_git_path" maxlength="256"></label>
+          <button type="submit">Add</button>
+          <div class="repos-manage-msg" data-msg="add-github" aria-live="polite"></div>
+        </form>
+        <form class="repos-manage-form" id="repos-bare-git-request-form" aria-label="Request bare-git mint">
+          <h4>Request bare-git mint</h4>
+          <label>repo_name <input type="text" name="repo_name" required
+                                   pattern="[a-z0-9][a-z0-9._-]*" maxlength="63"
+                                   placeholder="lowercase; no slashes"></label>
+          <label>purpose (optional) <input type="text" name="purpose" maxlength="512"></label>
+          <button type="submit">Request</button>
+          <div class="repos-manage-msg" data-msg="bare-git-request" aria-live="polite"></div>
+        </form>
+        <div class="repos-pending-queue">
+          <h4>Pending mints</h4>
+          <div class="repos-pending-queue-list" id="repos-pending-queue-list">
+            <div class="cost-loading">…</div>
+          </div>
+        </div>
+      </div>
+    </details>
+  </section>
 </section>
 
 <section class="tab-panel" data-tab="register" id="tab-register">
