@@ -176,6 +176,10 @@ router.post('/repos/:owner/:repo/disable', (req, res) => {
 });
 
 // ── POST /api/v1/repos/bare-git-request — intent record (T1/T3/T6) ────────
+// NOTE: `purpose` is folded into audit_repo_change.metadata_json and
+// publicly readable via GET /plexus/public/repos/:repo_key/audit. Callers
+// MUST NOT put secrets in `purpose` (no tokens, keys, DB creds). Convention
+// documented per secops #11837 hardening note 2.
 router.post('/repos/bare-git-request', (req, res) => {
   const actor = resolveActor(req, res);
   if (!actor) return;

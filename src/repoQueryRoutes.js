@@ -168,6 +168,12 @@ router.get('/:repo_key(*)/detail', (req, res) => {
 // Per secops #11835 Step 4 binding gate #3 request. Public read; no PII
 // (repo_key + action + actor_agent_id + metadata_json). Sister-shape
 // existing per-repo detail read pattern.
+//
+// Explicit column whitelist per secops #11837 hardening note 1: prevents
+// a future sensitive column added to audit_repo_change from auto-exposing
+// publicly. Convention: metadata_json is agent-supplied at request-authoring
+// time; MUST NOT contain secrets (documented in bare-git-request POST body
+// contract at repoRoutes.js).
 router.get('/:repo_key(*)/audit', (req, res) => {
   const repo_key = req.params.repo_key;
   if (!repo_key || repo_key.length === 0) {
@@ -175,7 +181,15 @@ router.get('/:repo_key(*)/audit', (req, res) => {
   }
   const limit = Math.min(500, Math.max(1, parseInt(req.query.limit, 10) || 100));
   const rows = dbModule.listAuditRepoChangesByRepo(repo_key, { limit });
-  return res.json({ repo_key, audit: rows });
+  const audit = rows.map(r => ({
+    seq: r.seq,
+    repo_key: r.repo_key,
+    action: r.action,
+    actor_agent_id: r.actor_agent_id,
+    metadata_json: r.metadata_json,
+    at_ts: r.at_ts,
+  }));
+  return res.json({ repo_key, audit });
 });
 
 // ── GET /activity-feed — CP17.C Task 2 activity feed (commits + PRs merged) ─
