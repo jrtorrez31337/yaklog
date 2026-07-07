@@ -1414,58 +1414,144 @@ function rebuildOutputDailyForDate(date) {
   return { date, rows: count.n };
 }
 
-function queryOutputDailySummary({ from, to }) {
+// Virtual current-day rollup (Task #274/#275 forward-track: live-tail per
+// PLAN §3.2). Computes output_daily-shaped rows for a single date without
+// persisting. Called by query helpers when the window includes today.
+function queryVirtualOutputDailyForDate(date) {
   const database = getDb();
-  return database.prepare(`
-    SELECT
-      COUNT(DISTINCT repo_key) AS repo_count,
-      SUM(commits) AS commit_count,
-      SUM(merges) AS merge_count,
-      SUM(prs_opened) AS pr_opened_count,
-      SUM(prs_merged) AS pr_merged_count,
-      COUNT(DISTINCT CASE WHEN agent_id != 'unattributed' THEN agent_id END) AS engaged_agents,
-      SUM(attribution_gaps) AS attribution_gap_count
-    FROM output_daily
-    WHERE date >= @from AND date <= @to
-  `).get({ from, to });
+  const rows = new Map();
+  const bucket = (repo, agent) => {
+    const k = `${repo} ${agent}`;
+    if (!rows.has(k)) {
+      rows.set(k, {
+        date, repo_key: repo, agent_id: agent,
+        commits: 0, merges: 0, prs_opened: 0, prs_merged: 0, attribution_gaps: 0,
+      });
+    }
+    return rows.get(k);
+  };
+  for (const c of database.prepare(`
+    SELECT repo, COALESCE(agent_attribution, 'unattributed') AS agent, COUNT(*) AS n,
+           SUM(CASE WHEN agent_attribution IS NULL THEN 1 ELSE 0 END) AS gaps
+    FROM output_commit WHERE date(occurred_at) = @date
+    GROUP BY repo, COALESCE(agent_attribution, 'unattributed')
+  `).all({ date })) {
+    const r = bucket(c.repo, c.agent);
+    r.commits += c.n;
+    r.attribution_gaps += c.gaps;
+  }
+  for (const m of database.prepare(`
+    SELECT repo, COALESCE(merged_by_agent, 'unattributed') AS agent, COUNT(*) AS n
+    FROM output_merge WHERE date(occurred_at) = @date
+    GROUP BY repo, COALESCE(merged_by_agent, 'unattributed')
+  `).all({ date })) {
+    bucket(m.repo, m.agent).merges += m.n;
+  }
+  for (const p of database.prepare(`
+    SELECT github_owner_repo AS repo, COALESCE(author_login, 'unattributed') AS agent, COUNT(*) AS n
+    FROM output_pr WHERE opened_at IS NOT NULL AND date(opened_at) = @date
+    GROUP BY github_owner_repo, COALESCE(author_login, 'unattributed')
+  `).all({ date })) {
+    bucket(p.repo, p.agent).prs_opened += p.n;
+  }
+  for (const p of database.prepare(`
+    SELECT github_owner_repo AS repo, COALESCE(author_login, 'unattributed') AS agent, COUNT(*) AS n
+    FROM output_pr WHERE merged_at IS NOT NULL AND date(merged_at) = @date
+    GROUP BY github_owner_repo, COALESCE(author_login, 'unattributed')
+  `).all({ date })) {
+    bucket(p.repo, p.agent).prs_merged += p.n;
+  }
+  return [...rows.values()];
+}
+
+// Read output_daily rows for [from, to] with live-tail current-day. Returns
+// row array where today (if in range) is computed virtually rather than
+// read from output_daily. Ensures Repos-tab activity shows even before
+// nightly rollup fires. Sister-shape existing daily-rollup live-tail canon
+// per PLAN §3.2.
+function _readOutputDailyRowsInRange({ from, to }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const database = getDb();
+  const includesToday = today >= from && today <= to;
+  const rollupRows = database.prepare(`
+    SELECT date, repo_key, agent_id, commits, merges, prs_opened, prs_merged, attribution_gaps
+    FROM output_daily WHERE date >= @from AND date <= @to
+      AND (@includesToday = 0 OR date != @today)
+  `).all({ from, to, today, includesToday: includesToday ? 1 : 0 });
+  if (!includesToday) return rollupRows;
+  return rollupRows.concat(queryVirtualOutputDailyForDate(today));
+}
+
+function queryOutputDailySummary({ from, to }) {
+  const rows = _readOutputDailyRowsInRange({ from, to });
+  const repos = new Set(), agents = new Set();
+  let commit_count = 0, merge_count = 0, pr_opened_count = 0, pr_merged_count = 0, attribution_gap_count = 0;
+  for (const r of rows) {
+    repos.add(r.repo_key);
+    if (r.agent_id !== 'unattributed') agents.add(r.agent_id);
+    commit_count += r.commits || 0;
+    merge_count += r.merges || 0;
+    pr_opened_count += r.prs_opened || 0;
+    pr_merged_count += r.prs_merged || 0;
+    attribution_gap_count += r.attribution_gaps || 0;
+  }
+  return {
+    repo_count: repos.size,
+    commit_count, merge_count, pr_opened_count, pr_merged_count,
+    engaged_agents: agents.size,
+    attribution_gap_count,
+  };
 }
 
 function queryOutputDailyHeatmap({ from, to, dim = 'commits', filter_repo = null, filter_agent = null }) {
-  const database = getDb();
   const validDims = new Set(['commits', 'merges', 'prs_opened', 'prs_merged', 'attribution_gaps']);
   if (!validDims.has(dim)) {
     throw new Error(`queryOutputDailyHeatmap: dim must be one of ${[...validDims].join(', ')}`);
   }
-  const filters = ['date >= @from', 'date <= @to'];
-  const params = { from, to };
-  if (filter_repo) { filters.push('repo_key = @filter_repo'); params.filter_repo = filter_repo; }
-  if (filter_agent) { filters.push('agent_id = @filter_agent'); params.filter_agent = filter_agent; }
-  return database.prepare(`
-    SELECT date, SUM(${dim}) AS value
-    FROM output_daily
-    WHERE ${filters.join(' AND ')}
-    GROUP BY date
-    ORDER BY date ASC
-  `).all(params);
+  const rows = _readOutputDailyRowsInRange({ from, to });
+  const byDate = new Map();
+  for (const r of rows) {
+    if (filter_repo && r.repo_key !== filter_repo) continue;
+    if (filter_agent && r.agent_id !== filter_agent) continue;
+    byDate.set(r.date, (byDate.get(r.date) || 0) + (r[dim] || 0));
+  }
+  return [...byDate.entries()]
+    .map(([date, value]) => ({ date, value }))
+    .sort((a, b) => a.date.localeCompare(b.date));
 }
 
 function queryOutputDailyRepoList({ from, to }) {
-  const database = getDb();
-  return database.prepare(`
-    SELECT
-      repo_key,
-      SUM(commits) AS commit_count,
-      SUM(merges) AS merge_count,
-      SUM(prs_opened) AS pr_opened_count,
-      SUM(prs_merged) AS pr_merged_count,
-      COUNT(DISTINCT CASE WHEN agent_id != 'unattributed' THEN agent_id END) AS engaged_agents_count,
-      SUM(attribution_gaps) AS attribution_gap_count,
-      MAX(date) AS last_activity_at
-    FROM output_daily
-    WHERE date >= @from AND date <= @to
-    GROUP BY repo_key
-    ORDER BY commit_count DESC
-  `).all({ from, to });
+  const rows = _readOutputDailyRowsInRange({ from, to });
+  const byRepo = new Map();
+  for (const r of rows) {
+    if (!byRepo.has(r.repo_key)) {
+      byRepo.set(r.repo_key, {
+        repo_key: r.repo_key,
+        commit_count: 0, merge_count: 0, pr_opened_count: 0, pr_merged_count: 0,
+        _agents: new Set(), attribution_gap_count: 0, last_activity_at: null,
+      });
+    }
+    const g = byRepo.get(r.repo_key);
+    g.commit_count += r.commits || 0;
+    g.merge_count += r.merges || 0;
+    g.pr_opened_count += r.prs_opened || 0;
+    g.pr_merged_count += r.prs_merged || 0;
+    if (r.agent_id !== 'unattributed') g._agents.add(r.agent_id);
+    g.attribution_gap_count += r.attribution_gaps || 0;
+    if (!g.last_activity_at || r.date > g.last_activity_at) g.last_activity_at = r.date;
+  }
+  return [...byRepo.values()]
+    .map(g => ({
+      repo_key: g.repo_key,
+      commit_count: g.commit_count,
+      merge_count: g.merge_count,
+      pr_opened_count: g.pr_opened_count,
+      pr_merged_count: g.pr_merged_count,
+      engaged_agents_count: g._agents.size,
+      attribution_gap_count: g.attribution_gap_count,
+      last_activity_at: g.last_activity_at,
+    }))
+    .sort((a, b) => b.commit_count - a.commit_count);
 }
 
 // Multi-day rollup driver — sister-shape rollupAuditWindow. Rolls a rolling
@@ -1542,36 +1628,44 @@ function queryRepoActivityFeed({ from, to, limit = 50 }) {
 }
 
 function queryOutputDailyAgentsInWindow({ from, to, limit = 100 }) {
-  const database = getDb();
-  return database.prepare(`
-    SELECT
-      agent_id,
-      SUM(commits) AS commit_count,
-      COUNT(DISTINCT repo_key) AS repo_count
-    FROM output_daily
-    WHERE date >= @from AND date <= @to AND agent_id != 'unattributed'
-    GROUP BY agent_id
-    ORDER BY commit_count DESC
-    LIMIT @limit
-  `).all({ from, to, limit });
+  const rows = _readOutputDailyRowsInRange({ from, to });
+  const byAgent = new Map();
+  for (const r of rows) {
+    if (r.agent_id === 'unattributed') continue;
+    if (!byAgent.has(r.agent_id)) {
+      byAgent.set(r.agent_id, { agent_id: r.agent_id, commit_count: 0, _repos: new Set() });
+    }
+    const g = byAgent.get(r.agent_id);
+    g.commit_count += r.commits || 0;
+    g._repos.add(r.repo_key);
+  }
+  return [...byAgent.values()]
+    .map(g => ({ agent_id: g.agent_id, commit_count: g.commit_count, repo_count: g._repos.size }))
+    .sort((a, b) => b.commit_count - a.commit_count)
+    .slice(0, limit);
 }
 
 function queryOutputDailyByAgent({ agent_id, from, to }) {
-  const database = getDb();
-  return database.prepare(`
-    SELECT
-      repo_key,
-      SUM(commits) AS commit_count,
-      SUM(merges) AS merge_count,
-      SUM(prs_opened) AS pr_opened_count,
-      SUM(prs_merged) AS pr_merged_count,
-      MIN(date) AS first_activity_at,
-      MAX(date) AS last_activity_at
-    FROM output_daily
-    WHERE agent_id = @agent_id AND date >= @from AND date <= @to
-    GROUP BY repo_key
-    ORDER BY commit_count DESC
-  `).all({ agent_id, from, to });
+  const rows = _readOutputDailyRowsInRange({ from, to });
+  const byRepo = new Map();
+  for (const r of rows) {
+    if (r.agent_id !== agent_id) continue;
+    if (!byRepo.has(r.repo_key)) {
+      byRepo.set(r.repo_key, {
+        repo_key: r.repo_key,
+        commit_count: 0, merge_count: 0, pr_opened_count: 0, pr_merged_count: 0,
+        first_activity_at: null, last_activity_at: null,
+      });
+    }
+    const g = byRepo.get(r.repo_key);
+    g.commit_count += r.commits || 0;
+    g.merge_count += r.merges || 0;
+    g.pr_opened_count += r.prs_opened || 0;
+    g.pr_merged_count += r.prs_merged || 0;
+    if (!g.first_activity_at || r.date < g.first_activity_at) g.first_activity_at = r.date;
+    if (!g.last_activity_at || r.date > g.last_activity_at) g.last_activity_at = r.date;
+  }
+  return [...byRepo.values()].sort((a, b) => b.commit_count - a.commit_count);
 }
 
 function insertMessage({ channel, sender, body, metadata = null, isPrivate = false }) {
@@ -4635,6 +4729,7 @@ module.exports = {
   // CP17.B rollup + query helpers
   rebuildOutputDailyForDate,
   rollupOutputWindow,
+  queryVirtualOutputDailyForDate,
   queryOutputDailySummary,
   queryOutputDailyHeatmap,
   queryOutputDailyRepoList,

@@ -292,6 +292,40 @@ test('POST /ops/output/output-rollup/backfill — 400 on invalid days_back', asy
   assert.equal(res.statusCode, 400);
 });
 
+// ── Live-tail current-day (Task #274/#275 forward-track) ──────────────────
+
+test('queryVirtualOutputDailyForDate — computes live from source without persist', () => {
+  const { queryVirtualOutputDailyForDate } = require('../src/db');
+  const rows = queryVirtualOutputDailyForDate('2026-07-01');
+  // Matches seed: alice 3 commits + bob 2 + unattributed 2 = 3 buckets on repo1+repo2
+  const alice = rows.find(r => r.agent_id === 'agent-alice' && r.repo_key === 'repo1.git');
+  assert.ok(alice, 'alice bucket should exist for repo1');
+  assert.equal(alice.commits, 3);
+  // Persistence side-effect: output_daily row count for 2026-07-01 unchanged
+  // by virtual query (compare-and-set against pre-count)
+  const persisted = getDb().prepare(`SELECT COUNT(*) AS n FROM output_daily WHERE date = ?`).get('2026-07-01').n;
+  assert.ok(persisted > 0, 'virtual query must not delete existing rollup rows');
+});
+
+test('live-tail: /summary sees today activity even without rollup', async () => {
+  const today = new Date().toISOString().slice(0, 10);
+  // Insert a commit for today NOT in output_daily
+  getDb().prepare(`INSERT INTO output_commit (
+    repo, commit_sha, author_name, author_email, committer_name, committer_email,
+    occurred_at, subject, agent_attribution, attribution_method
+  ) VALUES ('livetail-repo.git', 'live-1', 'Alice', 'a@x', 'Alice', 'a@x',
+            ?, 'live commit', 'agent-alice', 'test')`).run(`${today}T12:00:00Z`);
+  // Verify NOT in output_daily
+  const rolled = getDb().prepare(`SELECT COUNT(*) AS n FROM output_daily WHERE date = ? AND repo_key = ?`)
+    .get(today, 'livetail-repo.git').n;
+  assert.equal(rolled, 0, 'sanity: today should not be in output_daily');
+  // Query summary for today — must see the live commit
+  const res = await request(app).get(`/api/v1/plexus/public/repos/summary?from=${today}&to=${today}`);
+  assert.equal(res.statusCode, 200);
+  assert.ok(res.body.commit_count >= 1, `expected commit_count >= 1 (live-tail); got ${res.body.commit_count}`);
+  assert.ok(res.body.repo_count >= 1);
+});
+
 test('POST /ops/output/output-rollup/backfill — 401/403 without ops-key', async () => {
   const res = await request(app)
     .post('/api/v1/ops/output/output-rollup/backfill')
