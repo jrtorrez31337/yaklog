@@ -455,6 +455,8 @@
     if (name === 'effort' && typeof ensureEffortView === 'function') ensureEffortView();
     // CP14 Operate tab lazy-mount + refresh on activation.
     if (name === 'operate' && typeof mountOperateTab === 'function') mountOperateTab();
+    // CP17.B (Jon-direct 2026-07-07): lazy-mount the Repos tab.
+    if (name === 'repos' && typeof mountReposTab === 'function') mountReposTab();
   }
 
   // ─────────────────────────────────────────────────────────────────────
@@ -6063,6 +6065,338 @@
 
   // Backward-compat alias for any external caller of refreshOperateTiles
   async function refreshOperateTiles() { return _operateImmediateRefresh(); }
+
+  // ────────────────────────────────────────────────────────────────────
+  // CP17.B Repos tab (Jon-direct 2026-07-07)
+  // Consumes /api/v1/plexus/public/repos/{summary,heatmap,list,detail,by-agent}
+  // + POST /api/v1/repos + POST /api/v1/repos/bare-git-request.
+  // Sister-shape existing tab lazy-mount + Cost hero + AgentCard patterns.
+  // Time-nav aware via Task #264 dashboardTimeRangeChange event.
+  // ────────────────────────────────────────────────────────────────────
+  let _reposMounted = false;
+  const _reposState = {
+    period: '30d',
+    dim: 'commits',
+    filterRepo: '',
+    filterAgent: '',
+    sort: 'activity',
+    typeFilter: 'all',
+    listCache: [],
+  };
+
+  function _reposCurrentPeriod() {
+    // Prefer dashboard-picker window when non-live; else last-30d default.
+    if (typeof window.getDashboardTimeWindow === 'function') {
+      const w = window.getDashboardTimeWindow();
+      if (w && w.preset) {
+        const map = { '1h': 'today', '24h': 'today', '7d': '7d', '30d': '30d' };
+        if (map[w.preset]) return map[w.preset];
+      }
+    }
+    return _reposState.period;
+  }
+
+  function _reposReqUrl(pathAfterRepos) {
+    const period = _reposCurrentPeriod();
+    const sep = pathAfterRepos.includes('?') ? '&' : '?';
+    return `/api/v1/plexus/public/repos${pathAfterRepos}${sep}period=${encodeURIComponent(period)}`;
+  }
+
+  function mountReposTab() {
+    if (_reposMounted) return;
+    _reposMounted = true;
+    _wireReposControls();
+    _wireReposManagement();
+    _refreshReposAll();
+    // Time-nav: rerender all bands on picker change.
+    document.addEventListener('dashboardTimeRangeChange', () => {
+      // Only render if Repos tab currently active (perf)
+      const active = document.querySelector('.tab-panel[data-tab="repos"]');
+      if (active && active.classList.contains('active')) _refreshReposAll();
+    });
+    // 60s auto-refresh gated on isLiveMode() sister-shape Cost hero discipline.
+    setInterval(() => {
+      if (window.isDashboardLive && !window.isDashboardLive()) return;
+      const active = document.querySelector('.tab-panel[data-tab="repos"]');
+      if (active && active.classList.contains('active')) _refreshReposAll();
+    }, 60_000);
+  }
+
+  function _wireReposControls() {
+    const dimSel = document.getElementById('repos-heatmap-dim');
+    if (dimSel) dimSel.addEventListener('change', () => { _reposState.dim = dimSel.value; _renderReposHeatmap(); });
+    const repoSel = document.getElementById('repos-heatmap-filter-repo');
+    if (repoSel) repoSel.addEventListener('change', () => { _reposState.filterRepo = repoSel.value; _renderReposHeatmap(); });
+    const agentSel = document.getElementById('repos-heatmap-filter-agent');
+    if (agentSel) agentSel.addEventListener('change', () => { _reposState.filterAgent = agentSel.value; _renderReposHeatmap(); });
+
+    document.querySelectorAll('#repos-grid-sort button').forEach((b) => {
+      b.addEventListener('click', () => {
+        _reposState.sort = b.dataset.sort;
+        document.querySelectorAll('#repos-grid-sort button').forEach((x) => x.classList.toggle('active', x === b));
+        _renderReposGrid();
+      });
+    });
+    document.querySelectorAll('#repos-grid-type button').forEach((b) => {
+      b.addEventListener('click', () => {
+        _reposState.typeFilter = b.dataset.type;
+        document.querySelectorAll('#repos-grid-type button').forEach((x) => x.classList.toggle('active', x === b));
+        _renderReposGrid();
+      });
+    });
+
+    // Pending-mints tile → jump to Band 4 manage section
+    const pendingTile = document.querySelector('[data-tile="pending-mints"]');
+    if (pendingTile) {
+      const jump = () => {
+        const manage = document.getElementById('repos-manage-section');
+        if (manage) {
+          const details = manage.querySelector('.repos-manage-details');
+          if (details) details.open = true;
+          manage.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      };
+      pendingTile.addEventListener('click', jump);
+      pendingTile.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); jump(); }
+      });
+    }
+  }
+
+  async function _refreshReposAll() {
+    await Promise.all([
+      _renderReposSummary(),
+      _renderReposHeatmap(),
+      _renderReposList(),
+      _renderReposPendingQueue(),
+    ]);
+  }
+
+  async function _renderReposSummary() {
+    try {
+      const res = await fetch(_reposReqUrl('/summary'), { cache: 'no-store' });
+      if (!res.ok) return;
+      const data = await res.json();
+      const setV = (name, val) => {
+        const el = document.querySelector(`[data-tile-value="${name}"]`);
+        if (el) el.textContent = val;
+      };
+      const setSub = (name, val) => {
+        const el = document.querySelector(`[data-tile-sub="${name}"]`);
+        if (el) el.textContent = val;
+      };
+      setV('repo_count', data.repo_count || 0);
+      setSub('repo_count_sub', ''); // subtype breakdown deferred to /list
+      setV('commit_count', data.commit_count || 0);
+      setSub('window_label', `${data.period || ''} (${data.from} → ${data.to})`);
+      setV('pr_merged_count', data.pr_merged_count || 0);
+      setV('engaged_agents', data.engaged_agents || 0);
+      setV('attribution_gap_count', data.attribution_gap_count || 0);
+      const gapTile = document.querySelector('[data-tile="attribution-gaps"]');
+      if (gapTile) gapTile.classList.toggle('attribution-gap-flagged', (data.attribution_gap_count || 0) > 0);
+      setV('pending_bare_git_requests', data.pending_bare_git_requests || 0);
+    } catch { /* honest-microcopy discipline: silent on transient errors; tile shows last-fetched */ }
+  }
+
+  async function _renderReposHeatmap() {
+    const body = document.getElementById('repos-heatmap-body');
+    const legend = document.getElementById('repos-heatmap-legend');
+    if (!body) return;
+    try {
+      const q = new URLSearchParams({ dim: _reposState.dim });
+      if (_reposState.filterRepo) q.set('filter_repo', _reposState.filterRepo);
+      if (_reposState.filterAgent) q.set('filter_agent', _reposState.filterAgent);
+      const res = await fetch(_reposReqUrl(`/heatmap?${q.toString()}`), { cache: 'no-store' });
+      if (!res.ok) {
+        body.innerHTML = '';
+        body.appendChild(el('div', { class: 'view-empty' }, "Couldn't load activity heatmap. Retry shortly."));
+        return;
+      }
+      const data = await res.json();
+      const cells = data.cells || [];
+      body.innerHTML = '';
+      if (cells.length === 0) {
+        body.appendChild(el('div', { class: 'view-empty' }, 'No activity in this window.'));
+        if (legend) legend.textContent = '';
+        return;
+      }
+      const p95 = (data.scale && data.scale.p95) || 1;
+      const grid = el('div', { class: 'repos-heatmap-grid' });
+      // Simple column-per-date layout for MVP; GitHub-style row×week refinement in CP17.C
+      for (const c of cells) {
+        const intensity = Math.min(1, (c.value || 0) / (p95 || 1));
+        const alpha = 0.15 + intensity * 0.75;
+        const color = `rgba(96,165,250,${alpha.toFixed(3)})`;
+        const cell = el('div', {
+          class: 'repos-heatmap-cell',
+          title: `${c.date}: ${c.value} ${_reposState.dim}`,
+          style: `background:${color}`,
+        });
+        grid.appendChild(cell);
+      }
+      body.appendChild(grid);
+      if (legend) legend.textContent = `min ${data.scale.min} · p95 ${data.scale.p95} · max ${data.scale.max}`;
+    } catch {
+      body.innerHTML = '';
+      body.appendChild(el('div', { class: 'view-empty' }, "Couldn't load activity heatmap. Retry shortly."));
+    }
+  }
+
+  async function _renderReposList() {
+    const grid = document.getElementById('repos-grid');
+    if (!grid) return;
+    try {
+      const res = await fetch(_reposReqUrl('/list'), { cache: 'no-store' });
+      if (!res.ok) {
+        grid.innerHTML = '';
+        grid.appendChild(el('div', { class: 'view-empty' }, "Couldn't load repo list. Retry shortly."));
+        return;
+      }
+      const data = await res.json();
+      _reposState.listCache = data.repos || [];
+      _renderReposGrid();
+      _populateReposFilterOptions();
+    } catch {
+      grid.innerHTML = '';
+      grid.appendChild(el('div', { class: 'view-empty' }, "Couldn't load repo list. Retry shortly."));
+    }
+  }
+
+  function _renderReposGrid() {
+    const grid = document.getElementById('repos-grid');
+    if (!grid) return;
+    grid.innerHTML = '';
+    let rows = _reposState.listCache.slice();
+    if (_reposState.typeFilter !== 'all') {
+      rows = rows.filter((r) => r.type === _reposState.typeFilter);
+    }
+    switch (_reposState.sort) {
+      case 'last_activity': rows.sort((a, b) => (b.last_activity_at || '').localeCompare(a.last_activity_at || '')); break;
+      case 'engagement':   rows.sort((a, b) => (b.engaged_agents_count || 0) - (a.engaged_agents_count || 0)); break;
+      case 'name':         rows.sort((a, b) => (a.repo_key || '').localeCompare(b.repo_key || '')); break;
+      default: /* activity */ rows.sort((a, b) => (b.commit_count || 0) - (a.commit_count || 0));
+    }
+    if (rows.length === 0) {
+      grid.appendChild(el('div', { class: 'view-empty' }, 'No repos in this window.'));
+      return;
+    }
+    for (const r of rows) {
+      const card = el('div', { class: 'repos-repo-card', 'data-repo': r.repo_key });
+      card.appendChild(el('div', { class: 'repos-repo-card-name' }, r.repo_key));
+      const meta = el('div', { class: 'repos-repo-card-meta' });
+      meta.appendChild(el('span', { class: 'badge-type' }, r.type || 'unknown'));
+      if ((r.attribution_gap_count || 0) > 0) {
+        meta.appendChild(el('span', { class: 'badge-gap', title: 'attribution gaps' }, `⚠ ${r.attribution_gap_count}`));
+      }
+      if (r.last_activity_at) meta.appendChild(el('span', null, `last: ${r.last_activity_at}`));
+      card.appendChild(meta);
+      const stats = el('div', { class: 'repos-repo-card-stats' });
+      stats.appendChild(el('span', null, `commits: `));
+      stats.appendChild(el('span', { class: 'stat-num' }, String(r.commit_count || 0)));
+      stats.appendChild(el('span', null, ` · PRs: `));
+      stats.appendChild(el('span', { class: 'stat-num' }, String(r.pr_merged_count || 0)));
+      stats.appendChild(el('span', null, ` · agents: `));
+      stats.appendChild(el('span', { class: 'stat-num' }, String(r.engaged_agents_count || 0)));
+      card.appendChild(stats);
+      card.addEventListener('click', () => {
+        // Filter heatmap to this repo
+        _reposState.filterRepo = r.repo_key;
+        const sel = document.getElementById('repos-heatmap-filter-repo');
+        if (sel) sel.value = r.repo_key;
+        _renderReposHeatmap();
+      });
+      grid.appendChild(card);
+    }
+  }
+
+  function _populateReposFilterOptions() {
+    const repoSel = document.getElementById('repos-heatmap-filter-repo');
+    if (repoSel) {
+      const cur = _reposState.filterRepo;
+      repoSel.innerHTML = '';
+      repoSel.appendChild(el('option', { value: '' }, 'All repos'));
+      for (const r of _reposState.listCache) {
+        const opt = el('option', { value: r.repo_key }, r.repo_key);
+        if (r.repo_key === cur) opt.selected = true;
+        repoSel.appendChild(opt);
+      }
+    }
+    // Agent filter options require by-agent enumeration — deferred (CP17.C).
+  }
+
+  async function _renderReposPendingQueue() {
+    const list = document.getElementById('repos-pending-queue-list');
+    if (!list) return;
+    // Pending count comes with /summary; details need a dedicated endpoint OR
+    // an ops-key call — for v1, MVP shows only the count-tile (updated via
+    // summary refresh). Pending-queue detail is CP17.C polish.
+    list.innerHTML = '';
+    list.appendChild(el('div', { class: 'repos-activity-entry meta' },
+      'Requester detail via ops-key; count visible in top-strip tile.'));
+  }
+
+  function _wireReposManagement() {
+    const addForm = document.getElementById('repos-add-github-form');
+    if (addForm) addForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const msg = document.querySelector('[data-msg="add-github"]');
+      const fd = new FormData(addForm);
+      try {
+        const res = await fetch('/api/v1/repos', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            github_owner_repo: fd.get('github_owner_repo'),
+            bare_git_path: fd.get('bare_git_path') || undefined,
+          }),
+        });
+        const body = await res.json();
+        if (res.ok) {
+          msg.className = 'repos-manage-msg ok';
+          msg.textContent = `Now tracking ${body.github_owner_repo}.`;
+          addForm.reset();
+          _renderReposList();
+          _renderReposSummary();
+        } else {
+          msg.className = 'repos-manage-msg err';
+          msg.textContent = body.message || "Couldn't add repo. Check the owner/repo format.";
+        }
+      } catch {
+        msg.className = 'repos-manage-msg err';
+        msg.textContent = "Couldn't add repo. Retry shortly.";
+      }
+    });
+
+    const bareForm = document.getElementById('repos-bare-git-request-form');
+    if (bareForm) bareForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const msg = document.querySelector('[data-msg="bare-git-request"]');
+      const fd = new FormData(bareForm);
+      try {
+        const res = await fetch('/api/v1/repos/bare-git-request', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            repo_name: fd.get('repo_name'),
+            purpose: fd.get('purpose') || undefined,
+          }),
+        });
+        const body = await res.json();
+        if (res.ok) {
+          msg.className = 'repos-manage-msg ok';
+          msg.textContent = `Request submitted (id ${body.request_id}); admin will complete shortly.`;
+          bareForm.reset();
+          _renderReposSummary();  // refresh pending-mints tile
+        } else {
+          msg.className = 'repos-manage-msg err';
+          msg.textContent = body.message || "Couldn't submit request. Check the name format.";
+        }
+      } catch {
+        msg.className = 'repos-manage-msg err';
+        msg.textContent = "Couldn't submit request. Retry shortly.";
+      }
+    });
+  }
 
   function mountBusTab() {
     if (busTabMounted) return;
