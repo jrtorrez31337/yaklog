@@ -645,6 +645,23 @@
   .repos-pending-entry .name { font-weight: 500; }
   .repos-pending-entry .meta { color: var(--muted); font-size: 10px; }
 
+  /* CP17.C Task 1: heatmap cell drill-in modal (per plexus-ui #11805 RF1 a11y bundle). */
+  .repos-heatmap-detail-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+  .repos-heatmap-detail-modal { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; max-width: 720px; width: 90%; max-height: 80vh; display: flex; flex-direction: column; overflow: hidden; }
+  .repos-heatmap-detail-header { display: flex; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+  .repos-heatmap-detail-header h3 { color: var(--text); font-size: 14px; margin: 0; flex: 1; font-weight: 600; }
+  .repos-heatmap-detail-close { background: transparent; color: var(--muted); border: 0; font-size: 20px; cursor: pointer; padding: 0 8px; line-height: 1; }
+  .repos-heatmap-detail-close:hover { color: var(--text); }
+  .repos-heatmap-detail-close:focus { outline: 2px solid var(--blue); outline-offset: 2px; }
+  .repos-heatmap-detail-body { padding: 14px 16px; overflow-y: auto; font-size: 12px; color: var(--text); }
+  .repos-heatmap-detail-summary { color: var(--muted); font-size: 11px; margin-bottom: 12px; }
+  .repos-heatmap-detail-body h4 { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; margin: 12px 0 6px; font-weight: 500; }
+  .repos-heatmap-detail-commit, .repos-heatmap-detail-pr { padding: 3px 0; font-size: 11px; word-break: break-word; }
+  .repos-heatmap-detail-commit .commit-sha { color: var(--blue); font-family: monospace; }
+  .repos-heatmap-detail-commit .commit-agent { color: var(--text); font-weight: 500; }
+  .repos-heatmap-detail-commit .commit-subject { color: var(--muted); }
+  .repos-heatmap-detail-pr .pr-title { color: var(--muted); }
+
   /* Per-sub-view styling */
   .pace-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
   .pace-card { background: var(--panel); border: 1px solid var(--border); border-radius: 4px; padding: 14px; }

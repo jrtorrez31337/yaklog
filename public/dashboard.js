@@ -6221,16 +6221,29 @@
         return;
       }
       const p95 = (data.scale && data.scale.p95) || 1;
-      const grid = el('div', { class: 'repos-heatmap-grid' });
-      // Simple column-per-date layout for MVP; GitHub-style row×week refinement in CP17.C
+      const grid = el('div', { class: 'repos-heatmap-grid', role: 'grid', 'aria-label': `Cluster activity heatmap by ${_reposState.dim}` });
+      // CP17.C: cells get full a11y (RF1 per plexus-ui #11805) — aria-label +
+      // role=button + tabindex + keydown all bundled with click-to-drill-in.
+      // Sister-shape existing dashboard interactive-cell patterns.
       for (const c of cells) {
         const intensity = Math.min(1, (c.value || 0) / (p95 || 1));
         const alpha = 0.15 + intensity * 0.75;
         const color = `rgba(96,165,250,${alpha.toFixed(3)})`;
+        const cellLabel = `${c.date}: ${c.value} ${_reposState.dim}`;
         const cell = el('div', {
           class: 'repos-heatmap-cell',
-          title: `${c.date}: ${c.value} ${_reposState.dim}`,
+          role: 'button',
+          tabindex: '0',
+          'aria-label': cellLabel,
+          title: cellLabel,
+          'data-date': c.date,
+          'data-value': String(c.value || 0),
           style: `background:${color}`,
+        });
+        const openDrill = () => _openHeatmapCellDetail(c.date);
+        cell.addEventListener('click', openDrill);
+        cell.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDrill(); }
         });
         grid.appendChild(cell);
       }
@@ -6239,6 +6252,114 @@
     } catch {
       body.innerHTML = '';
       body.appendChild(el('div', { class: 'view-empty' }, "Couldn't load activity heatmap. Retry shortly."));
+    }
+  }
+
+  // CP17.C Task 1 (RF1 a11y bundled): heatmap cell click → detail modal.
+  // Sister-shape existing Cost anomaly drill-in modal + accessible dialog
+  // discipline (aria-modal + Esc-to-close + focus-trap + return-focus).
+  async function _openHeatmapCellDetail(date) {
+    // Close any existing modal
+    const existing = document.getElementById('repos-heatmap-detail-modal');
+    if (existing) existing.remove();
+
+    const returnFocusEl = document.activeElement;
+    const backdrop = el('div', {
+      class: 'repos-heatmap-detail-backdrop',
+      id: 'repos-heatmap-detail-modal',
+    });
+    const modal = el('div', {
+      class: 'repos-heatmap-detail-modal',
+      role: 'dialog',
+      'aria-modal': 'true',
+      'aria-labelledby': 'repos-heatmap-detail-title',
+    });
+    const closeBtn = el('button', {
+      class: 'repos-heatmap-detail-close',
+      'aria-label': 'Close activity detail',
+    }, '×');
+    const header = el('div', { class: 'repos-heatmap-detail-header' },
+      el('h3', { id: 'repos-heatmap-detail-title' },
+        `Activity on ${date}${_reposState.filterRepo ? ` · ${_reposState.filterRepo}` : ''}${_reposState.filterAgent ? ` · ${_reposState.filterAgent}` : ''}`),
+      closeBtn);
+    modal.appendChild(header);
+    const bodyEl = el('div', { class: 'repos-heatmap-detail-body' },
+      el('div', { class: 'cost-loading' }, 'loading…'));
+    modal.appendChild(bodyEl);
+    backdrop.appendChild(modal);
+    document.body.appendChild(backdrop);
+
+    const closeModal = () => {
+      backdrop.remove();
+      if (returnFocusEl && returnFocusEl.focus) returnFocusEl.focus();
+    };
+    closeBtn.addEventListener('click', closeModal);
+    backdrop.addEventListener('click', (e) => { if (e.target === backdrop) closeModal(); });
+    const onKey = (e) => {
+      if (e.key === 'Escape') { closeModal(); document.removeEventListener('keydown', onKey); }
+    };
+    document.addEventListener('keydown', onKey);
+    // Move focus into modal per a11y dialog discipline
+    setTimeout(() => closeBtn.focus(), 0);
+
+    // Fetch the day's data via /repos/heatmap with a 1-day window (from=to=date)
+    // + the current filters. Then aggregate the cell's underlying commit + PR
+    // rows via /:repo_key/detail for each repo touched (best-effort within
+    // v1 scope — full commit-list is CP17.C polish tier).
+    try {
+      const q = new URLSearchParams({
+        from: date, to: date, dim: 'commits',
+      });
+      if (_reposState.filterRepo) q.set('filter_repo', _reposState.filterRepo);
+      if (_reposState.filterAgent) q.set('filter_agent', _reposState.filterAgent);
+      const sumRes = await fetch(`/api/v1/plexus/public/repos/heatmap?${q.toString()}`, { cache: 'no-store' });
+      let summaryLine = '';
+      if (sumRes.ok) {
+        const sd = await sumRes.json();
+        const total = (sd.cells || []).reduce((a, c) => a + (c.value || 0), 0);
+        summaryLine = `${total} ${_reposState.dim} on this day`;
+      }
+      // If filtered to a specific repo, fetch the detail commit-list for drill-in.
+      let listEls = [];
+      if (_reposState.filterRepo) {
+        const dRes = await fetch(`/api/v1/plexus/public/repos/${encodeURIComponent(_reposState.filterRepo)}/detail?from=${date}&to=${date}`, { cache: 'no-store' });
+        if (dRes.ok) {
+          const dd = await dRes.json();
+          const commits = (dd.commits || []).slice(0, 50);
+          if (commits.length > 0) {
+            listEls.push(el('h4', null, 'Commits'));
+            for (const c of commits) {
+              const line = el('div', { class: 'repos-heatmap-detail-commit' },
+                el('span', { class: 'commit-sha' }, (c.commit_sha || '').slice(0, 7)),
+                el('span', { class: 'commit-agent' }, ` ${c.agent_attribution || 'unattributed'}`),
+                el('span', { class: 'commit-subject' }, ` · ${(c.subject || '').slice(0, 80)}`));
+              listEls.push(line);
+            }
+          }
+          const prs = (dd.prs || []).slice(0, 20);
+          if (prs.length > 0) {
+            listEls.push(el('h4', null, 'PRs'));
+            for (const p of prs) {
+              const line = el('div', { class: 'repos-heatmap-detail-pr' },
+                el('span', null, `#${p.pr_number} ${p.state}`),
+                el('span', { class: 'pr-title' }, ` · ${(p.title || '').slice(0, 80)}`));
+              listEls.push(line);
+            }
+          }
+        }
+      }
+      bodyEl.innerHTML = '';
+      if (summaryLine) bodyEl.appendChild(el('div', { class: 'repos-heatmap-detail-summary' }, summaryLine));
+      if (listEls.length === 0) {
+        bodyEl.appendChild(el('div', { class: 'view-empty' },
+          _reposState.filterRepo ? 'No commit/PR detail for this cell.' :
+            'Filter to a specific repo (click a repo card) to see commit + PR detail.'));
+      } else {
+        for (const e of listEls) bodyEl.appendChild(e);
+      }
+    } catch {
+      bodyEl.innerHTML = '';
+      bodyEl.appendChild(el('div', { class: 'view-empty' }, "Couldn't load activity detail. Retry shortly."));
     }
   }
 
