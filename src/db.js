@@ -1050,6 +1050,42 @@ function initializeDb() {
     )
   `).run();
 
+  // CP17.A (Jon-direct 2026-07-06; secops #11759 SIGN-OFF; parch #11687 Class B):
+  //   - bare_git_request: intent-record for agent-authored bare-git canonical
+  //     creation; admin-agent auto-fulfills via poll+execute
+  //   - audit_repo_change: non-bypassable audit-fold for every mutation across
+  //     output_repo + bare_git_request lifecycle
+  // Design shape per PLAN-CP17-CLUSTER-REPO-SUBSTRATE.md §3.1 (T1-T7 security
+  // touchpoints baked at design-time per secops #11686/#11688/#11759).
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS bare_git_request (
+      request_id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      repo_name           TEXT NOT NULL,
+      requested_by        TEXT NOT NULL,
+      purpose             TEXT,
+      requested_at        TEXT NOT NULL,
+      fulfilled_at        TEXT,
+      fulfilled_by        TEXT,
+      fulfillment_result  TEXT NOT NULL DEFAULT 'pending',
+      error_message       TEXT
+    )
+  `).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_bare_git_request_status ON bare_git_request(fulfillment_result, requested_at)`).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_bare_git_request_requester ON bare_git_request(requested_by)`).run();
+
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS audit_repo_change (
+      seq             INTEGER PRIMARY KEY AUTOINCREMENT,
+      repo_key        TEXT NOT NULL,
+      action          TEXT NOT NULL,
+      actor_agent_id  TEXT NOT NULL,
+      metadata_json   TEXT,
+      at_ts           TEXT NOT NULL
+    )
+  `).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_audit_repo_change_key ON audit_repo_change(repo_key, at_ts)`).run();
+  db.prepare(`CREATE INDEX IF NOT EXISTS idx_audit_repo_change_actor ON audit_repo_change(actor_agent_id, at_ts)`).run();
+
   return db;
 }
 
@@ -1196,6 +1232,81 @@ function bootstrapOutputReposFromConfig(configPath) {
     count += 1;
   }
   return { bootstrapped: count, reason: count > 0 ? 'bootstrapped from config' : 'config empty' };
+}
+
+// ── CP17.A helpers (bare_git_request + audit_repo_change) ─────────────────
+// Per PLAN-CP17-CLUSTER-REPO-SUBSTRATE.md §3.1 + secops #11759 SIGN-OFF.
+// Atomic compare-and-set on fulfillment transition per secops §3.1.2 condition
+// (prevents double-execution across fulfiller restart).
+
+function insertBareGitRequest({ repo_name, requested_by, purpose = null }) {
+  const database = getDb();
+  const stmt = database.prepare(`
+    INSERT INTO bare_git_request (repo_name, requested_by, purpose, requested_at, fulfillment_result)
+    VALUES (@repo_name, @requested_by, @purpose, datetime('now'), 'pending')
+  `);
+  const result = stmt.run({ repo_name, requested_by, purpose });
+  return result.lastInsertRowid;
+}
+
+function getBareGitRequest(requestId) {
+  const database = getDb();
+  return database.prepare(`SELECT * FROM bare_git_request WHERE request_id = ?`).get(requestId);
+}
+
+function getPendingBareGitRequestByName(repo_name) {
+  const database = getDb();
+  return database.prepare(
+    `SELECT * FROM bare_git_request WHERE repo_name = ? AND fulfillment_result = 'pending'`
+  ).get(repo_name);
+}
+
+function listPendingBareGitRequests() {
+  const database = getDb();
+  return database.prepare(
+    `SELECT * FROM bare_git_request WHERE fulfillment_result = 'pending' ORDER BY requested_at`
+  ).all();
+}
+
+// Atomic compare-and-set: transitions 'pending' → 'success'|'error' only if
+// current state is 'pending'. Returns changes count (1 on success, 0 if row
+// no longer pending — race guard). Per secops #11759 §3.1.2 condition:
+// "T4 must be a genuinely ATOMIC compare-and-set" so a record can't be
+// double-executed across fulfiller restart.
+function fulfillBareGitRequest({ request_id, fulfilled_by, result, error_message = null }) {
+  if (result !== 'success' && result !== 'error') {
+    throw new Error(`fulfillBareGitRequest: result must be 'success' or 'error' (got ${result})`);
+  }
+  const database = getDb();
+  const stmt = database.prepare(`
+    UPDATE bare_git_request
+    SET fulfilled_at = datetime('now'),
+        fulfilled_by = @fulfilled_by,
+        fulfillment_result = @result,
+        error_message = @error_message
+    WHERE request_id = @request_id
+      AND fulfillment_result = 'pending'
+  `);
+  const info = stmt.run({ request_id, fulfilled_by, result, error_message });
+  return info.changes;
+}
+
+function insertAuditRepoChange({ repo_key, action, actor_agent_id, metadata = null }) {
+  const database = getDb();
+  const metadata_json = metadata ? JSON.stringify(metadata) : null;
+  const stmt = database.prepare(`
+    INSERT INTO audit_repo_change (repo_key, action, actor_agent_id, metadata_json, at_ts)
+    VALUES (@repo_key, @action, @actor_agent_id, @metadata_json, datetime('now'))
+  `);
+  const result = stmt.run({ repo_key, action, actor_agent_id, metadata_json });
+  return result.lastInsertRowid;
+}
+
+function listAuditRepoChangesByRepo(repo_key, { limit = 100 } = {}) {
+  const database = getDb();
+  return database.prepare(
+    `SELECT * FROM audit_repo_change WHERE repo_key = ? ORDER BY seq DESC LIMIT ?`
+  ).all(repo_key, limit);
 }
 
 function insertMessage({ channel, sender, body, metadata = null, isPrivate = false }) {
@@ -4248,6 +4359,14 @@ module.exports = {
   upsertOutputRepo,
   disableOutputRepo,
   bootstrapOutputReposFromConfig,
+  // CP17.A helpers
+  insertBareGitRequest,
+  getBareGitRequest,
+  getPendingBareGitRequestByName,
+  listPendingBareGitRequests,
+  fulfillBareGitRequest,
+  insertAuditRepoChange,
+  listAuditRepoChangesByRepo,
   closeDb,
   messageBus
 };
