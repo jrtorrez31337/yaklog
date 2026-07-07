@@ -164,6 +164,20 @@ router.get('/:repo_key(*)/detail', (req, res) => {
   }
 });
 
+// ── GET /:repo_key/audit — audit_repo_change rows for canary observation ──
+// Per secops #11835 Step 4 binding gate #3 request. Public read; no PII
+// (repo_key + action + actor_agent_id + metadata_json). Sister-shape
+// existing per-repo detail read pattern.
+router.get('/:repo_key(*)/audit', (req, res) => {
+  const repo_key = req.params.repo_key;
+  if (!repo_key || repo_key.length === 0) {
+    return res.status(400).json({ error: 'ValidationError', message: 'repo_key required in path' });
+  }
+  const limit = Math.min(500, Math.max(1, parseInt(req.query.limit, 10) || 100));
+  const rows = dbModule.listAuditRepoChangesByRepo(repo_key, { limit });
+  return res.json({ repo_key, audit: rows });
+});
+
 // ── GET /activity-feed — CP17.C Task 2 activity feed (commits + PRs merged) ─
 router.get('/activity-feed', (req, res) => {
   try {

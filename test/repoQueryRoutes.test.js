@@ -326,6 +326,19 @@ test('live-tail: /summary sees today activity even without rollup', async () => 
   assert.ok(res.body.repo_count >= 1);
 });
 
+test('GET /repos/:repo_key/audit — returns audit_repo_change rows for canary observation', async () => {
+  // Seed a couple audit_repo_change rows directly
+  const { insertAuditRepoChange } = require('../src/db');
+  insertAuditRepoChange({ repo_key: 'bare-git:audit-endpoint-test', action: 'bare-git-requested', actor_agent_id: 'agent-alice', metadata: { purpose: 'canary' } });
+  insertAuditRepoChange({ repo_key: 'bare-git:audit-endpoint-test', action: 'bare-git-fulfilled', actor_agent_id: 'ops:admin', metadata: { result: 'success' } });
+  const res = await request(app).get('/api/v1/plexus/public/repos/bare-git%3Aaudit-endpoint-test/audit');
+  assert.equal(res.statusCode, 200);
+  assert.ok(Array.isArray(res.body.audit));
+  const actions = res.body.audit.map(r => r.action);
+  assert.ok(actions.includes('bare-git-requested'));
+  assert.ok(actions.includes('bare-git-fulfilled'));
+});
+
 test('POST /ops/output/output-rollup/backfill — 401/403 without ops-key', async () => {
   const res = await request(app)
     .post('/api/v1/ops/output/output-rollup/backfill')
