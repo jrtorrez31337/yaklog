@@ -664,6 +664,16 @@
   .repos-heatmap-detail-commit .commit-subject { color: var(--muted); }
   .repos-heatmap-detail-pr .pr-title { color: var(--muted); }
 
+  /* CP17.C Task 3: cross-nav anchor inside AgentCard Identity view. */
+  .agent-card-cross-nav { margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--border); }
+  .agent-card-cross-nav-link { color: var(--blue); font-size: 11px; text-decoration: none; }
+  .agent-card-cross-nav-link:hover { text-decoration: underline; }
+  .agent-card-cross-nav-link:focus { outline: 2px solid var(--blue); outline-offset: 2px; }
+
+  /* CP17.C Task 4: attribution-gap triage badge click-to-open. */
+  .repos-repo-card .badge-gap { cursor: pointer; }
+  .repos-repo-card .badge-gap:focus { outline: 2px solid var(--amber, #eab308); outline-offset: 2px; }
+
   /* Per-sub-view styling */
   .pace-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
   .pace-card { background: var(--panel); border: 1px solid var(--border); border-radius: 4px; padding: 14px; }

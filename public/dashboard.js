@@ -2312,6 +2312,15 @@
         }
         this.bodyEl.appendChild(dl);
       }
+      // CP17.C Task 3: cross-nav link to Repos tab filtered to this agent.
+      // Hash param handled by _reposReadHashParams on mount. Anchor is
+      // keyboard-accessible via native <a> semantics.
+      const crossNav = el('div', { class: 'agent-card-cross-nav' });
+      crossNav.appendChild(el('a', {
+        href: `#repos?agent=${encodeURIComponent(this.agentId)}`,
+        class: 'agent-card-cross-nav-link',
+      }, 'View activity across repos →'));
+      this.bodyEl.appendChild(crossNav);
     }
     // CP6.10: Runtime view — technical detail for SREs / debuggers.
     // Four sections:
@@ -6102,9 +6111,25 @@
     return `/api/v1/plexus/public/repos${pathAfterRepos}${sep}period=${encodeURIComponent(period)}`;
   }
 
+  // CP17.C Task 3: hash-param cross-nav primitive.
+  // Reads #repos?agent=<id>&repo=<key> and applies to filter state on mount.
+  // Sister-shape existing Task #264 URL-persistence discipline. Any URL-holder
+  // can deep-link with the filter pre-applied.
+  function _reposReadHashParams() {
+    const hash = String(window.location.hash || '');
+    const qIdx = hash.indexOf('?');
+    if (qIdx < 0) return;
+    const qs = new URLSearchParams(hash.slice(qIdx + 1));
+    const agent = qs.get('agent');
+    const repo = qs.get('repo');
+    if (agent) _reposState.filterAgent = agent;
+    if (repo) _reposState.filterRepo = repo;
+  }
+
   function mountReposTab() {
     if (_reposMounted) return;
     _reposMounted = true;
+    _reposReadHashParams();
     _wireReposControls();
     _wireReposManagement();
     _refreshReposAll();
@@ -6410,6 +6435,88 @@
     }
   }
 
+  // CP17.C Task 4: attribution-gap triage — modal showing unattributed
+  // commits for a repo. Sister-shape _openHeatmapCellDetail structure (same
+  // a11y dialog canon: role=dialog + aria-modal + Esc/backdrop close +
+  // focus-move + return-focus).
+  async function _openAttributionGapTriage(repoKey) {
+    const existing = document.getElementById('repos-attribution-triage-modal');
+    if (existing) existing.remove();
+    const returnFocusEl = document.activeElement;
+    const backdrop = el('div', {
+      class: 'repos-heatmap-detail-backdrop',
+      id: 'repos-attribution-triage-modal',
+    });
+    const modal = el('div', {
+      class: 'repos-heatmap-detail-modal repos-attribution-triage-modal',
+      role: 'dialog',
+      'aria-modal': 'true',
+      'aria-labelledby': 'repos-attribution-triage-title',
+    });
+    const closeBtn = el('button', {
+      class: 'repos-heatmap-detail-close',
+      'aria-label': 'Close attribution triage',
+    }, '×');
+    modal.appendChild(el('div', { class: 'repos-heatmap-detail-header' },
+      el('h3', { id: 'repos-attribution-triage-title' },
+        `Attribution triage — ${repoKey}`),
+      closeBtn));
+    const bodyEl = el('div', { class: 'repos-heatmap-detail-body' },
+      el('div', { class: 'cost-loading' }, 'loading…'));
+    modal.appendChild(bodyEl);
+    backdrop.appendChild(modal);
+    document.body.appendChild(backdrop);
+    const closeModal = () => {
+      backdrop.remove();
+      if (returnFocusEl && returnFocusEl.focus) returnFocusEl.focus();
+    };
+    closeBtn.addEventListener('click', closeModal);
+    backdrop.addEventListener('click', (e) => { if (e.target === backdrop) closeModal(); });
+    const onKey = (e) => {
+      if (e.key === 'Escape') { closeModal(); document.removeEventListener('keydown', onKey); }
+    };
+    document.addEventListener('keydown', onKey);
+    setTimeout(() => closeBtn.focus(), 0);
+
+    // Query the detail endpoint + filter to unattributed commits client-side.
+    // Uses current dashboard window range.
+    try {
+      const period = _reposCurrentPeriod();
+      const res = await fetch(
+        `/api/v1/plexus/public/repos/${encodeURIComponent(repoKey)}/detail?period=${encodeURIComponent(period)}`,
+        { cache: 'no-store' },
+      );
+      if (!res.ok) {
+        bodyEl.innerHTML = '';
+        bodyEl.appendChild(el('div', { class: 'view-empty' }, "Couldn't load attribution detail. Retry shortly."));
+        return;
+      }
+      const data = await res.json();
+      const unattributed = (data.commits || []).filter(c => !c.agent_attribution || c.agent_attribution === 'unattributed');
+      bodyEl.innerHTML = '';
+      if (unattributed.length === 0) {
+        bodyEl.appendChild(el('div', { class: 'view-empty' },
+          'No unattributed commits in this window (attribution_gap_count is stale; rollup will refresh nightly).'));
+        return;
+      }
+      bodyEl.appendChild(el('div', { class: 'repos-heatmap-detail-summary' },
+        `${unattributed.length} unattributed commit${unattributed.length === 1 ? '' : 's'} in window`));
+      bodyEl.appendChild(el('h4', null, 'Unattributed commits'));
+      for (const c of unattributed.slice(0, 50)) {
+        const line = el('div', { class: 'repos-heatmap-detail-commit' },
+          el('span', { class: 'commit-sha' }, (c.commit_sha || '').slice(0, 7)),
+          el('span', { class: 'commit-agent', style: 'color:var(--amber, #eab308)' }, ` ${c.author_name || 'unknown author'}`),
+          el('span', { class: 'commit-subject' }, ` · ${(c.subject || '').slice(0, 80)}`),
+          el('span', { class: 'ts', style: 'color:var(--muted);font-size:10px;margin-left:6px' },
+            (c.occurred_at || '').slice(0, 16).replace('T', ' ')));
+        bodyEl.appendChild(line);
+      }
+    } catch {
+      bodyEl.innerHTML = '';
+      bodyEl.appendChild(el('div', { class: 'view-empty' }, "Couldn't load attribution detail. Retry shortly."));
+    }
+  }
+
   async function _renderReposList() {
     const grid = document.getElementById('repos-grid');
     if (!grid) return;
@@ -6454,7 +6561,25 @@
       const meta = el('div', { class: 'repos-repo-card-meta' });
       meta.appendChild(el('span', { class: 'badge-type' }, r.type || 'unknown'));
       if ((r.attribution_gap_count || 0) > 0) {
-        meta.appendChild(el('span', { class: 'badge-gap', title: 'attribution gaps' }, `⚠ ${r.attribution_gap_count}`));
+        // CP17.C Task 4: attribution-gap triage. Click amber badge → modal
+        // shows unattributed commits list for this repo. Sister-shape existing
+        // heatmap detail modal + honest-microcopy discipline.
+        const gapBadge = el('span', {
+          class: 'badge-gap',
+          title: `Click to triage ${r.attribution_gap_count} unattributed commits`,
+          role: 'button',
+          tabindex: '0',
+          'aria-label': `${r.attribution_gap_count} attribution gaps on ${r.repo_key}; click to triage`,
+        }, `⚠ ${r.attribution_gap_count}`);
+        const openTriage = (e) => {
+          e.stopPropagation();  // don't trigger the card-level heatmap filter
+          _openAttributionGapTriage(r.repo_key);
+        };
+        gapBadge.addEventListener('click', openTriage);
+        gapBadge.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openTriage(e); }
+        });
+        meta.appendChild(gapBadge);
       }
       if (r.last_activity_at) meta.appendChild(el('span', null, `last: ${r.last_activity_at}`));
       card.appendChild(meta);
