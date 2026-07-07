@@ -19,12 +19,18 @@ const { resolveAllowedSenders } = require('./middleware/senderBinding');
 const router = express.Router();
 
 // ── Validation regexes ─────────────────────────────────────────────────────
-// T2: strict `owner/repo` shape; no scheme; charset restricted; length capped.
-const GITHUB_OWNER_REPO_RE = /^[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+$/;
+// T2: strict `owner/repo` shape; no scheme; charset restricted; length bounded
+// in-regex per secops #11786 hardening nit (defense-in-depth alongside the
+// explicit MAX_GITHUB_OWNER_REPO_LEN check below).
+const GITHUB_OWNER_REPO_RE = /^[a-zA-Z0-9._-]{1,64}\/[a-zA-Z0-9._-]{1,64}$/;
 const MAX_GITHUB_OWNER_REPO_LEN = 96;
 // T3: canonical name safety for bare-git; lowercase filesystem-safe; no
-// case-collision on case-insensitive filesystems; excludes `..`, `/`, `\`.
-const BARE_GIT_REPO_NAME_RE = /^[a-z0-9][a-z0-9._-]*$/;
+// case-collision on case-insensitive filesystems. Regex length bounded per
+// secops #11786 defense-in-depth. Embedded '..' IS regex-matchable ('.' is
+// in the charset) but explicitly rejected below via includes('..') guard —
+// layered defense; secops #11786 noted T5 script realpath-confinement is
+// the last-line-of-defense, endpoint is the first.
+const BARE_GIT_REPO_NAME_RE = /^[a-z0-9][a-z0-9._-]{0,62}$/;
 const MAX_BARE_GIT_REPO_NAME_LEN = 63;
 // Bare-git canonical filesystem root (walker sees this ro-mounted in container).
 const BARE_GIT_ROOT = process.env.YAKLOG_BARE_GIT_ROOT_HOST || '/srv/git';
