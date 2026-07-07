@@ -635,7 +635,9 @@
   .repos-manage-form h4, .repos-pending-queue h4 { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; margin: 0 0 8px; font-weight: 500; }
   .repos-manage-form label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 8px; }
   .repos-manage-form input { display: block; width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border); padding: 5px 8px; border-radius: 3px; font: inherit; font-size: 12px; margin-top: 3px; box-sizing: border-box; }
-  .repos-manage-form button { background: var(--blue); color: white; border: 0; padding: 6px 14px; border-radius: 3px; cursor: pointer; font: inherit; font-size: 12px; }
+  /* RF2 (plexus-ui, parch #11812): white on --blue (#60a5fa) was 2.56:1 (WCAG 1.4.3 fail).
+     Darker brand-blue #2563eb keeps the white-on-blue primary-button look at ~5.2:1. */
+  .repos-manage-form button { background: #2563eb; color: #fff; border: 0; padding: 6px 14px; border-radius: 3px; cursor: pointer; font: inherit; font-size: 12px; }
   .repos-manage-form button:hover { opacity: 0.9; }
   .repos-manage-msg { margin-top: 6px; font-size: 11px; min-height: 14px; }
   .repos-manage-msg.ok { color: var(--green, #22c55e); }
