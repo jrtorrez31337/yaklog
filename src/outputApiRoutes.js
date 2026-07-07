@@ -331,6 +331,98 @@ publicRouter.get('/repos', (req, res) => {
   return res.json({ repos });
 });
 
+// ── CP17.A ops: bare_git_request lifecycle (admin poll+fulfill) ───────────
+// Per PLAN-CP17-CLUSTER-REPO-SUBSTRATE.md §3.1 + secops #11759 SIGN-OFF.
+// Admin-agent auto-fulfills pending intents via poll+execute script (single-
+// instance per secops #11761 T5 caveat; script co-review with secops before
+// authorship per binding gate #1).
+
+opsRouter.get('/repos/bare-git-request', (req, res) => {
+  // Admin poll target. Default status filter = pending; expandable later.
+  const status = req.query.status ? String(req.query.status) : 'pending';
+  if (status !== 'pending') {
+    return res.status(400).json({
+      error: 'ValidationError',
+      message: 'only status=pending is supported at v1',
+    });
+  }
+  const requests = dbModule.listPendingBareGitRequests();
+  return res.json({ requests });
+});
+
+opsRouter.post('/repos/bare-git-request/:id/fulfilled', (req, res) => {
+  const requestId = parseInt(req.params.id, 10);
+  if (!Number.isInteger(requestId) || requestId <= 0) {
+    return res.status(400).json({
+      error: 'ValidationError',
+      message: 'request_id must be a positive integer.',
+    });
+  }
+  const { result, error_message } = req.body || {};
+  if (result !== 'success' && result !== 'error') {
+    return res.status(400).json({
+      error: 'ValidationError',
+      message: "result must be 'success' or 'error'.",
+    });
+  }
+  if (error_message !== undefined && error_message !== null) {
+    if (typeof error_message !== 'string' || error_message.length > 1024) {
+      return res.status(400).json({
+        error: 'ValidationError',
+        message: 'error_message must be a string (max 1024 chars).',
+      });
+    }
+  }
+  const fulfiller = `ops:${req.headers['x-ops-key-id'] || req.auth?.opsKeyId || 'admin'}`;
+
+  // Atomic compare-and-set on fulfillment per secops #11759 §3.1.2 condition.
+  // Same-txn audit-fold ensures fulfillment + audit succeed together.
+  const database = dbModule.getDb();
+  let changes;
+  const tx = database.transaction(() => {
+    changes = dbModule.fulfillBareGitRequest({
+      request_id: requestId,
+      fulfilled_by: fulfiller,
+      result,
+      error_message: error_message || null,
+    });
+    if (changes === 1) {
+      // Only insert audit row if the CAS succeeded (guards against replay-audit).
+      const row = dbModule.getBareGitRequest(requestId);
+      dbModule.insertAuditRepoChange({
+        repo_key: `bare-git:${row.repo_name}`,
+        action: 'bare-git-fulfilled',
+        actor_agent_id: fulfiller,
+        metadata: {
+          request_id: requestId,
+          result,
+          error_message: error_message || null,
+          requested_by: row.requested_by,
+        },
+      });
+    }
+  });
+  tx();
+
+  if (changes === 0) {
+    // Compare-and-set failed: row was not in 'pending' state (already
+    // fulfilled OR non-existent). Return 409 for already-fulfilled semantic.
+    const row = dbModule.getBareGitRequest(requestId);
+    if (!row) {
+      return res.status(404).json({
+        error: 'NotFound',
+        message: 'no matching bare_git_request row',
+      });
+    }
+    return res.status(409).json({
+      error: 'Conflict',
+      message: `bare-git-request already in state ${row.fulfillment_result}`,
+      fulfillment_result: row.fulfillment_result,
+    });
+  }
+  return res.json({ ok: true, request_id: requestId, fulfilled_by: fulfiller });
+});
+
 module.exports = {
   publicRouter,
   opsRouter,

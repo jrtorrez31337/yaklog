@@ -15,6 +15,7 @@ const auditOpsRoutes = require('./auditOpsRoutes');     // CP12.2 (ADR-0030 §5.
 const auditIngesterRoutes = require('./auditIngesterRoutes'); // CP12.5 (ADR-0030 Phase 1.5.S)
 const auditOtelIngesterRoutes = require('./auditOtelIngesterRoutes'); // ADR-0032 Phase 0 Item B
 const outputApiRoutes = require('./outputApiRoutes');   // CP13.3 (ADR-0032 Phase 1.3)
+const repoRoutes = require('./repoRoutes');             // CP17.A (secops #11759 SIGN-OFF)
 const metricsRoute = require('./metricsRoute');         // CP16-prep observability (parch #10166)
 const costAnomaliesRoute = require('./costAnomaliesRoute'); // CP16 Pillar 2 (parch #10268)
 const vendorKeysRoute = require('./secureStore/vendorKeysRoute'); // Task #138 Phase 2B (parch #10320)
@@ -600,6 +601,14 @@ app.use('/api/v1/output', outputApiRoutes.publicRouter);
 // scripts) use this with a Bearer YAKLOG_TOKEN.
 app.use('/api/v1/plexus', auth, plexusRoutes);
 app.use('/api/v1', auth, routes);
+// CP17.A (Jon-direct 2026-07-06 + secops #11759 SIGN-OFF): agent-writable
+// repo tracking management substrate. Mounts under /api/v1 (auth-required).
+// Endpoints: POST /repos (add), POST /repos/:owner/:repo/disable (self-scoped
+// or ops-key), POST /repos/bare-git-request (intent record), GET
+// /repos/bare-git-request/:id (status poll). Ops-key endpoints for admin
+// poll+fulfill lifecycle live under /api/v1/ops/output (opsRouter) alongside
+// existing ops repo endpoints.
+app.use('/api/v1', auth, repoRoutes.router);
 // CP12.2 (ADR-0030 §5.2): ops-key gated audit + policy mutations. Mounts
 // under `/api/v1/ops` (matches existing /ops/cost/* pattern in routes.js);
 // each route inside the router applies enforceOpsKey middleware.
