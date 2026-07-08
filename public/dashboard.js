@@ -6141,23 +6141,97 @@
     if (repo) _reposState.filterRepo = repo;
   }
 
+  // ADR-0041 v2 Increment 2 — analytical band pivot state (default 'repo').
+  // Pivot re-pivots DATA only; hero + management widgets are pivot-independent.
+  // Fold-B tier-gating travels via the existing ADR-0031 §3 audience-picker,
+  // NOT this toggle (per plexus-ui #11950 chrome-decoupled precision).
+  let _outputPivot = 'repo';
+
+  async function _renderAgentPrimaryPanel() {
+    const body = document.getElementById('output-agent-primary-body');
+    if (!body) return;
+    try {
+      const r = await fetch('/api/v1/output/composition?by=agent&period=30d', { cache: 'no-store' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const data = await r.json();
+      const rows = Array.isArray(data.rows) ? data.rows : [];
+      clearChildren(body);
+      if (rows.length === 0) {
+        body.appendChild(el('div', { class: 'cost-loading' }, 'No agent activity in this window.'));
+        return;
+      }
+      const table = el('table');
+      const thead = el('thead');
+      const trh = el('tr');
+      ['Agent', 'Commits', 'Merges', 'Coord msgs'].forEach((label, i) => {
+        trh.appendChild(el('th', { class: i > 0 ? 'num' : null }, label));
+      });
+      thead.appendChild(trh);
+      table.appendChild(thead);
+      const tbody = el('tbody');
+      for (const row of rows.slice(0, 50)) {
+        const tr = el('tr');
+        tr.appendChild(el('td', null, row.agent_id || '(unattributed)'));
+        tr.appendChild(el('td', { class: 'num' }, String(row.commits ?? 0)));
+        tr.appendChild(el('td', { class: 'num' }, String(row.merges ?? 0)));
+        tr.appendChild(el('td', { class: 'num' }, String(row.coord_msgs ?? 0)));
+        tbody.appendChild(tr);
+      }
+      table.appendChild(tbody);
+      body.appendChild(table);
+    } catch (err) {
+      renderError(body, 'cost-loading', 'Couldn’t load agent-primary composition. Retry shortly.');
+    }
+  }
+
+  function _setOutputPivot(dim) {
+    if (dim !== 'agent' && dim !== 'repo') return;
+    _outputPivot = dim;
+    const panel = document.querySelector('.tab-panel[data-tab="output"]');
+    if (panel) {
+      panel.classList.toggle('pivot-agent', dim === 'agent');
+      // hidden attribute for a11y — screen readers respect it even before CSS
+      const agentSection = document.getElementById('output-agent-primary-section');
+      if (agentSection) agentSection.hidden = (dim !== 'agent');
+    }
+    document.querySelectorAll('.output-pivot-toggle button').forEach((btn) => {
+      btn.setAttribute('aria-selected', btn.dataset.pivot === dim ? 'true' : 'false');
+    });
+    if (dim === 'agent') _renderAgentPrimaryPanel();
+  }
+
+  function _wireOutputPivotToggle() {
+    document.querySelectorAll('.output-pivot-toggle button').forEach((btn) => {
+      btn.addEventListener('click', () => _setOutputPivot(btn.dataset.pivot));
+      btn.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+          e.preventDefault();
+          _setOutputPivot(_outputPivot === 'repo' ? 'agent' : 'repo');
+          const next = document.querySelector('.output-pivot-toggle button[aria-selected="true"]');
+          if (next) next.focus();
+        }
+      });
+    });
+  }
+
   function mountReposTab() {
     if (_reposMounted) return;
     _reposMounted = true;
     _reposReadHashParams();
     _wireReposControls();
     _wireReposManagement();
+    _wireOutputPivotToggle();
     _refreshReposAll();
     // Time-nav: rerender all bands on picker change.
     document.addEventListener('dashboardTimeRangeChange', () => {
       // Only render if Repos tab currently active (perf)
-      const active = document.querySelector('.tab-panel[data-tab="repos"]');
+      const active = document.querySelector('.tab-panel[data-tab="output"]');
       if (active && active.classList.contains('active')) _refreshReposAll();
     });
     // 60s auto-refresh gated on isLiveMode() sister-shape Cost hero discipline.
     setInterval(() => {
       if (window.isDashboardLive && !window.isDashboardLive()) return;
-      const active = document.querySelector('.tab-panel[data-tab="repos"]');
+      const active = document.querySelector('.tab-panel[data-tab="output"]');
       if (active && active.classList.contains('active')) _refreshReposAll();
     }, 60_000);
   }

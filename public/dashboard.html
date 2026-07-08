@@ -607,6 +607,28 @@
   .output-hero-state { grid-column: 1 / -1; min-height: 74px; display: flex; align-items: center; justify-content: center; padding: 18px; color: var(--muted); font-size: 12px; text-align: center; }
   .output-hero-state.is-error { color: var(--red); }
 
+  /* ADR-0041 v2 Increment 2 — pivot toggle for the analytical band */
+  .output-pivot-toggle { display: inline-flex; gap: 2px; margin-bottom: 12px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 2px; }
+  .output-pivot-toggle button { background: transparent; color: var(--muted); border: 0; border-radius: 4px; padding: 6px 14px; font-size: 12px; cursor: pointer; font-family: inherit; }
+  .output-pivot-toggle button[aria-selected="true"] { background: var(--blue); color: white; font-weight: 600; }
+  .output-pivot-toggle button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+  .output-pivot-toggle button:hover:not([aria-selected="true"]) { color: var(--text); }
+
+  /* Agent-primary composition panel (visible when pivot=agent) */
+  .output-agent-primary-section { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; margin-bottom: 18px; padding: 14px; }
+  .output-agent-primary-header h3 { margin: 0 0 4px 0; font-size: 14px; color: var(--text); }
+  .output-agent-primary-hint { margin: 0 0 12px 0; font-size: 11px; color: var(--muted); }
+  .output-agent-primary-body table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .output-agent-primary-body th, .output-agent-primary-body td { padding: 6px 10px; border-bottom: 1px solid var(--border); text-align: left; }
+  .output-agent-primary-body th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px; }
+  .output-agent-primary-body td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .output-agent-primary-body tr:hover { background: var(--panel-hover, rgba(255,255,255,0.02)); }
+  /* Pivot-swap: hide repos-grid + management widgets when pivot=agent */
+  [data-tab="output"].pivot-agent .repos-grid-section,
+  [data-tab="output"].pivot-agent .repos-heatmap-controls label:has(#repos-heatmap-filter-repo) { display: none; }
+  [data-tab="output"].pivot-agent #output-agent-primary-section { display: block; }
+  [data-tab="output"]:not(.pivot-agent) #output-agent-primary-section { display: none; }
+
   .repos-heatmap-section { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; margin-bottom: 18px; }
   .repos-heatmap-controls { display: flex; gap: 12px; align-items: center; padding: 12px 14px; border-bottom: 1px solid var(--border); flex-wrap: wrap; font-size: 12px; }
   .repos-heatmap-controls label { display: flex; align-items: center; gap: 6px; color: var(--muted); }
@@ -2033,7 +2055,17 @@
     </div>
   </nav>
 
-  <!-- Band 2: GitHub-style commit heatmap -->
+  <!-- Band 1.5: Pivot toggle — scoped to analytical band (heatmap + primary table).
+       ADR-0041 v2 §2 synthesis: pivot re-pivots DATA only; hero + management widgets
+       are pivot-independent. Fold-B tier-gating travels via ADR-0031 §3 audience-picker
+       (existing), not via this toggle. -->
+  <nav class="output-pivot-toggle" role="tablist" aria-label="Analytical band pivot">
+    <button type="button" role="tab" data-pivot="repo" aria-selected="true" aria-controls="tab-output">By repo</button>
+    <button type="button" role="tab" data-pivot="agent" aria-selected="false" aria-controls="tab-output">By agent</button>
+  </nav>
+
+  <!-- Band 2: GitHub-style commit heatmap (pivot-neutral — same 1-D per-day intensity strip
+       regardless of pivot state per yaklog-dev #12077) -->
   <section class="repos-heatmap-section" aria-label="Cluster activity heatmap">
     <div class="repos-heatmap-controls">
       <label>Metric
@@ -2092,7 +2124,24 @@
     </div>
   </section>
 
-  <!-- Band 4: Management widgets — add GitHub / request bare-git / pending queue -->
+  <!-- Band 3-agent: agent-primary composition table (visible when pivot=agent).
+       Consumes /output/composition?by=agent. Rows: agent_id + commits + merges +
+       coord_msgs. Cost_usd column is tier-gated via ADR-0031 §3 audience-picker
+       CSS (not this toggle). -->
+  <section class="output-agent-primary-section" id="output-agent-primary-section"
+           aria-label="Agent-primary composition" hidden>
+    <div class="output-agent-primary-header">
+      <h3>Composition by agent</h3>
+      <p class="output-agent-primary-hint">Same output substrate; pivoted to agent-primary rows.</p>
+    </div>
+    <div class="output-agent-primary-body" id="output-agent-primary-body">
+      <div class="cost-loading">…</div>
+    </div>
+  </section>
+
+  <!-- Band 4: Management widgets — add GitHub / request bare-git / pending queue
+       (pivot-INDEPENDENT: WRITE actions reachable in both pivot states per
+       plexus-ui #11950 chrome-decoupled precision) -->
   <section class="repos-manage-section" id="repos-manage-section" aria-label="Repo management">
     <details class="repos-manage-details" open>
       <summary>Manage tracked repos</summary>
