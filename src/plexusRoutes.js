@@ -187,7 +187,19 @@ const templates = {
     kind: 'instant',
     params: {},
     build() {
-      return 'topk(10, sum by (plexus_agent_id) (claude_code_cost_usage_USD_total))';
+      // Excludes ops/relay senders per s345-aieng #12203 (allowlist for demo velocity).
+      return 'topk(10, sum by (plexus_agent_id) (claude_code_cost_usage_USD_total{plexus_agent_id!~"plexus-admin|jon|Jon|ops|admin"}))';
+    },
+  },
+
+  'cluster.cost.topAgentTokens': {
+    kind: 'instant',
+    params: {},
+    build() {
+      // Multi-runtime token-spend companion — catches codex/gemini agents that
+      // emit plexus_tokens_*_total but no USD counter (canonical CP11.x.1
+      // quota-honest design). Client merges with topAgents to render "$X / Y tokens".
+      return 'topk(10, sum by (plexus_agent_id) ((plexus_tokens_input_total + plexus_tokens_output_total){plexus_agent_id!~"plexus-admin|jon|Jon|ops|admin"}))';
     },
   },
 

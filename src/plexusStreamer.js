@@ -137,9 +137,21 @@ const FRAMES = [
   },
   {
     // Top-10 cost drivers by agent (cumulative all-time).
+    // Excludes ops/relay senders (plexus-admin/jon/Jon) that never had a real
+    // OTel-emitting session — per s345-aieng #12203 registry-based filter
+    // request (allowlist for demo velocity per Jon-delegated execute-not-gate).
     name: 'cluster.cost.topAgents',
     kind: 'instant',
-    promql: 'topk(10, sum by (plexus_agent_id) (claude_code_cost_usage_USD_total))',
+    promql: 'topk(10, sum by (plexus_agent_id) (claude_code_cost_usage_USD_total{plexus_agent_id!~"plexus-admin|jon|Jon|ops|admin"}))',
+  },
+  {
+    // Top-10 token-spend drivers by agent (multi-runtime; catches codex/gemini
+    // agents that emit plexus_tokens_*_total but no USD counter per canonical
+    // CP11.x.1 quota-honest design). Renders alongside topAgents cost so codex
+    // reads honestly as "N tokens, $0 (quota)" per s345-aieng #12203 Option A.
+    name: 'cluster.cost.topAgentTokens',
+    kind: 'instant',
+    promql: 'topk(10, sum by (plexus_agent_id) ((plexus_tokens_input_total + plexus_tokens_output_total){plexus_agent_id!~"plexus-admin|jon|Jon|ops|admin"}))',
   },
   {
     // Top-10 cost drivers by Anthropic account (user_email is the most

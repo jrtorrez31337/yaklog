@@ -324,6 +324,7 @@ function computeCompositionByAgent(db, opts = {}) {
       (SELECT COUNT(*) FROM output_merge WHERE merged_by_agent = u.agent_id AND occurred_at >= ${bound}) AS merges,
       (SELECT COALESCE(SUM(cost_usd), 0) FROM cost_daily WHERE agent_id = u.agent_id AND date >= date('now', '-${periodDays} days')) AS cost_usd
     FROM agent_universe u
+    WHERE u.agent_id NOT IN ('plexus-admin', 'jon', 'Jon', 'ops', 'admin', '')
     ORDER BY merges DESC, coord_msgs DESC
   `).all();
 

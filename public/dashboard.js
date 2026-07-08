@@ -1434,12 +1434,13 @@
     sevend: _restored.sevend ?? null,
     mtd: _restored.mtd ?? null,
     topAgents: _restored.topAgents ?? null,
+    topAgentTokens: _restored.topAgentTokens ?? null,
     byAccount: _restored.byAccount ?? null,
     by: _restored.by || 'agent',
     lastFrameMs: _restored.lastFrameMs || 0,
   } : {
     today: null, sevend: null, mtd: null,
-    topAgents: null, byAccount: null,
+    topAgents: null, topAgentTokens: null, byAccount: null,
     by: 'agent',
     lastFrameMs: 0,
   };
@@ -1487,18 +1488,37 @@
     clearChildren(body);
     const payload = acctState.by === 'agent' ? acctState.topAgents : acctState.byAccount;
     const result = payload && payload.data && payload.data.result;
-    if (!result || result.length === 0) {
+    // Multi-runtime companion for agent view: union with token-only agents
+    // (codex/gemini) so quota-honest $0 agents appear alongside metered agents
+    // per s345-aieng #12203 Option A honest multi-runtime framing.
+    const tokenResult = acctState.by === 'agent'
+      && acctState.topAgentTokens && acctState.topAgentTokens.data
+      ? acctState.topAgentTokens.data.result : [];
+    if ((!result || result.length === 0) && tokenResult.length === 0) {
       body.appendChild(el('div', { class: 'chart-empty', style: 'padding: 20px 0;' }, `no ${acctState.by} cost data`));
       return;
     }
     const labelFor = (m) => acctState.by === 'agent'
       ? (m.plexus_agent_id || '(unknown)')
       : (m.user_email || m.user_account_id || '(unknown)');
-    const rows = result.map(s => ({
-      name: labelFor(s.metric),
-      cost: parseFloat(s.value[1]) || 0,
-    })).sort((a, b) => b.cost - a.cost);
-    const max = rows[0].cost || 1;
+    const byName = new Map();
+    for (const s of (result || [])) {
+      const name = labelFor(s.metric);
+      byName.set(name, { name, cost: parseFloat(s.value[1]) || 0, tokens: 0 });
+    }
+    for (const s of tokenResult) {
+      const name = labelFor(s.metric);
+      const existing = byName.get(name);
+      const tokens = parseFloat(s.value[1]) || 0;
+      if (existing) existing.tokens = tokens;
+      else byName.set(name, { name, cost: 0, tokens });
+    }
+    const rows = [...byName.values()].sort((a, b) => (b.cost - a.cost) || (b.tokens - a.tokens));
+    const maxCost = Math.max(...rows.map(r => r.cost), 0.01);
+    const maxTokens = Math.max(...rows.map(r => r.tokens), 1);
+    const fmtTokens = (t) => t < 1000 ? String(Math.round(t))
+                        : t < 1_000_000 ? (t / 1000).toFixed(1) + 'k'
+                        : (t / 1_000_000).toFixed(1) + 'M';
     const table = el('table');
     const tbody = el('tbody');
     for (const r of rows) {
@@ -1507,9 +1527,17 @@
       const barTd = el('td', { class: 'driver-bar-wrap' });
       const bar = el('div', { class: 'driver-bar' });
       const fill = el('div', { class: 'driver-bar-fill' });
-      fill.style.width = ((r.cost / max) * 100).toFixed(1) + '%';
+      // Bar reflects cost when >0, else tokens (normalized to token max) so
+      // quota-tier agents get visible bars proportional to token spend.
+      const barPct = r.cost > 0 ? (r.cost / maxCost) * 100 : (r.tokens / maxTokens) * 100;
+      fill.style.width = barPct.toFixed(1) + '%';
       bar.appendChild(fill); barTd.appendChild(bar); tr.appendChild(barTd);
-      tr.appendChild(el('td', { class: 'driver-cost' }, fmtUSD(r.cost)));
+      // Cell shows "$X.XX / Y tokens" — honest multi-runtime framing per
+      // s345-aieng #12203 (quota-tier shows tokens; metered-tier shows $).
+      const costStr = fmtUSD(r.cost);
+      const tokenStr = r.tokens > 0 ? fmtTokens(r.tokens) + ' tok' : '';
+      const label = tokenStr ? `${costStr} / ${tokenStr}` : costStr;
+      tr.appendChild(el('td', { class: 'driver-cost' }, label));
       tbody.appendChild(tr);
     }
     table.appendChild(tbody);
@@ -1523,6 +1551,7 @@
       case 'cluster.cost.7d':       acctState.sevend = valFromVector(payload); touched = true; break;
       case 'cluster.cost.mtd':      acctState.mtd    = valFromVector(payload); touched = true; break;
       case 'cluster.cost.topAgents':acctState.topAgents = payload; renderAcctDrivers(); break;
+      case 'cluster.cost.topAgentTokens':acctState.topAgentTokens = payload; renderAcctDrivers(); break;
       case 'cluster.cost.byAccount':acctState.byAccount = payload; renderAcctDrivers(); break;
       default: return;
     }
