@@ -1532,12 +1532,9 @@
       const barPct = r.cost > 0 ? (r.cost / maxCost) * 100 : (r.tokens / maxTokens) * 100;
       fill.style.width = barPct.toFixed(1) + '%';
       bar.appendChild(fill); barTd.appendChild(bar); tr.appendChild(barTd);
-      // Cell shows "$X.XX / Y tokens" — honest multi-runtime framing per
-      // s345-aieng #12203 (quota-tier shows tokens; metered-tier shows $).
-      const costStr = fmtUSD(r.cost);
-      const tokenStr = r.tokens > 0 ? fmtTokens(r.tokens) + ' tok' : '';
-      const label = tokenStr ? `${costStr} / ${tokenStr}` : costStr;
-      tr.appendChild(el('td', { class: 'driver-cost' }, label));
+      // Cell shows just $ — codex cost now comes from per-query rate calc
+      // (agent-tooling@53beb4c) so all runtimes report honest $ per Jon-direct #12215.
+      tr.appendChild(el('td', { class: 'driver-cost' }, fmtUSD(r.cost)));
       tbody.appendChild(tr);
     }
     table.appendChild(tbody);
