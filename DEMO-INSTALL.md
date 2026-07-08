@@ -7,6 +7,10 @@ no subscribe to the real cluster.
 Delta from prod install: no OTel, no Prom, no Grafana, no MinIO, no TLS
 proxy, no bare-git/GitHub-PAT/age-key mounts. Everything else identical.
 
+## Default user
+
+The demo VM uses `plexus-admin` as its canonical user (not `jon` — the demo is a distinct-identity substrate, not a Jon-personal box). SSH keys are the same set preseeded by pveadmin. All commands below run as `plexus-admin`.
+
 ## Prerequisites (on the demo VM)
 
 - Docker + docker compose plugin (`docker compose version` prints ≥ v2.20)
