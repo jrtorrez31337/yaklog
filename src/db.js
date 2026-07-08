@@ -1503,6 +1503,72 @@ function queryOutputDailySummary({ from, to }) {
   };
 }
 
+// ADR-0041 P1a: hero-summary composed from cross-tier-safe substrate primitives.
+// Field contract locked at plexus-ui #11975 + s345 #11973 (R1 total-headline
+// expose-both; R2 lifetime cumulative merged PRs, never window-rate).
+// All fields cross-tier-safe by construction — no ratio/velocity/cost fields.
+function queryHeroSummary({ from, to }) {
+  const database = getDb();
+  const windowed = queryOutputDailySummary({ from, to });
+
+  // R1 — repos_governed_total = all-time distinct repos (COVERAGE proof-of-scope).
+  // Sister-shape s345 #11973 "governance-scope not window-activity" discipline.
+  const totalRepoRow = database.prepare(`
+    SELECT COUNT(DISTINCT repo_key) AS n FROM output_daily
+  `).get();
+  const repos_governed_total = totalRepoRow.n || 0;
+
+  // R2 — lifetime-cumulative merged PRs (OUTCOME proof, picker-invariant).
+  // Sister-shape s345 #11973 "never a rate" lock: cumulative never-shrinks.
+  const mergedRow = database.prepare(`
+    SELECT COUNT(*) AS n FROM output_pr WHERE merged_at IS NOT NULL
+  `).get();
+  const pr_merged_count_cumulative = mergedRow.n || 0;
+
+  // Attribution integrity (PROOF, positive framing per plexus-ui #11975).
+  // Same underlying signal as coverage-gap (%) and attribution_gap_count (raw);
+  // consolidated into one tile with two fields.
+  const attrRow = database.prepare(`
+    SELECT
+      COUNT(*) AS total_commits,
+      SUM(CASE WHEN attribution_method = 'null_fallback' THEN 1 ELSE 0 END) AS null_fallback_count
+    FROM output_commit
+    WHERE date(occurred_at) >= @from AND date(occurred_at) <= @to
+  `).get({ from, to });
+  const total_commits = attrRow.total_commits || 0;
+  const null_fallback_count = attrRow.null_fallback_count || 0;
+  const attribution_integrity_pct = total_commits
+    ? Math.round(((total_commits - null_fallback_count) / total_commits) * 100)
+    : 100; // no commits → integrity is trivially 100% (no gaps to have)
+
+  // Pending mints — sister-shape existing helper.
+  const pending = listPendingBareGitRequests();
+  const pending_bare_git_requests = pending.length;
+
+  // Cluster operating-since — MIN(messages.created_at) as time-lock anchor.
+  const operRow = database.prepare(`
+    SELECT MIN(created_at) AS since FROM messages
+  `).get();
+  const cluster_operating_since = operRow.since || null;
+
+  return {
+    // R1 — headline + sub
+    repos_governed_total,
+    repo_count_active_window: windowed.repo_count,
+    // R2 — lifetime cumulative
+    pr_merged_count_cumulative,
+    // PROOF — consolidated
+    attribution_integrity_pct,
+    attribution_gap_count: windowed.attribution_gap_count,
+    // COVERAGE — attributed (already excludes 'unattributed' per line 1491)
+    attributed_agents: windowed.engaged_agents,
+    // OUTCOME/operational + Manage-repos deep-link
+    pending_bare_git_requests,
+    // OPTIONAL P1.1 — time-lock proof
+    cluster_operating_since,
+  };
+}
+
 function queryOutputDailyHeatmap({ from, to, dim = 'commits', filter_repo = null, filter_agent = null }) {
   const validDims = new Set(['commits', 'merges', 'prs_opened', 'prs_merged', 'attribution_gaps']);
   if (!validDims.has(dim)) {
@@ -4731,6 +4797,7 @@ module.exports = {
   rollupOutputWindow,
   queryVirtualOutputDailyForDate,
   queryOutputDailySummary,
+  queryHeroSummary,
   queryOutputDailyHeatmap,
   queryOutputDailyRepoList,
   queryRepoActivityFeed,

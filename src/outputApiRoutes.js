@@ -38,9 +38,31 @@ const {
   detectAnomalies,
 } = require('./outputRatios');
 const dbModule = require('./db');
+const { periodToRange } = require('./costQuery');
 
 const publicRouter = express.Router();
 const opsRouter = express.Router();
+
+// Range resolver: sister-shape repoQueryRoutes.js resolveRange (same contract).
+// Accepts ?period=<preset> OR ?from=&to= (YYYY-MM-DD). Defaults to '30d'.
+function resolveRange(req) {
+  const explicitFrom = req.query.from ? String(req.query.from) : null;
+  const explicitTo = req.query.to ? String(req.query.to) : null;
+  const period = req.query.period ? String(req.query.period) : null;
+  const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+  if (explicitFrom && explicitTo) {
+    if (!DATE_RE.test(explicitFrom) || !DATE_RE.test(explicitTo)) {
+      throw new Error('from + to must be YYYY-MM-DD');
+    }
+    return { from: explicitFrom, to: explicitTo, period: null };
+  }
+  if (period) {
+    const r = periodToRange(period);
+    return { from: r.from, to: r.to, period };
+  }
+  const r = periodToRange('30d');
+  return { from: r.from, to: r.to, period: '30d' };
+}
 
 // Task #258 / PLAN-EFFORT-METADATA-RESPONSE (parch #11208 RATIFY).
 // Attach namespaced _metadata to PUBLIC /output/* successful 2xx responses.
@@ -214,6 +236,25 @@ publicRouter.get('/coverage-gap', (req, res) => {
   // Empty: no commits walked OR all commits are covered (no gap detected)
   const isEmpty = !result || result.total_commits === 0;
   return res.json(attachMetadata(result, isEmpty));
+});
+
+// ── PUBLIC: GET /hero-summary — ADR-0041 P1a #output shared hero ──────────
+// Fold-B-by-construction: ALL fields cross-tier-safe (OUTCOME/COVERAGE/PROOF).
+// The always-fetched hero-summary payload PHYSICALLY cannot leak tier-gated
+// data regardless of client bug — defense-in-depth via data-partitioning
+// (plexus-ui #11973 applause). Tier-gated tiles fetch /output/ratios?audience=<tier>
+// separately.
+//
+// Contract locked at plexus-ui #11975 + s345 #11973 (R1 total-headline
+// expose-both; R2 lifetime cumulative, never window-rate).
+publicRouter.get('/hero-summary', (req, res) => {
+  try {
+    const { from, to, period } = resolveRange(req);
+    const result = dbModule.queryHeroSummary({ from, to });
+    return res.json(attachMetadata({ period, from, to, ...result }, false));
+  } catch (e) {
+    return res.status(400).json({ error: 'ValidationError', message: e.message });
+  }
 });
 
 // ── OPS: PUT /attribution (manual correction for parser misses) ───────────
