@@ -47,9 +47,6 @@ YAKLOG_BIND_IP=0.0.0.0
 # Isolation: skip OTel entirely on demo (marketing surface, not observability)
 # (env vars from prod that would push to a real collector are simply omitted)
 
-# Optional: pin dashboard title so operators know they're on demo
-YAKLOG_DASHBOARD_TITLE=Plexus (Demo)
-
 # Optional (per secops #12140 tightening): if the demo VM is multi-homed
 # (an interface on our cluster net + one on the capture net), bind
 # specifically to the interface ptah-win11 + s345 reach — rather than
@@ -135,7 +132,7 @@ rm -rf ./data   # nukes the demo SQLite; fresh state next run
 - [ ] No OTEL_EXPORTER_OTLP_ENDPOINT pointing at devel collector
 - [ ] No cross-mount to /srv/git or shared paths
 - [ ] Real-fleet yaklog-sub restart uses demo YAKLOG_URL, not the real one
-- [ ] Container name is `yaklog-demo` not `yaklog` (visual distinguisher)
+- [ ] Container name is `plexus-demo` (customer-facing brand + visual distinguisher from production `yaklog`)
 
 ## Rollback
 

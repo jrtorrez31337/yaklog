@@ -14,6 +14,8 @@
 #   - NO bare-git / GitHub PAT / age-key mounts — demo has no repos to
 #     walk, no vendor keys, no cross-cluster ferries
 #   - LOCAL data/ bind for SQLite so operator can inspect + wipe easily
+#   - Container name is `plexus-demo` (customer-facing brand; the internal
+#     "yaklog" codename is not exposed to demo participants)
 #
 # Isolation posture (per secops #12131 + #12136):
 #   - Fresh SQLite at ./data/yaklog.db (not shared, not synced)
@@ -24,7 +26,7 @@
 services:
   yaklog:
     build: .
-    container_name: yaklog-demo
+    container_name: plexus-demo
     restart: unless-stopped
     env_file:
       - .env.demo
