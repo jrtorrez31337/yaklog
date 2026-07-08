@@ -249,7 +249,7 @@
   .view-identity dd { margin: 0; color: var(--text); font-size: 11px; word-break: break-all; }
   .view-identity h4 { margin: 8px 0 2px; font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; font-weight: 500; }
   .view-identity h4:first-child { margin-top: 0; }
-  .view-empty { color: var(--muted); font-size: 11px; text-align: center; padding: 30px 6px; opacity: 0.8; }
+  .view-empty { color: var(--muted); font-size: 11px; text-align: center; padding: 30px 6px; }
   .view-freshness { color: var(--muted); font-size: 9px; text-align: right; padding-top: 4px; font-variant-numeric: tabular-nums; }
   /* CP6.5: history window toggle in cards section divider */
   #cards-window-toggle button.active { background: var(--blue-bg) !important; color: var(--blue) !important; }
@@ -598,6 +598,9 @@
      auto-fit grid: stable across 5 tiles now + a 6th (operating-since P1.1) later. */
   .output-hero-strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 18px; }
   .output-hero-tile { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 12px 14px; min-height: 74px; }
+  .output-hero-tile[data-tile="pending-mints"] { cursor: pointer; }
+  .output-hero-tile[data-tile="pending-mints"]:hover { border-color: var(--blue); }
+  .output-hero-tile[data-tile="pending-mints"]:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
   .output-hero-label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
   .output-hero-value { color: var(--text); font-size: 22px; font-weight: 600; margin-top: 4px; font-variant-numeric: tabular-nums; }
   .output-hero-sub { color: var(--muted); font-size: 10px; margin-top: 3px; }
@@ -1298,7 +1301,6 @@
   <button class="tab-btn" data-tab="bus">Channels<span class="badge-new">CP9</span></button>
   <button class="tab-btn" data-tab="audit">Audit<span class="badge-new">CP8.2</span></button>
   <button class="tab-btn" data-tab="effort">Effort<span class="badge-new">CP13</span></button>
-  <button class="tab-btn" data-tab="repos">Repos<span class="badge-new">CP17</span></button>
   <button class="tab-btn" data-tab="output">Output<span class="badge-new">NEW</span></button>
   <button class="tab-btn" data-tab="register">Register<span class="badge-new">CP8.5</span></button>
   <!-- CP14.x: Ptah ORP authoring + live-view tab (Jon-direct #9904). Hidden
@@ -1996,39 +1998,38 @@
      Consumes /api/v1/plexus/public/repos/{summary,heatmap,list,detail,by-agent}.
      Sister-shape existing tab-panel + Cost hero strip patterns.
      Time-nav aware via Task #264 v1 dashboardTimeRangeChange event. -->
-<section class="tab-panel" data-tab="repos" id="tab-repos">
-  <!-- Band 1: Summary tiles (6) — sister-shape Cost hero strip -->
-  <nav class="repos-hero-strip" id="repos-hero-strip" aria-label="Repo activity summary">
-    <div class="repos-hero-tile" data-tile="repo-count">
-      <div class="repos-hero-label">Repos tracked</div>
-      <div class="repos-hero-value" data-tile-value="repo_count">—</div>
-      <div class="repos-hero-sub" data-tile-sub="repo_count_sub"></div>
+<section class="tab-panel" data-tab="output" id="tab-output">
+  <!-- ADR-0041 v2 (Jon-ratified 2026-07-08): #output = the #repos survivor, renamed
+       + consolidated. The shared cross-tier-safe hero (/output/hero-summary) replaces
+       the old repos summary tiles; #effort folds in as the tier-gated pivot=agent view.
+       Internal repos-* component ids are retained (not user-visible) so the existing
+       heatmap/grid/widget renderers keep working. -->
+  <nav class="output-hero-strip" id="output-hero-strip" aria-label="Cluster output summary">
+    <div class="output-hero-tile" data-tile="repos-governed">
+      <div class="output-hero-label">Repos governed</div>
+      <div class="output-hero-value" data-hero="repos_governed_total">—</div>
+      <div class="output-hero-sub" data-hero-sub="repos_active"></div>
     </div>
-    <div class="repos-hero-tile" data-tile="commit-count">
-      <div class="repos-hero-label">Commits</div>
-      <div class="repos-hero-value" data-tile-value="commit_count">—</div>
-      <div class="repos-hero-sub" data-tile-sub="window_label"></div>
+    <div class="output-hero-tile" data-tile="merged-prs">
+      <div class="output-hero-label">Merged PRs</div>
+      <div class="output-hero-value" data-hero="pr_merged_count_cumulative">—</div>
+      <div class="output-hero-sub">lifetime · all-time</div>
     </div>
-    <div class="repos-hero-tile" data-tile="pr-count">
-      <div class="repos-hero-label">Merged PRs</div>
-      <div class="repos-hero-value" data-tile-value="pr_merged_count">—</div>
-      <div class="repos-hero-sub"></div>
+    <div class="output-hero-tile" data-tile="attribution-integrity">
+      <div class="output-hero-label">Attribution integrity</div>
+      <div class="output-hero-value" data-hero="attribution_integrity_pct">—</div>
+      <div class="output-hero-sub" data-hero-sub="attribution_gaps"></div>
     </div>
-    <div class="repos-hero-tile" data-tile="engaged-agents">
-      <div class="repos-hero-label">Agents engaged</div>
-      <div class="repos-hero-value" data-tile-value="engaged_agents">—</div>
-      <div class="repos-hero-sub"></div>
+    <div class="output-hero-tile" data-tile="attributed-agents">
+      <div class="output-hero-label">Attributed agents</div>
+      <div class="output-hero-value" data-hero="attributed_agents">—</div>
+      <div class="output-hero-sub">under attribution</div>
     </div>
-    <div class="repos-hero-tile" data-tile="attribution-gaps">
-      <div class="repos-hero-label">Attribution gaps</div>
-      <div class="repos-hero-value" data-tile-value="attribution_gap_count">—</div>
-      <div class="repos-hero-sub"></div>
-    </div>
-    <div class="repos-hero-tile" data-tile="pending-mints" role="button" tabindex="0"
-         aria-label="Pending bare-git mint requests; click to jump to management widgets">
-      <div class="repos-hero-label">Pending mints</div>
-      <div class="repos-hero-value" data-tile-value="pending_bare_git_requests">—</div>
-      <div class="repos-hero-sub">bare-git requests</div>
+    <div class="output-hero-tile" data-tile="pending-mints" role="button" tabindex="0"
+         aria-label="Pending bare-git mint requests; activate to jump to management widgets">
+      <div class="output-hero-label">Pending mints</div>
+      <div class="output-hero-value" data-hero="pending_bare_git_requests">—</div>
+      <div class="output-hero-sub">bare-git requests</div>
     </div>
   </nav>
 
@@ -2128,37 +2129,6 @@
 <!-- ADR-0041 P1: #output tab — merges #effort + #repos. P1 = shared-hero band
      (cross-tier-safe OUTCOME/COVERAGE/PROOF) + time-nav inherit. P2 adds the
      scoped analytical-band pivot; P3 adds contextual chrome + Manage disclosure. -->
-<section class="tab-panel" data-tab="output" id="tab-output">
-  <nav class="output-hero-strip" id="output-hero-strip" aria-label="Cluster output summary">
-    <div class="output-hero-tile" data-tile="repos-governed">
-      <div class="output-hero-label">Repos governed</div>
-      <div class="output-hero-value" data-hero="repos_governed_total">—</div>
-      <div class="output-hero-sub" data-hero-sub="repos_active"></div>
-    </div>
-    <div class="output-hero-tile" data-tile="merged-prs">
-      <div class="output-hero-label">Merged PRs</div>
-      <div class="output-hero-value" data-hero="pr_merged_count_cumulative">—</div>
-      <div class="output-hero-sub">lifetime · all-time</div>
-    </div>
-    <div class="output-hero-tile" data-tile="attribution-integrity">
-      <div class="output-hero-label">Attribution integrity</div>
-      <div class="output-hero-value" data-hero="attribution_integrity_pct">—</div>
-      <div class="output-hero-sub" data-hero-sub="attribution_gaps"></div>
-    </div>
-    <div class="output-hero-tile" data-tile="attributed-agents">
-      <div class="output-hero-label">Attributed agents</div>
-      <div class="output-hero-value" data-hero="attributed_agents">—</div>
-      <div class="output-hero-sub">under attribution</div>
-    </div>
-    <div class="output-hero-tile" data-tile="pending-mints">
-      <div class="output-hero-label">Pending mints</div>
-      <div class="output-hero-value" data-hero="pending_bare_git_requests">—</div>
-      <div class="output-hero-sub">bare-git requests</div>
-    </div>
-  </nav>
-  <!-- P2/P3 bands (analytical pivot + contextual chrome) mount here in later phases. -->
-</section>
-
 <section class="tab-panel" data-tab="register" id="tab-register">
   <div class="audit-banner">
     🔓 <strong>Network-trust auth only (v1).</strong> Same posture as the Audit tab.

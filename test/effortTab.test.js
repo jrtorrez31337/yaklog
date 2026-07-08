@@ -92,7 +92,7 @@ test('/dashboard.js Effort tab is in activateTab allowlist', async () => {
   // CP14 Operate tab added 2026-06-26; CP17.B Repos tab added 2026-07-07
   // (PLAN-CP17-CLUSTER-REPO-SUBSTRATE.md Jon-direct kickoff). Allowlist
   // ordering: live cost bus audit effort repos register operate.
-  assert.match(r.text, /\['live',\s*'cost',\s*'bus',\s*'audit',\s*'effort',\s*'repos',\s*'output',\s*'register',\s*'operate'\]/);
+  assert.match(r.text, /\['live',\s*'cost',\s*'bus',\s*'audit',\s*'effort',\s*'output',\s*'register',\s*'operate'\]/);
 });
 
 test('/dashboard.js calls /api/v1/output/* endpoints', async () => {
