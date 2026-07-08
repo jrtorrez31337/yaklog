@@ -142,7 +142,10 @@ const FRAMES = [
     // request (allowlist for demo velocity per Jon-delegated execute-not-gate).
     name: 'cluster.cost.topAgents',
     kind: 'instant',
-    promql: 'topk(10, sum by (plexus_agent_id) (claude_code_cost_usage_USD_total{plexus_agent_id!~"plexus-admin|jon|Jon|ops|admin"}))',
+    // last_over_time(...[24h]) so bursty poll-and-invoke runtimes (codex, aieng3)
+    // that go silent between cycles still surface. Prometheus default staleness=5min
+    // would otherwise hide their cumulative counter values.
+    promql: 'topk(10, sum by (plexus_agent_id) (last_over_time(claude_code_cost_usage_USD_total{plexus_agent_id!~"plexus-admin|jon|Jon|ops|admin"}[24h])))',
   },
   {
     // Top-10 token-spend drivers by agent (multi-runtime; catches codex/gemini
@@ -151,7 +154,7 @@ const FRAMES = [
     // reads honestly as "N tokens, $0 (quota)" per s345-aieng #12203 Option A.
     name: 'cluster.cost.topAgentTokens',
     kind: 'instant',
-    promql: 'topk(10, sum by (plexus_agent_id) ((plexus_tokens_input_total + plexus_tokens_output_total){plexus_agent_id!~"plexus-admin|jon|Jon|ops|admin"}))',
+    promql: 'topk(10, sum by (plexus_agent_id) (last_over_time(plexus_tokens_input_total{plexus_agent_id!~"plexus-admin|jon|Jon|ops|admin"}[24h]) + last_over_time(plexus_tokens_output_total{plexus_agent_id!~"plexus-admin|jon|Jon|ops|admin"}[24h])))',
   },
   {
     // Top-10 cost drivers by Anthropic account (user_email is the most

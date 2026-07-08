@@ -188,7 +188,8 @@ const templates = {
     params: {},
     build() {
       // Excludes ops/relay senders per s345-aieng #12203 (allowlist for demo velocity).
-      return 'topk(10, sum by (plexus_agent_id) (claude_code_cost_usage_USD_total{plexus_agent_id!~"plexus-admin|jon|Jon|ops|admin"}))';
+      // last_over_time([24h]) so bursty poll-and-invoke runtimes stay visible between cycles.
+      return 'topk(10, sum by (plexus_agent_id) (last_over_time(claude_code_cost_usage_USD_total{plexus_agent_id!~"plexus-admin|jon|Jon|ops|admin"}[24h])))';
     },
   },
 
@@ -199,7 +200,8 @@ const templates = {
       // Multi-runtime token-spend companion — catches codex/gemini agents that
       // emit plexus_tokens_*_total but no USD counter (canonical CP11.x.1
       // quota-honest design). Client merges with topAgents to render "$X / Y tokens".
-      return 'topk(10, sum by (plexus_agent_id) ((plexus_tokens_input_total + plexus_tokens_output_total){plexus_agent_id!~"plexus-admin|jon|Jon|ops|admin"}))';
+      // last_over_time([24h]) so bursty poll-and-invoke runtimes stay visible.
+      return 'topk(10, sum by (plexus_agent_id) (last_over_time(plexus_tokens_input_total{plexus_agent_id!~"plexus-admin|jon|Jon|ops|admin"}[24h]) + last_over_time(plexus_tokens_output_total{plexus_agent_id!~"plexus-admin|jon|Jon|ops|admin"}[24h])))';
     },
   },
 
