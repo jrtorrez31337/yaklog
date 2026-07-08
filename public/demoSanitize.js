@@ -128,14 +128,19 @@
   // Returns the demo value for a hero-summary metric key. Real value ignored
   // — the demo scale-disclosure discipline is that the metric SCALE itself
   // is what we hide (per secops #12076), not just the label.
+  //
+  // FAIL-SAFE: if fieldName is not in DEMO_HERO_SUMMARY, return a masked
+  // sentinel ('—') rather than the real value. Per secops #12083 finding —
+  // fail-open on unknown fields is exactly the "uncovered field leaks"
+  // case #12076 forbids. When a new hero metric is added, extend
+  // DEMO_HERO_SUMMARY explicitly rather than relying on realValue fallthrough.
   function metric(fieldName, _realValue) {
     if (Object.prototype.hasOwnProperty.call(DEMO_HERO_SUMMARY, fieldName)) {
       return DEMO_HERO_SUMMARY[fieldName];
     }
-    // Field not in demo table → return real value (safe: not a scale-
-    // disclosure vector). Caller should extend DEMO_HERO_SUMMARY if a new
-    // metric is added to the hero + needs sanitization.
-    return _realValue;
+    // Fail-safe: unknown field → masked sentinel. Loud + visible so operator
+    // sees the gap during ?demo=1 preview + can extend DEMO_HERO_SUMMARY.
+    return '—';
   }
 
   // Sanitize an entire hero-summary response object (returns a new object).
