@@ -592,6 +592,18 @@
   .repos-hero-sub { color: var(--muted); font-size: 10px; margin-top: 3px; }
   .repos-hero-tile.attribution-gap-flagged .repos-hero-value { color: var(--amber, #eab308); }
 
+  /* ADR-0041 P1 #output shared-hero band. Sister-shape .repos-hero-strip.
+     All tiles cross-tier-safe (OUTCOME/COVERAGE/PROOF) — tier-gated tiles arrive
+     at P3 behind the audience-picker via a SEPARATE fetch (Fold-B-by-construction).
+     auto-fit grid: stable across 5 tiles now + a 6th (operating-since P1.1) later. */
+  .output-hero-strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 18px; }
+  .output-hero-tile { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 12px 14px; min-height: 74px; }
+  .output-hero-label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .output-hero-value { color: var(--text); font-size: 22px; font-weight: 600; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .output-hero-sub { color: var(--muted); font-size: 10px; margin-top: 3px; }
+  .output-hero-state { grid-column: 1 / -1; min-height: 74px; display: flex; align-items: center; justify-content: center; padding: 18px; color: var(--muted); font-size: 12px; text-align: center; }
+  .output-hero-state.is-error { color: var(--red); }
+
   .repos-heatmap-section { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; margin-bottom: 18px; }
   .repos-heatmap-controls { display: flex; gap: 12px; align-items: center; padding: 12px 14px; border-bottom: 1px solid var(--border); flex-wrap: wrap; font-size: 12px; }
   .repos-heatmap-controls label { display: flex; align-items: center; gap: 6px; color: var(--muted); }
@@ -1287,6 +1299,7 @@
   <button class="tab-btn" data-tab="audit">Audit<span class="badge-new">CP8.2</span></button>
   <button class="tab-btn" data-tab="effort">Effort<span class="badge-new">CP13</span></button>
   <button class="tab-btn" data-tab="repos">Repos<span class="badge-new">CP17</span></button>
+  <button class="tab-btn" data-tab="output">Output<span class="badge-new">NEW</span></button>
   <button class="tab-btn" data-tab="register">Register<span class="badge-new">CP8.5</span></button>
   <!-- CP14.x: Ptah ORP authoring + live-view tab (Jon-direct #9904). Hidden
        in default chrome; only reachable via clickable Ptah AgentCard or
@@ -2110,6 +2123,40 @@
       </div>
     </details>
   </section>
+</section>
+
+<!-- ADR-0041 P1: #output tab — merges #effort + #repos. P1 = shared-hero band
+     (cross-tier-safe OUTCOME/COVERAGE/PROOF) + time-nav inherit. P2 adds the
+     scoped analytical-band pivot; P3 adds contextual chrome + Manage disclosure. -->
+<section class="tab-panel" data-tab="output" id="tab-output">
+  <nav class="output-hero-strip" id="output-hero-strip" aria-label="Cluster output summary">
+    <div class="output-hero-tile" data-tile="repos-governed">
+      <div class="output-hero-label">Repos governed</div>
+      <div class="output-hero-value" data-hero="repos_governed_total">—</div>
+      <div class="output-hero-sub" data-hero-sub="repos_active"></div>
+    </div>
+    <div class="output-hero-tile" data-tile="merged-prs">
+      <div class="output-hero-label">Merged PRs</div>
+      <div class="output-hero-value" data-hero="pr_merged_count_cumulative">—</div>
+      <div class="output-hero-sub">lifetime · all-time</div>
+    </div>
+    <div class="output-hero-tile" data-tile="attribution-integrity">
+      <div class="output-hero-label">Attribution integrity</div>
+      <div class="output-hero-value" data-hero="attribution_integrity_pct">—</div>
+      <div class="output-hero-sub" data-hero-sub="attribution_gaps"></div>
+    </div>
+    <div class="output-hero-tile" data-tile="attributed-agents">
+      <div class="output-hero-label">Attributed agents</div>
+      <div class="output-hero-value" data-hero="attributed_agents">—</div>
+      <div class="output-hero-sub">under attribution</div>
+    </div>
+    <div class="output-hero-tile" data-tile="pending-mints">
+      <div class="output-hero-label">Pending mints</div>
+      <div class="output-hero-value" data-hero="pending_bare_git_requests">—</div>
+      <div class="output-hero-sub">bare-git requests</div>
+    </div>
+  </nav>
+  <!-- P2/P3 bands (analytical pivot + contextual chrome) mount here in later phases. -->
 </section>
 
 <section class="tab-panel" data-tab="register" id="tab-register">

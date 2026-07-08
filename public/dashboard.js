@@ -434,7 +434,7 @@
       const orpAgentId = m ? m[1] : null;
       mountOrpView(orpAgentId);
       name = 'orp';  // collapse to canonical tab-name for class-toggle below
-    } else if (!['live', 'cost', 'bus', 'audit', 'effort', 'repos', 'register', 'operate'].includes(name)) {
+    } else if (!['live', 'cost', 'bus', 'audit', 'effort', 'repos', 'output', 'register', 'operate'].includes(name)) {
       name = 'live';
     }
     document.querySelectorAll('.tab-btn').forEach(b => {
@@ -465,6 +465,8 @@
     if (name === 'operate' && typeof mountOperateTab === 'function') mountOperateTab();
     // CP17.B (Jon-direct 2026-07-07): lazy-mount the Repos tab.
     if (name === 'repos' && typeof mountReposTab === 'function') mountReposTab();
+    // ADR-0041 P1: lazy-mount the #output tab (merged effort+repos shared hero).
+    if (name === 'output' && typeof mountOutputTab === 'function') mountOutputTab();
   }
 
   // ─────────────────────────────────────────────────────────────────────
@@ -6152,6 +6154,84 @@
       if (window.isDashboardLive && !window.isDashboardLive()) return;
       const active = document.querySelector('.tab-panel[data-tab="repos"]');
       if (active && active.classList.contains('active')) _refreshReposAll();
+    }, 60_000);
+  }
+
+  // ─── ADR-0041 P1: #output shared-hero tab ────────────────────────────────
+  // Merged effort+repos surface. P1 = cross-tier-safe hero band only, fetched
+  // from GET /output/hero-summary (Fold-B-by-construction: this endpoint carries
+  // NO tier-gated fields, so the always-fetched hero cannot leak them). Tier-gated
+  // tiles + the scoped analytical pivot arrive at P2/P3.
+  let _outputMounted = false;
+  function _outputRangeQuery() {
+    // Inherit Task #264 time-nav: live → default period; windowed → from/to.
+    const w = window.getDashboardTimeWindow && window.getDashboardTimeWindow();
+    if (!w) return 'period=30d';
+    const iso = (ms) => new Date(ms).toISOString().slice(0, 10);
+    return 'from=' + iso(w.fromMs) + '&to=' + iso(w.toMs);
+  }
+  async function _fetchOutputHero() {
+    try {
+      const r = await fetch('/api/v1/output/hero-summary?' + _outputRangeQuery(), { cache: 'no-store' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return await r.json();
+    } catch (err) {
+      return { _error: err.message };
+    }
+  }
+  function _outputHeroState(kind, msg) {
+    const strip = document.getElementById('output-hero-strip');
+    if (!strip) return;
+    // Preserve tiles; overlay a full-width state row (stable grid dims).
+    const prev = strip.querySelector('.output-hero-state');
+    if (prev) prev.remove();
+    if (!kind) return;
+    const row = el('div', { class: 'output-hero-state is-' + kind, role: 'status', 'aria-live': 'polite' }, msg);
+    strip.appendChild(row);
+  }
+  function _fmtOutputNum(v) {
+    if (v == null || !Number.isFinite(Number(v))) return '—';
+    return Number(v).toLocaleString();
+  }
+  async function _renderOutputHero() {
+    const data = await _fetchOutputHero();
+    if (data._error) {
+      // Honest microcopy — never leak raw HTTP/status to the glass.
+      _outputHeroState('error', 'Couldn’t load output summary. Retry shortly.');
+      return;
+    }
+    _outputHeroState(null);
+    const set = (k, v) => {
+      const node = document.querySelector('#output-hero-strip [data-hero="' + k + '"]');
+      if (node) node.textContent = v;
+    };
+    const setSub = (k, v) => {
+      const node = document.querySelector('#output-hero-strip [data-hero-sub="' + k + '"]');
+      if (node) node.textContent = v;
+    };
+    set('repos_governed_total', _fmtOutputNum(data.repos_governed_total));
+    setSub('repos_active', _fmtOutputNum(data.repo_count_active_window) + ' active this window');
+    set('pr_merged_count_cumulative', _fmtOutputNum(data.pr_merged_count_cumulative));
+    const pct = data.attribution_integrity_pct;
+    set('attribution_integrity_pct', (pct == null || !Number.isFinite(Number(pct))) ? '—' : Number(pct).toFixed(0) + '%');
+    setSub('attribution_gaps', _fmtOutputNum(data.attribution_gap_count) + ' unattributed');
+    set('attributed_agents', _fmtOutputNum(data.attributed_agents));
+    set('pending_bare_git_requests', _fmtOutputNum(data.pending_bare_git_requests));
+  }
+  function mountOutputTab() {
+    if (_outputMounted) { _renderOutputHero(); return; }
+    _outputMounted = true;
+    _renderOutputHero();
+    // Time-nav: re-render on picker change while the tab is active (perf-gated).
+    document.addEventListener('dashboardTimeRangeChange', () => {
+      const active = document.querySelector('.tab-panel[data-tab="output"]');
+      if (active && active.classList.contains('active')) _renderOutputHero();
+    });
+    // 60s live refresh, gated on isLiveMode (sister-shape repos/cost discipline).
+    setInterval(() => {
+      if (window.isDashboardLive && !window.isDashboardLive()) return;
+      const active = document.querySelector('.tab-panel[data-tab="output"]');
+      if (active && active.classList.contains('active')) _renderOutputHero();
     }, 60_000);
   }
 
