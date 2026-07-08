@@ -1,25 +1,18 @@
-# yaklog demo-Plexus instance — isolated bus + store + OTel/Prom for the
-# "What is Plexus" screenshot-capture per s345 #12134 + Jon-direct 2026-07-08.
+# yaklog demo-Plexus instance — full production-parity stack for the
+# "What is Plexus" screenshot capture per Jon-direct 2026-07-08.
 #
-# Purpose: stand up a FRESH yaklog+dashboard+OTel-stack on a demo VM that
-# Jon's real fleet points at. The real cluster at devel is UNTOUCHED — this
-# is a separate, self-contained Plexus instance with its own SQLite +
-# its own tokens + its own OTel collector + Prometheus.
+# Full parity per Jon-direct: all services that run locally on production
+# stack (yaklog + OTel + Prom + Grafana + MinIO + TLS/Caddy) are required
+# on demo, isolated at the VM level (no cross-cluster subscribe / export).
 #
-# Corrected 2026-07-08 (admin #12163 + s345-aieng #12164): earlier variant
-# stripped OTel entirely, which killed the dashboard's cost/token-rate/
-# activity panels — the marketing-headline views. The correct isolation
-# posture is DEMO-LOCAL OTel + Prom (agents emit to demo collector; NOT
-# to production collector), NOT "no OTel at all". Restoring the stack.
+# Corrections in-arc:
+# - Initial strip (yaklog only): killed cost/token/activity dashboard panels
+#   fed by OTel/Prom. Restored OTel + Prom per admin #12163 + s345-aieng #12164.
+# - Grafana/MinIO/TLS still absent: Jon flagged, adding for full parity.
 #
-# Delta vs docker-compose.yml (production):
-#   - NO Grafana (dashboard is the marketing surface, not Grafana admin)
-#   - NO MinIO (external-anchor S3 substrate irrelevant for demo captures)
-#   - NO TLS proxy (Caddy) — demo VM serves HTTP directly on :3100
-#   - NO bare-git / GitHub-PAT / age-key mounts — no repos to walk on demo
-#   - LOCAL data/ bind for SQLite so operator can inspect + wipe easily
-#   - Container name is `plexus-demo` (customer-facing brand; the internal
-#     "yaklog" codename is not exposed to demo participants)
+# Isolation posture unchanged: fresh SQLite, fresh tokens, fresh OTel
+# collector (agents emit HERE, not to production); fresh Prom scrape;
+# fresh MinIO buckets; VM-level network isolation is the security boundary.
 
 services:
   yaklog:
@@ -35,11 +28,11 @@ services:
 
   # ────────────────────────────────────────────────────────────────────
   # Demo OTel collector — receives OTLP from Jon's real-fleet agents
-  # (CC/Codex/etc via OTEL_EXPORTER_OTLP_ENDPOINT env). Re-exposes as Prom
-  # scrape on :8889 for demo Prometheus to pull. Stage 1 auth model:
-  # collector accepts any Bearer header; VM-level network isolation is the
-  # security boundary — do NOT expose :4327/:4328 outside the demo VM's
-  # reachability domain (ptah-win11 + s345 seat + Jon's real-fleet agents).
+  # (agents' OTEL_EXPORTER_OTLP_ENDPOINT points at 10.71.1.184:4328). Sister-
+  # shape production ports 4327/4328 so agent config port-swaps cleanly.
+  # Stage 1 auth: accepts any Bearer header; VM-level network isolation
+  # is the security boundary — do NOT expose :4327/:4328 outside demo VM's
+  # reachability domain.
   # ────────────────────────────────────────────────────────────────────
   plexus-otel-collector:
     image: otel/opentelemetry-collector-contrib:0.112.0
@@ -49,8 +42,6 @@ services:
     volumes:
       - ./otel/collector-config.yaml:/etc/otelcol/config.yaml:ro
     ports:
-      # Sister-shape production port shift (4317→4327; 4318→4328) so real-fleet
-      # agent env configs port-swap cleanly between production and demo.
       - "${PLEXUS_BIND_IP:-0.0.0.0}:4327:4317"  # OTLP gRPC
       - "${PLEXUS_BIND_IP:-0.0.0.0}:4328:4318"  # OTLP HTTP
       - "${PLEXUS_BIND_IP:-127.0.0.1}:13134:13133"  # healthcheck
@@ -81,5 +72,84 @@ services:
       retries: 6
       start_period: 15s
 
+  plexus-grafana:
+    image: grafana/grafana:11.6.0
+    container_name: plexus-grafana
+    restart: unless-stopped
+    # Demo credentials live in a VM-local env file (fresh mint; NOT
+    # shared with production plexus-grafana.env at /home/jon/.config/yaklog/).
+    env_file:
+      - ./plexus-grafana.demo.env
+    environment:
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_INSTALL_PLUGINS: ""
+      GF_PATHS_PROVISIONING: /etc/grafana/provisioning
+    volumes:
+      - ./otel/grafana-datasources.yaml:/etc/grafana/provisioning/datasources/plexus.yaml:ro
+      - ./otel/grafana-dashboard-provisioning.yaml:/etc/grafana/provisioning/dashboards/plexus.yaml:ro
+      - ./otel/grafana-dashboards:/etc/grafana/provisioning/dashboards/json:ro
+      - plexus_grafana_data:/var/lib/grafana
+    ports:
+      - "${PLEXUS_BIND_IP:-0.0.0.0}:3001:3000"
+    depends_on:
+      plexus-prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3000/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+
+  # ────────────────────────────────────────────────────────────────────
+  # Demo MinIO — S3 Object Lock substrate for external audit anchor.
+  # Fresh credentials in plexus-minio.demo.env (NOT shared with production).
+  # 127.0.0.1-bound; not reachable outside demo VM (isolation posture).
+  # ────────────────────────────────────────────────────────────────────
+  plexus-minio:
+    image: minio/minio:latest
+    container_name: plexus-minio
+    restart: unless-stopped
+    command: server --console-address ":9001" /data
+    env_file:
+      - ./plexus-minio.demo.env
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    volumes:
+      - plexus_minio_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9000/minio/health/live || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ────────────────────────────────────────────────────────────────────
+  # Demo TLS (Caddy) — sister-shape production yaklog-tls. Uses
+  # ./otel/Caddyfile.yaklog-tls (may require hostname/cert config on demo
+  # VM; if TLS cert unavailable, container fails to start but does NOT
+  # block HTTP :3100 traffic — Caddy shares yaklog's network per network_mode).
+  # For pure HTTP capture, this service can be disabled by commenting out.
+  # ────────────────────────────────────────────────────────────────────
+  yaklog-tls:
+    image: caddy:2-alpine
+    container_name: yaklog-tls
+    network_mode: "service:yaklog"
+    depends_on:
+      yaklog:
+        condition: service_started
+    volumes:
+      - ./otel/Caddyfile.yaklog-tls:/etc/caddy/Caddyfile:ro
+      - /etc/yaklog-tls:/etc/yaklog-tls:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "caddy", "validate", "--config", "/etc/caddy/Caddyfile"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
 volumes:
   plexus_prom_data:
+  plexus_grafana_data:
+  plexus_minio_data:
