@@ -422,6 +422,8 @@
         _trpSetPreset(parsed.range, { updateHash: false, quiet: true });
       }
     }
+    // ADR-0041 v2 (Gate A): #repos renamed → #output. Alias preserves bookmarks/deep-links.
+    if (name === 'repos') name = 'output';
     // CP14.x: 'orp' tab is conditional (only reachable via Ptah AgentCard
     // click or direct hash navigation #orp/<agent_id>); not in the default
     // chrome but accepted as valid tab-name when navigated to.
@@ -434,7 +436,7 @@
       const orpAgentId = m ? m[1] : null;
       mountOrpView(orpAgentId);
       name = 'orp';  // collapse to canonical tab-name for class-toggle below
-    } else if (!['live', 'cost', 'bus', 'audit', 'effort', 'repos', 'output', 'register', 'operate'].includes(name)) {
+    } else if (!['live', 'cost', 'bus', 'audit', 'effort', 'output', 'register', 'operate'].includes(name)) {
       name = 'live';
     }
     document.querySelectorAll('.tab-btn').forEach(b => {
@@ -463,10 +465,13 @@
     if (name === 'effort' && typeof ensureEffortView === 'function') ensureEffortView();
     // CP14 Operate tab lazy-mount + refresh on activation.
     if (name === 'operate' && typeof mountOperateTab === 'function') mountOperateTab();
-    // CP17.B (Jon-direct 2026-07-07): lazy-mount the Repos tab.
-    if (name === 'repos' && typeof mountReposTab === 'function') mountReposTab();
-    // ADR-0041 P1: lazy-mount the #output tab (merged effort+repos shared hero).
-    if (name === 'output' && typeof mountOutputTab === 'function') mountOutputTab();
+    // ADR-0041 v2 (Gate A): #output = #repos survivor + shared hero. Mount BOTH the
+    // hero (mountOutputTab → /output/hero-summary) AND the repos bands (mountReposTab →
+    // heatmap/grid/widgets; its internal repos-* element ids are unchanged).
+    if (name === 'output') {
+      if (typeof mountOutputTab === 'function') mountOutputTab();
+      if (typeof mountReposTab === 'function') mountReposTab();
+    }
   }
 
   // ─────────────────────────────────────────────────────────────────────
