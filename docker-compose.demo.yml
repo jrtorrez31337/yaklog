@@ -63,7 +63,9 @@ services:
       - ./otel/prometheus.demo.yml:/etc/prometheus/prometheus.yml:ro
       - plexus_prom_data:/prometheus
     ports:
-      - "${PLEXUS_BIND_IP:-0.0.0.0}:9090:9090"
+      # 127.0.0.1-bound: Prometheus admin surface not needed off-VM
+      # (only :3100 dashboard + :4327/:4328 OTel receivers need external reach)
+      - "${PLEXUS_BIND_IP:-127.0.0.1}:9090:9090"
     depends_on:
       plexus-otel-collector:
         condition: service_started
@@ -93,7 +95,9 @@ services:
       - ./otel/grafana-dashboards:/etc/grafana/provisioning/dashboards/json:ro
       - plexus_grafana_data:/var/lib/grafana
     ports:
-      - "${PLEXUS_BIND_IP:-0.0.0.0}:3001:3000"
+      # 127.0.0.1-bound: Grafana admin surface not needed off-VM
+      # (dashboard capture uses yaklog :3100, not Grafana)
+      - "${PLEXUS_BIND_IP:-127.0.0.1}:3001:3000"
     depends_on:
       plexus-prometheus:
         condition: service_healthy
