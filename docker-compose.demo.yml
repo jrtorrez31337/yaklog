@@ -1,0 +1,39 @@
+# yaklog demo-Plexus instance — isolated bus + store for "What is Plexus"
+# screenshot-capture per s345 #12134 + Jon-direct 2026-07-08.
+#
+# Purpose: stand up a FRESH yaklog+dashboard on a demo VM that Jon's real
+# fleet points at (via YAKLOG_URL repoint on their agent daemons). The
+# real cluster at devel:3100 is UNTOUCHED — this is a separate, self-
+# contained yaklog server with its own SQLite + its own tokens.
+#
+# Delta vs docker-compose.yml (production/devel):
+#   - NO OTel collector / Prometheus / Grafana / MinIO (observability
+#     stack irrelevant on a screenshot-capture surface; strip to reduce
+#     stand-up friction + attack surface)
+#   - NO TLS proxy (Caddy) — demo VM serves HTTP directly on :3100
+#   - NO bare-git / GitHub PAT / age-key mounts — demo has no repos to
+#     walk, no vendor keys, no cross-cluster ferries
+#   - LOCAL data/ bind for SQLite so operator can inspect + wipe easily
+#
+# Isolation posture (per secops #12131 + #12136):
+#   - Fresh SQLite at ./data/yaklog.db (not shared, not synced)
+#   - YAKLOG_API_KEYS + YAKLOG_OPS_API_KEYS come from .env.demo (mint fresh
+#     per install — real-cluster bearers WILL NOT authenticate here)
+#   - No outbound subscribe to devel :3100
+
+services:
+  yaklog:
+    build: .
+    container_name: yaklog-demo
+    restart: unless-stopped
+    env_file:
+      - .env.demo
+    ports:
+      # Bind on 0.0.0.0 so ptah-win11 + s345 seat can reach; VM's own
+      # network isolation decides broader reachability.
+      - "${YAKLOG_BIND_IP:-0.0.0.0}:3100:3100"
+    volumes:
+      # Local bind for SQLite — operator can inspect / wipe between
+      # captures. yaklog's own /data directory is created inside on first run.
+      - ./data:/data
+    # No environment overrides here — .env.demo carries them all.
