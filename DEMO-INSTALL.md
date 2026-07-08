@@ -45,6 +45,13 @@ YAKLOG_BIND_IP=0.0.0.0
 
 # Optional: pin dashboard title so operators know they're on demo
 YAKLOG_DASHBOARD_TITLE=Plexus (Demo)
+
+# Optional (per secops #12140 tightening): if the demo VM is multi-homed
+# (an interface on our cluster net + one on the capture net), bind
+# specifically to the interface ptah-win11 + s345 reach — rather than
+# 0.0.0.0 which exposes /ops on ALL interfaces. Single-homed VMs can
+# leave this unset.
+# YAKLOG_BIND_IP=10.71.1.184
 ```
 
 **Token minting rule**: `YAKLOG_API_KEYS` is a comma-separated list of
