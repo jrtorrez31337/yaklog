@@ -1,27 +1,25 @@
-# yaklog demo-Plexus instance — isolated bus + store for "What is Plexus"
-# screenshot-capture per s345 #12134 + Jon-direct 2026-07-08.
+# yaklog demo-Plexus instance — isolated bus + store + OTel/Prom for the
+# "What is Plexus" screenshot-capture per s345 #12134 + Jon-direct 2026-07-08.
 #
-# Purpose: stand up a FRESH yaklog+dashboard on a demo VM that Jon's real
-# fleet points at (via YAKLOG_URL repoint on their agent daemons). The
-# real cluster at devel:3100 is UNTOUCHED — this is a separate, self-
-# contained yaklog server with its own SQLite + its own tokens.
+# Purpose: stand up a FRESH yaklog+dashboard+OTel-stack on a demo VM that
+# Jon's real fleet points at. The real cluster at devel is UNTOUCHED — this
+# is a separate, self-contained Plexus instance with its own SQLite +
+# its own tokens + its own OTel collector + Prometheus.
 #
-# Delta vs docker-compose.yml (production/devel):
-#   - NO OTel collector / Prometheus / Grafana / MinIO (observability
-#     stack irrelevant on a screenshot-capture surface; strip to reduce
-#     stand-up friction + attack surface)
+# Corrected 2026-07-08 (admin #12163 + s345-aieng #12164): earlier variant
+# stripped OTel entirely, which killed the dashboard's cost/token-rate/
+# activity panels — the marketing-headline views. The correct isolation
+# posture is DEMO-LOCAL OTel + Prom (agents emit to demo collector; NOT
+# to production collector), NOT "no OTel at all". Restoring the stack.
+#
+# Delta vs docker-compose.yml (production):
+#   - NO Grafana (dashboard is the marketing surface, not Grafana admin)
+#   - NO MinIO (external-anchor S3 substrate irrelevant for demo captures)
 #   - NO TLS proxy (Caddy) — demo VM serves HTTP directly on :3100
-#   - NO bare-git / GitHub PAT / age-key mounts — demo has no repos to
-#     walk, no vendor keys, no cross-cluster ferries
+#   - NO bare-git / GitHub-PAT / age-key mounts — no repos to walk on demo
 #   - LOCAL data/ bind for SQLite so operator can inspect + wipe easily
 #   - Container name is `plexus-demo` (customer-facing brand; the internal
 #     "yaklog" codename is not exposed to demo participants)
-#
-# Isolation posture (per secops #12131 + #12136):
-#   - Fresh SQLite at ./data/yaklog.db (not shared, not synced)
-#   - YAKLOG_API_KEYS + YAKLOG_OPS_API_KEYS come from .env.demo (mint fresh
-#     per install — real-cluster bearers WILL NOT authenticate here)
-#   - No outbound subscribe to devel :3100
 
 services:
   yaklog:
@@ -31,11 +29,57 @@ services:
     env_file:
       - .env.demo
     ports:
-      # Bind on 0.0.0.0 so ptah-win11 + s345 seat can reach; VM's own
-      # network isolation decides broader reachability.
       - "${YAKLOG_BIND_IP:-0.0.0.0}:3100:3100"
     volumes:
-      # Local bind for SQLite — operator can inspect / wipe between
-      # captures. yaklog's own /data directory is created inside on first run.
       - ./data:/data
-    # No environment overrides here — .env.demo carries them all.
+
+  # ────────────────────────────────────────────────────────────────────
+  # Demo OTel collector — receives OTLP from Jon's real-fleet agents
+  # (CC/Codex/etc via OTEL_EXPORTER_OTLP_ENDPOINT env). Re-exposes as Prom
+  # scrape on :8889 for demo Prometheus to pull. Stage 1 auth model:
+  # collector accepts any Bearer header; VM-level network isolation is the
+  # security boundary — do NOT expose :4327/:4328 outside the demo VM's
+  # reachability domain (ptah-win11 + s345 seat + Jon's real-fleet agents).
+  # ────────────────────────────────────────────────────────────────────
+  plexus-otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.112.0
+    container_name: plexus-otel-collector
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./otel/collector-config.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      # Sister-shape production port shift (4317→4327; 4318→4328) so real-fleet
+      # agent env configs port-swap cleanly between production and demo.
+      - "${PLEXUS_BIND_IP:-0.0.0.0}:4327:4317"  # OTLP gRPC
+      - "${PLEXUS_BIND_IP:-0.0.0.0}:4328:4318"  # OTLP HTTP
+      - "${PLEXUS_BIND_IP:-127.0.0.1}:13134:13133"  # healthcheck
+
+  plexus-prometheus:
+    image: prom/prometheus:v2.55.0
+    container_name: plexus-prometheus
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --web.console.libraries=/usr/share/prometheus/console_libraries
+      - --web.console.templates=/usr/share/prometheus/consoles
+      - --web.enable-lifecycle
+    volumes:
+      - ./otel/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - plexus_prom_data:/prometheus
+    ports:
+      - "${PLEXUS_BIND_IP:-0.0.0.0}:9090:9090"
+    depends_on:
+      plexus-otel-collector:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+
+volumes:
+  plexus_prom_data:
