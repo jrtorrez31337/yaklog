@@ -126,28 +126,32 @@ services:
       retries: 3
 
   # ────────────────────────────────────────────────────────────────────
-  # Demo TLS (Caddy) — sister-shape production yaklog-tls. Uses
-  # ./otel/Caddyfile.yaklog-tls (may require hostname/cert config on demo
-  # VM; if TLS cert unavailable, container fails to start but does NOT
-  # block HTTP :3100 traffic — Caddy shares yaklog's network per network_mode).
-  # For pure HTTP capture, this service can be disabled by commenting out.
+  # Demo TLS (Caddy) — DISABLED for demo.
+  #
+  # Production uses ./otel/Caddyfile.yaklog-tls + /etc/yaklog-tls certs, but
+  # both are host-local (not in the yaklog bare-git repo). On the demo VM
+  # neither exists; HTTP :3100 is what ptah-agent + s345 capture from, so
+  # TLS is not on the capture path.
+  #
+  # To enable: (1) ferry a Caddyfile.yaklog-tls with the demo VM hostname,
+  # (2) mount valid cert material at /etc/yaklog-tls on the demo VM.
   # ────────────────────────────────────────────────────────────────────
-  yaklog-tls:
-    image: caddy:2-alpine
-    container_name: yaklog-tls
-    network_mode: "service:yaklog"
-    depends_on:
-      yaklog:
-        condition: service_started
-    volumes:
-      - ./otel/Caddyfile.yaklog-tls:/etc/caddy/Caddyfile:ro
-      - /etc/yaklog-tls:/etc/yaklog-tls:ro
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "caddy", "validate", "--config", "/etc/caddy/Caddyfile"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
+  # yaklog-tls:
+  #   image: caddy:2-alpine
+  #   container_name: yaklog-tls
+  #   network_mode: "service:yaklog"
+  #   depends_on:
+  #     yaklog:
+  #       condition: service_started
+  #   volumes:
+  #     - ./otel/Caddyfile.yaklog-tls:/etc/caddy/Caddyfile:ro
+  #     - /etc/yaklog-tls:/etc/yaklog-tls:ro
+  #   restart: unless-stopped
+  #   healthcheck:
+  #     test: ["CMD", "caddy", "validate", "--config", "/etc/caddy/Caddyfile"]
+  #     interval: 30s
+  #     timeout: 5s
+  #     retries: 3
 
 volumes:
   plexus_prom_data:
