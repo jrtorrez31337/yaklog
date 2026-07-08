@@ -58,7 +58,9 @@ services:
       - --web.console.templates=/usr/share/prometheus/consoles
       - --web.enable-lifecycle
     volumes:
-      - ./otel/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # Demo-specific prometheus.yml — external_labels reflect plexus-demo
+      # (production prometheus.yml has deployment: devel label; demo overrides)
+      - ./otel/prometheus.demo.yml:/etc/prometheus/prometheus.yml:ro
       - plexus_prom_data:/prometheus
     ports:
       - "${PLEXUS_BIND_IP:-0.0.0.0}:9090:9090"
