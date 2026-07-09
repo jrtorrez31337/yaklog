@@ -3516,6 +3516,37 @@ function listPresenceTransitions(agent_id, limit = 50) {
   return rows;
 }
 
+// Task #279 / PLAN-DASHBOARD-TIME-NAVIGATION §3.1: reconstruct presence
+// snapshot as-of a timestamp. For each agent that has ANY transition at or
+// before `atIso`, return its last-transition label + reason as-of that
+// moment. Agents whose first transition is AFTER atIso are omitted (they
+// didn't exist yet). The rich per-heartbeat presence fields (current_tool,
+// cursor_position, etc.) are NOT captured in presence_transitions and are
+// returned as null — the historical snapshot is honest about that limit.
+//
+// Callers wanting rich historical fields should overlay per-agent
+// activity from audit_tool_invocation / agent_activity — separate substrate.
+function listPresenceAt(atIso) {
+  const database = getDb();
+  // GROUP BY agent picking the latest occurred_at <= atIso. Uses correlated
+  // subquery to find max(occurred_at) per agent under the ceiling, then
+  // selects that row. Index idx_transitions_agent_time makes this cheap.
+  const rows = database.prepare(`
+    SELECT t.agent_id, t.from_label, t.to_label, t.occurred_at, t.reason
+    FROM presence_transitions t
+    INNER JOIN (
+      SELECT agent_id, MAX(occurred_at) AS max_at
+      FROM presence_transitions
+      WHERE occurred_at <= ?
+      GROUP BY agent_id
+    ) latest
+      ON t.agent_id = latest.agent_id
+      AND t.occurred_at = latest.max_at
+    ORDER BY t.agent_id ASC
+  `).all(atIso);
+  return rows;
+}
+
 function expireStalePresence(ttlSeconds) {
   const database = getDb();
   const cutoffIso = new Date(Date.now() - ttlSeconds * 1000).toISOString();
@@ -4659,6 +4690,7 @@ module.exports = {
   getPresenceByAgent,
   listPresence,
   listPresenceTransitions,
+  listPresenceAt,
   getGlobalHwm,
   // /register state machine (ADR-0025 + ferry-canon)
   insertRegistration,

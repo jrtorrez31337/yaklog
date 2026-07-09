@@ -254,18 +254,36 @@
 
   async function poll() {
     try {
-      const headers = lastEtag ? { 'If-None-Match': lastEtag } : {};
-      const res = await fetch('/api/v1/presence/public', { headers, cache: 'no-store' });
+      // Task #279 / PLAN-DASHBOARD-TIME-NAVIGATION §3.1: when the time-range
+      // picker is non-Live, request the presence snapshot as-of the START
+      // of the picker's window (interpretation: "state going into this
+      // period"). Server returns _snapshot metadata; skip ETag path so we
+      // don't cross-cache live and historical responses.
+      const window = (typeof window !== 'undefined' && window.getDashboardTimeWindow)
+        ? window.getDashboardTimeWindow() : null;
+      let url = '/api/v1/presence/public';
+      let historicalAtIso = null;
+      if (window && window.fromMs) {
+        historicalAtIso = new Date(window.fromMs).toISOString();
+        url += '?at=' + encodeURIComponent(historicalAtIso);
+      }
+      const headers = (historicalAtIso == null && lastEtag) ? { 'If-None-Match': lastEtag } : {};
+      const res = await fetch(url, { headers, cache: 'no-store' });
       if (res.status === 304) {
         if (lastData) render(lastData);
         $('last-update').textContent = 'updated ' + new Date().toLocaleTimeString();
         setStatus('ok', 'live'); setBanner(null);
       } else if (res.ok) {
-        lastEtag = res.headers.get('ETag');
+        lastEtag = (historicalAtIso == null) ? res.headers.get('ETag') : null;
         lastData = await res.json();
         render(lastData);
         $('last-update').textContent = 'updated ' + new Date().toLocaleTimeString();
-        setStatus('ok', 'live'); setBanner(null);
+        if (historicalAtIso) {
+          setStatus('ok', 'historical');
+          setBanner('Historical snapshot as-of ' + historicalAtIso.replace('T', ' ').replace(/\.\d+Z$/, 'Z') + ' — rich per-heartbeat fields are honestly null (not captured in transitions)');
+        } else {
+          setStatus('ok', 'live'); setBanner(null);
+        }
       } else {
         throw new Error('HTTP ' + res.status);
       }
@@ -281,6 +299,15 @@
   // CP6.3: 1s ticker re-renders cards so "last hook age" / freshness
   // counters tick without a server roundtrip.
   setInterval(() => { if (lastData) renderCards(lastData.presence); }, 1000);
+
+  // Task #279 §3.1: on picker preset change, invalidate ETag + refetch
+  // immediately so the AgentCard grid switches to historical snapshot (or
+  // back to live) without waiting for the next poll tick.
+  document.addEventListener('dashboardTimeRangeChange', () => {
+    lastEtag = null;
+    if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+    poll();
+  });
 
   // ────────────────────────────────────────────────────────────────────
   // Task #264 v1 (Jon-direct 2026-07-01): dashboard-tier time-range picker.

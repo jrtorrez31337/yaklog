@@ -27,7 +27,7 @@ const { dashboardCspMiddleware } = require('./middleware/csp'); // PLAN-DASHBOAR
 const { createConcurrencyLimiter } = require('./middleware/concurrencyLimit'); // Cascade-prevention #10535 (substrate-design Option b)
 const auth = require('./middleware/auth');
 const { opsKeyAuditMiddleware } = require('./middleware/opsKeyAudit'); // CP12.2 admin R1 fold
-const { initializeDb, listPresence, getGlobalHwm, envDiffBootDetector } = require('./db');
+const { initializeDb, listPresence, listPresenceAt, getGlobalHwm, envDiffBootDetector } = require('./db');
 
 // CP12.x.4.3 (parch canonical `c5b331c` 2026-06-19): session-state-aware
 // stale predicate. Exclusion-list fail-open shape per Option A — treats
@@ -251,6 +251,62 @@ function publicPresenceEtag(rows, hwm) {
   return `"${hash.digest('hex').slice(0, 16)}"`;
 }
 app.get('/api/v1/presence/public', (req, res) => {
+  // Task #279 / PLAN-DASHBOARD-TIME-NAVIGATION §3.1: `?at=<iso8601>` returns
+  // presence snapshot as-of a past moment reconstructed from presence_transitions.
+  // Omitted `at` → current behavior unchanged (backward-compat sentinel per
+  // Pillar 3 pattern). Historical mode skips ETag + pre-emission augment +
+  // filter/sort — those are all "live now" concerns.
+  const atParam = req.query?.at;
+  if (atParam !== undefined) {
+    // Validate ISO-8601. new Date accepts many junk strings so tighten with
+    // a regex + roundtrip check.
+    if (typeof atParam !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?$/.test(atParam)) {
+      return res.status(400).json({ error: 'ValidationError', message: '?at must be ISO-8601 (e.g. 2026-07-08T14:00:00Z).' });
+    }
+    const atMs = Date.parse(atParam);
+    if (Number.isNaN(atMs)) {
+      return res.status(400).json({ error: 'ValidationError', message: '?at could not be parsed as a timestamp.' });
+    }
+    if (atMs > Date.now() + 60_000) {
+      return res.status(400).json({ error: 'ValidationError', message: '?at must not be in the future.' });
+    }
+    const atIso = new Date(atMs).toISOString();
+    const rows = listPresenceAt(atIso);
+    const { runtimeOf } = require('./agentRuntimes');
+    // Project each transition into a presence-shaped row. Only label + timing
+    // are known-from-substrate; per-heartbeat fields are honestly null.
+    const historicalPresence = rows.map((r) => ({
+      agent_id: r.agent_id,
+      daemon_state: null,
+      session_state: null,
+      label: r.to_label,
+      transition_reason: r.reason,
+      last_state_change_at: r.occurred_at,
+      // All rich fields null — not captured in presence_transitions.
+      cursor_position: null, lock_held: null, sse_connected: null,
+      events_consumer_count: null, last_heartbeat_at: null, last_hook_at: null,
+      current_model: null, current_tool: null,
+      last_tool_name: null, last_tool_status: null,
+      last_compaction_reason: null, last_compaction_at: null,
+      last_stop_reason: null, last_session_source: null,
+      subagent_active_count: null,
+      runtime_uid: null, runtime_gid: null, runtime_hostname: null, current_cwd: null,
+      daemon_pid: null, daemon_version: null, daemon_started_at: null,
+      runtime_state: null, runtime_blocked_until: null,
+      runtime: runtimeOf(r.agent_id),
+      last_cursor_advance_at: null,
+      canonical_daemon_version: null,
+      update_available: null,
+      sse_stream_stale: null,
+      sse_stream_stale_class: null,
+    }));
+    res.set('Cache-Control', 'no-cache');
+    return res.json({
+      presence: historicalPresence,
+      count: historicalPresence.length,
+      _snapshot: { as_of: atIso, transitions_used: rows.length },
+    });
+  }
   const presence = listPresence();
   const globalHwm = getGlobalHwm();
   // CP7.2: enrich each row with update_available + canonical_daemon_version
