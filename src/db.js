@@ -255,6 +255,27 @@ function initializeDb() {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_presence_session_class ON presence(session_class)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_presence_decommissioned ON presence(decommissioned_at) WHERE decommissioned_at IS NOT NULL`);
 
+  // Task #280 / PLAN-SESSION-HEALTH-SUBSTRATE §3.1: session_health enum column
+  // per s345-aieng #12248 OQ1 disposition (single SessionHealth event with
+  // {health, reason, confidence} payload). Nullable — null = unreported;
+  // explicit 'honest_idle' = reported-and-green. Wrapper-authoritative for
+  // 5 classes (honest_idle, pending_input, quota_exceeded, session_expired,
+  // context_exhausted); daemon_only is server-side inferred at read-time
+  // (structural signal per OQ4 disposition — structural supersedes stale
+  // wrapper-claim). error_loop deferred to Phase B (needs consecutive-fails
+  // counter column).
+  const presenceColsHealth = db.pragma('table_info(presence)');
+  if (!presenceColsHealth.some((c) => c.name === 'session_health')) {
+    db.exec(`ALTER TABLE presence ADD COLUMN session_health TEXT`);
+  }
+  if (!presenceColsHealth.some((c) => c.name === 'session_health_reason')) {
+    db.exec(`ALTER TABLE presence ADD COLUMN session_health_reason TEXT`);
+  }
+  if (!presenceColsHealth.some((c) => c.name === 'session_health_at')) {
+    db.exec(`ALTER TABLE presence ADD COLUMN session_health_at TEXT`);
+  }
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_presence_session_health ON presence(session_health) WHERE session_health IS NOT NULL`);
+
   db.prepare(`
     CREATE TABLE IF NOT EXISTS presence_transitions (
       id                    INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -3230,7 +3251,11 @@ function upsertPresence({
   // handler) sets this from req.tokenClass at the auth boundary — NEVER from
   // request body — per secops Block-1 server-enforcement discipline. Defaults
   // to 'agent' if omitted by caller (back-compat for legacy callers and tests).
-  session_class
+  session_class,
+  // Task #280 / PLAN-SESSION-HEALTH-SUBSTRATE §3.4: wrapper-emitted SessionHealth
+  // event forwards through daemon → this field. Reason + at-timestamp co-persist
+  // so the read-time daemon_only inference can compare freshness (per OQ4).
+  session_health, session_health_reason
 }) {
   const database = getDb();
   const now = new Date().toISOString();
@@ -3267,6 +3292,10 @@ function upsertPresence({
     ? now
     : (existing && existing.last_cursor_advance_at) || (cursor_position != null ? now : null);
 
+  // Task #280 §3.4: when caller supplies a non-null session_health, stamp the
+  // health-at timestamp so read-time inference can compare freshness (OQ4).
+  const session_health_at = (session_health != null) ? now : null;
+
   const stmt = database.prepare(`
     INSERT INTO presence (
       agent_id, daemon_state, session_state, cursor_position, lock_held,
@@ -3278,7 +3307,8 @@ function upsertPresence({
       runtime_uid, runtime_gid, runtime_hostname, current_cwd,
       daemon_pid, daemon_version, daemon_started_at,
       runtime_state, runtime_blocked_until,
-      runtime, last_cursor_advance_at, session_class
+      runtime, last_cursor_advance_at, session_class,
+      session_health, session_health_reason, session_health_at
     )
     VALUES (
       @agent_id, @daemon_state, @session_state, @cursor_position, @lock_held,
@@ -3290,7 +3320,8 @@ function upsertPresence({
       @runtime_uid, @runtime_gid, @runtime_hostname, @current_cwd,
       @daemon_pid, @daemon_version, @daemon_started_at,
       @runtime_state, @runtime_blocked_until,
-      @runtime, @last_cursor_advance_at, @session_class
+      @runtime, @last_cursor_advance_at, @session_class,
+      @session_health, @session_health_reason, @session_health_at
     )
     ON CONFLICT(agent_id) DO UPDATE SET
       daemon_state = excluded.daemon_state,
@@ -3369,7 +3400,15 @@ function upsertPresence({
       -- (which also derive from same binding tier) will provide the same
       -- value. Raw-assign canon-clean here since server-enforces from binding
       -- tier per secops Block-1 — value is always-authoritative-at-write.
-      session_class = excluded.session_class
+      session_class = excluded.session_class,
+      -- Task #280 §3.4: session_health uses COALESCE — a heartbeat without a
+      -- fresh SessionHealth event MUST NOT wipe the last wrapper-emitted
+      -- health. When the wrapper explicitly re-classifies (even back to
+      -- honest_idle), the new non-null value wins COALESCE. Sister-shape
+      -- to current_model / last_tool_name accumulator pattern.
+      session_health = COALESCE(excluded.session_health, presence.session_health),
+      session_health_reason = COALESCE(excluded.session_health_reason, presence.session_health_reason),
+      session_health_at = COALESCE(excluded.session_health_at, presence.session_health_at)
   `);
   stmt.run({
     agent_id,
@@ -3402,7 +3441,10 @@ function upsertPresence({
     runtime_blocked_until: runtime_blocked_until ?? null,
     runtime: runtime ?? null,
     last_cursor_advance_at: last_cursor_advance_at ?? null,
-    session_class: session_class || 'agent'
+    session_class: session_class || 'agent',
+    session_health: session_health ?? null,
+    session_health_reason: session_health_reason ?? null,
+    session_health_at: session_health_at
   });
 
   if (stateChanged) {
@@ -3457,7 +3499,11 @@ function getPresenceByAgent(agent_id) {
     // Operator-session Phase A: session_class + decommissioned_at per
     // PLAN-OPERATOR-SESSION-SUBSTRATE v2 RATIFIED parch #10382 + Jon-direct #10404
     session_class: row.session_class || 'agent',
-    decommissioned_at: row.decommissioned_at || null
+    decommissioned_at: row.decommissioned_at || null,
+    // Task #280 §3.1 session_health (nullable — null = unreported)
+    session_health: row.session_health || null,
+    session_health_reason: row.session_health_reason || null,
+    session_health_at: row.session_health_at || null
   };
 }
 
@@ -3504,7 +3550,11 @@ function listPresence() {
     last_cursor_advance_at: row.last_cursor_advance_at,
     // Operator-session Phase A
     session_class: row.session_class || 'agent',
-    decommissioned_at: row.decommissioned_at || null
+    decommissioned_at: row.decommissioned_at || null,
+    // Task #280 §3.1 session_health
+    session_health: row.session_health || null,
+    session_health_reason: row.session_health_reason || null,
+    session_health_at: row.session_health_at || null
   }));
 }
 

@@ -407,7 +407,10 @@ router.post('/presence/event', (req, res) => {
     // v0.5.7.4 daemon-process (all optional)
     daemon_pid, daemon_version, daemon_started_at,
     // v0.5.9 runtime-execution-liveness (per parch ratification #6684; ADR-0027)
-    runtime_state, runtime_blocked_until
+    runtime_state, runtime_blocked_until,
+    // Task #280 §3.4: wrapper-emitted SessionHealth forwarded by daemon.
+    // Nullable enum; reason is optional free-text (bounded).
+    session_health, session_health_reason
   } = req.body || {};
 
   if (typeof agent_id !== 'string' || !AGENT_ID_RE.test(agent_id)) {
@@ -495,6 +498,18 @@ router.post('/presence/event', (req, res) => {
     const e = validateOptionalString(runtime_blocked_until, 'runtime_blocked_until');
     if (e) return res.status(400).json(e);
   }
+  // Task #280 §3.4: session_health enum + reason validation. Enum locked at
+  // s345-aieng #12248 OQ1; reason is bounded free-text so operators can hover
+  // the pill for context ("Please run codex login" etc.).
+  {
+    const { VALID_HEALTH_VALUES } = require('./sessionHealthInference');
+    const e = validateOptionalEnum(session_health, VALID_HEALTH_VALUES, 'session_health');
+    if (e) return res.status(400).json(e);
+  }
+  {
+    const e = validateOptionalString(session_health_reason, 'session_health_reason');
+    if (e) return res.status(400).json(e);
+  }
 
   const violation = enforceDaemonBinding(req, agent_id);
   if (violation) {
@@ -532,6 +547,9 @@ router.post('/presence/event', (req, res) => {
     // v0.5.9 runtime-execution-liveness passthrough.
     runtime_state: runtime_state ?? null,
     runtime_blocked_until: runtime_blocked_until ?? null,
+    // Task #280 §3.4: session_health wrapper-emitted passthrough.
+    session_health: session_health ?? null,
+    session_health_reason: session_health_reason ?? null,
     // Operator-session Phase A per PLAN-OPERATOR-SESSION-SUBSTRATE v2 RATIFIED
     // by parch #10382 + Jon-direct #10404. CRITICAL DISCIPLINE per secops
     // Block-1: session_class is SERVER-ENFORCED from the auth binding tier

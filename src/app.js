@@ -28,6 +28,7 @@ const { createConcurrencyLimiter } = require('./middleware/concurrencyLimit'); /
 const auth = require('./middleware/auth');
 const { opsKeyAuditMiddleware } = require('./middleware/opsKeyAudit'); // CP12.2 admin R1 fold
 const { initializeDb, listPresence, listPresenceAt, getGlobalHwm, envDiffBootDetector } = require('./db');
+const { computeEffectiveHealth, classifyHealth } = require('./sessionHealthInference');
 
 // CP12.x.4.3 (parch canonical `c5b331c` 2026-06-19): session-state-aware
 // stale predicate. Exclusion-list fail-open shape per Option A — treats
@@ -246,7 +247,7 @@ function publicPresenceEtag(rows, hwm) {
     // v0.5.7: include runtime-meta fields in the ETag so dashboard refreshes
     // when current_tool/current_model/subagent_active_count/etc. change even
     // if session_state stays the same.
-    hash.update(`${row.agent_id}:${row.daemon_state}:${row.session_state}:${row.cursor_position ?? ''}:${row.lock_held ? 1 : 0}:${row.last_state_change_at}:${row.current_model ?? ''}:${row.current_tool ?? ''}:${row.last_tool_name ?? ''}:${row.last_tool_status ?? ''}:${row.subagent_active_count ?? ''}:${row.last_stop_reason ?? ''}:${row.runtime_uid ?? ''}:${row.runtime_gid ?? ''}:${row.runtime_hostname ?? ''}:${row.current_cwd ?? ''}:${row.daemon_pid ?? ''}:${row.daemon_version ?? ''}:${row.daemon_started_at ?? ''}:${row.update_available ?? ''}:${row.canonical_daemon_version ?? ''}:${row.runtime ?? ''}:${row.runtime_state ?? ''}:${row.runtime_blocked_until ?? ''}\n`);
+    hash.update(`${row.agent_id}:${row.daemon_state}:${row.session_state}:${row.cursor_position ?? ''}:${row.lock_held ? 1 : 0}:${row.last_state_change_at}:${row.current_model ?? ''}:${row.current_tool ?? ''}:${row.last_tool_name ?? ''}:${row.last_tool_status ?? ''}:${row.subagent_active_count ?? ''}:${row.last_stop_reason ?? ''}:${row.runtime_uid ?? ''}:${row.runtime_gid ?? ''}:${row.runtime_hostname ?? ''}:${row.current_cwd ?? ''}:${row.daemon_pid ?? ''}:${row.daemon_version ?? ''}:${row.daemon_started_at ?? ''}:${row.update_available ?? ''}:${row.canonical_daemon_version ?? ''}:${row.runtime ?? ''}:${row.runtime_state ?? ''}:${row.runtime_blocked_until ?? ''}:${row.session_health ?? ''}\n`);
   }
   return `"${hash.digest('hex').slice(0, 16)}"`;
 }
@@ -367,6 +368,14 @@ app.get('/api/v1/presence/public', (req, res) => {
       row.sse_stream_stale = null;
       row.sse_stream_stale_class = null;
     }
+    // Task #280 §3.5: compute effective session_health at read-time. The
+    // stored column is the wrapper-emitted value; sessionHealthInference
+    // may override with 'daemon_only' if last_hook_at is stale beyond the
+    // OQ4 structural-signal window. 3-color class is server-computed so
+    // the browser stays dumb (§8 OQ6: green suppression is a UI concern).
+    const effective = computeEffectiveHealth(row);
+    row.session_health = effective;
+    row.session_health_class = classifyHealth(effective);
   }
   // 2026-06-19 (Jon-direct urgent): pre-emission AgentCards. Cluster has
   // token-bound agents (per YAKLOG_TOKEN_BINDINGS) that may not yet have
@@ -434,6 +443,11 @@ app.get('/api/v1/presence/public', (req, res) => {
       update_available: null,
       sse_stream_stale: null,
       sse_stream_stale_class: null,
+      // Task #280 §3.5: pre-emission cards have no runtime → no health.
+      session_health: null,
+      session_health_reason: null,
+      session_health_at: null,
+      session_health_class: null,
     });
   }
   // Task #257 / CP16 Pillar 3 — server-side filter + sort per PLAN-CP16-PILLAR-3

@@ -263,7 +263,13 @@
   /* CP6.5: per-card loading state for on-demand range fetches */
   .agent-card .view-loading-inline { color: var(--muted); font-size: 10px; opacity: 0.6; text-align: center; padding: 4px 0; }
   .agent-card-pills { display: flex; gap: 4px; margin-left: auto; }
-  .agent-card .otel-pill, .agent-card .mon-pill, .agent-card .sse-pill { padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 500; cursor: help; }
+  .agent-card .otel-pill, .agent-card .mon-pill, .agent-card .sse-pill, .agent-card .health-pill { padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 500; cursor: help; }
+  /* Task #280 §3.6: session_health pill. 3-color per s345-aieng #12243:
+     AMBER = transient (pending_input, quota_exceeded); RED = needs-attention
+     (session_expired, context_exhausted, error_loop, daemon_only). GREEN
+     honest_idle is suppressed at render-time (§8 OQ6). */
+  .agent-card .health-pill.health-amber { background: rgba(250,204,21,0.14); color: var(--yellow); }
+  .agent-card .health-pill.health-red { background: rgba(248,113,113,0.14); color: #f87171; }
   /* CP12.x.4 (2026-06-13): SSE-stale pill. Red family (distinct from
      Monitor-dead orange family) — silent-dead SSE means agent is missing
      live bus traffic, which is a more severe failure mode than a dead

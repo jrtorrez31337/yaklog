@@ -2154,6 +2154,21 @@
           title: tip,
         }, 'SSE-stale'));
       }
+      // Task #280 §3.6: session_health pill. Server-side compute yields
+      // session_health_class ∈ {GREEN, AMBER, RED, null}. Per §8 OQ6
+      // discipline: GREEN suppressed (honest_idle is the un-remarkable
+      // default); only AMBER + RED render. Reason surfaces as tooltip so
+      // the operator can hover for context ("Please run codex login" etc.).
+      if (r.session_health_class === 'AMBER' || r.session_health_class === 'RED') {
+        const readable = String(r.session_health || '').replace(/_/g, ' ');
+        const tip = r.session_health_reason
+          ? `${readable}: ${r.session_health_reason}`
+          : `session_health=${r.session_health}`;
+        pills.appendChild(el('span', {
+          class: 'health-pill health-' + r.session_health_class.toLowerCase(),
+          title: tip,
+        }, readable));
+      }
       // CP7.2: update-available pill (server enriches /presence/public with
       // update_available + canonical_daemon_version per /update manifest).
       if (r.update_available === true) {
