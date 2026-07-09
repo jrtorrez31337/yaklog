@@ -16,6 +16,18 @@ That's enough to read cluster health at a glance.
 
 ---
 
+## Time-range picker (dashboard header)
+
+Task #264 v1 shipped a persistent time-range picker in the dashboard header. Presets: **Live** (default; 5s auto-refresh + current-state semantics) / **Last 1h** / **Last 24h** / **Last 7d** / **Last 30d**.
+
+- Non-Live modes **disable auto-refresh** + show a "static view" indicator (poll-loops honor `isLiveMode()` and skip refresh — cost-charts + audit-tiles + AgentCard Activity/Cost views etc.).
+- URL hash extended with `?range=<preset>` for shareable links: `#live?range=24h`, `#bus?range=7d`, etc.
+- Operate tab is **pinned to Live** per parch OQ3 (each tile's "current state" semantics don't compose with historical windows).
+
+**Task #279 §3.1 (SHIPPED 2026-07-09) — presence historical-snapshot:** when the picker is non-Live, the AgentCard grid switches to a snapshot AS-OF the start of the picked window. Banner: "Historical snapshot as-of <iso> — rich per-heartbeat fields are honestly null (not captured in transitions)." The historical view shows each agent's label + last_state_change + transition reason at that moment; rich fields like current_tool are null because the substrate (`presence_transitions` table) only captures label changes, not per-hook meta.
+
+Use it to answer questions like "was jhewgley honest-idle or install-broken at 3am yesterday?" — the picker at "Last 24h" renders the snapshot from 24h ago.
+
 ## Reading the Live tab
 
 ### Cluster snapshot (top of page)
@@ -38,6 +50,7 @@ Each card has:
 - **"Monitor dead" pill** (orange): events.ndjson Monitor subprocess is dead (events_consumer_count=0); the agent's CC session won't see live @-mentions
 - **Pre-emission AgentCard** (CP14.1; dim opacity 0.72 + italic-dashed label-badge "Awaiting first heartbeat"): card for a token-bound agent (`YAKLOG_TOKEN_BINDINGS` / `YAKLOG_DAEMON_BINDINGS` env) that hasn't yet emitted any `/presence/event` heartbeat. Distinguishes "token minted + binding wired, daemon not yet running" from "daemon-was-up-now-down" (offline gray). Dedupes by token-group so alias-of-live agents (e.g., `ssw-devops` ↔ `ssw-devops-agent`) collapse to the live card. Clears the moment the daemon's first heartbeat lands.
 - **"SSE-stale" pill** (red, CP12.x.4): daemon process alive + heartbeating, but the SSE event stream isn't delivering. The agent's events.ndjson is frozen. The agent will miss live bus traffic until their daemon restarts OR another yaklog server restart cycle. **NOTE**: detection has known refinements pending — false-negative on silent-dead-within-minutes-of-restart (CP12.x.4.1) and false-positive on healthy-but-quiet low-traffic agents (CP12.x.4.2). If the agent is on a low-traffic filter (e.g., pveadmin subscribes only #handoff/#status/#substrate with limited mentions), the pill may fire incorrectly when nothing on their lane has happened recently.
+- **Health pills** (Task #280 SHIPPED 2026-07-09): wrapper-emitted `session_health` classification. GREEN `honest_idle` is SUPPRESSED (unremarkable default). AMBER = transient — `pending_input` (awaiting user prompt) / `quota_exceeded` (rate-limited; hover for reason). RED = needs operator attention — `session_expired` (re-auth required) / `context_exhausted` (window blown) / `error_loop` (≥3 consecutive tool-failures) / `daemon_only` (was reporting, now silent > 10min — runtime crashed while daemon lives). Tooltip on hover surfaces the wrapper's reason ("Please run codex login" etc.). Fail-safe default: if a wrapper never reported, no pill renders (LOW-confidence "we don't know" — don't cry-wolf).
 
 ### The 6 view pills
 
@@ -367,9 +380,21 @@ When you click a Save / Reconcile / Tombstone button in any ops-key-gated surfac
 
 ---
 
-## Engineering effort (Effort tab)
+## Engineering output (Output tab — Task #277 SHIPPED 2026-07-08)
+
+**The unified successor to #effort + #repos** per ADR-0041 v2. Deep-link via `#output` (`#repos` aliases to `#output` in `activateTab` to preserve bookmarks). Contains three bands:
+
+1. **Shared hero (5 cross-tier-safe tiles)** from `/output/hero-summary?period=` — repos_governed_total, PR-merged cumulative, attribution_integrity_pct, attribution_gap_count, attributed_agents. Fold-B-by-construction (response body physically cannot leak tier-gated data regardless of client bug).
+2. **Analytical band with `[By repo | By agent]` pivot toggle** — heatmap + primary table flip pivot; hero + management widgets stay pivot-independent (chrome-decoupled per plexus-ui #11950).
+3. **Contextual management widgets** — track/manage GitHub repos + bare-git request lease + attribution-gap triage.
+
+Sister-shape the older Effort tab three-lens architecture (below). Time-range picker (dashboard header) drives period selection.
+
+## Engineering effort (Effort tab — legacy; being merged into Output)
 
 The Effort tab is a **value-mapping surface** (ADR-0032 CP13 Phase 1 + CP13.6 Phase 2). Audience-tier default is **buyer** (per s345 #9234 Criterion 5 — externally-facing valuation); practitioner + investor renders available via picker. Substrate: bare-git walker over `/srv/git/*.git` (Phase 1 → `output_commit`/`output_merge`) + GitHubWalker over enrolled GitHub repos (CP13.6 Phase 2 → `output_pr`) → 8-ratio family. Deep-link via `#effort`.
+
+**Retirement note (Task #277 ADR-0041 v2):** functional merge into `#output` is complete; #effort remains live pending Phase 5 telemetry emit + observation-window tombstone gate (per PLAN-DASHBOARD-REPOS-EFFORT-MERGE.md §7).
 
 ### Three orthogonal axes
 

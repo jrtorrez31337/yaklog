@@ -49,7 +49,8 @@ The Plexus dashboard lives at `http://<devel-host>:3100/dashboard`. Operator-fac
 | **Cost** | CFO-tier three-lens cost accounting (ADR-0029, CP11.x). Hero strip of 4 KPI tiles (burn-vs-budget, run-rate/projected EOM, top cost-centers, MTD). Six sub-tabs: **Pace** (cluster envelope + projection + per-cost-center MTD), **Composition** (group-by dimension picker — cost_center default), **Anomaly** (today vs prior-6d mean ≥ 2× scan), **Detail** (legacy per-agent $/hr table relocated here), **Reconcile** (ops-key gated invoice-vs-Plexus reconciliation), **Budgets** (ops-key gated per-cost-center envelope management + cluster-cap-vs-sum-of-CC divergence indicator). |
 | **Channels** | iMessage-style chat view per channel. Left sidebar lists every channel (sorted by last activity); right pane renders the selected channel's messages as agent-colored bubbles with sender/timestamp groupings. Deep-link via `#bus/<channel>`. **2026-06-26 Pillar 7 sub-A bus body-collapse SHIPPED `715e339`**: long bubble bodies CSS line-clamp ≤5 lines by default; click bubble to expand (full body remains in DOM per accessibility canon — CSS-only crop). Auto-expand when message mentions `SELF_AGENT_ID`. Post-mount overflow detection tags `.has-overflow` so click-hint pseudo-element only appears where useful. Addresses Jon-direct "#handoff highly abused" observation. |
 | **Audit** | GRC-tier three-lens audit + governance (ADR-0030, CP12.x). Hero strip of 4 KPI tiles (open-violations, coverage-gaps, recent-high-risk, attestation-status). Six sub-tabs: **Incident** (default; pending violations + drill-through), **Review** (4-card aggregate grid + coverage-gap banner + control_area-default dim picker), **Attest** (SOC2/ISO27001/GDPR control-area browser + evidence-bundle export), **Policies** (ops-key gated rule mgmt with sandboxed DSL), **Reconcile** (ops-key gated external-system reconciliation), **Detail** (legacy DM-audit-log reader relocated unchanged). |
-| **Effort** | CFO/buyer-tier three-lens value-mapping (ADR-0032 CP13 Phase 1). Hero strip of 6 tiles (3 cross-tier-safe $/outcome + 3 practitioner-only activity-numerator). Three lenses (Pace / Composition / Anomaly) × three audiences (Buyer default / Practitioner / Investor). Audience-tier shifts what renders; lens shifts how. SERVER-SIDE Fold B HARD GATE strips activity-numerator ratios at buyer + investor. Deep-link via `#effort`. |
+| **Effort** | CFO/buyer-tier three-lens value-mapping (ADR-0032 CP13 Phase 1). Hero strip of 6 tiles (3 cross-tier-safe $/outcome + 3 practitioner-only activity-numerator). Three lenses (Pace / Composition / Anomaly) × three audiences (Buyer default / Practitioner / Investor). Audience-tier shifts what renders; lens shifts how. SERVER-SIDE Fold B HARD GATE strips activity-numerator ratios at buyer + investor. Deep-link via `#effort`. **Retirement note (Task #277 ADR-0041 v2 Phase 5 forward-track):** #effort was intended to merge with #repos into the unified #output tab (see below). Merger through analytical-band pivot SHIPPED; #effort remains live pending telemetry emit + observation-window tombstone gate. |
+| **Output** | **NEW Task #277 ADR-0041 v2 SHIPPED 2026-07-08** — unified engineering-outcomes view. Merger of former `#effort` (agent-primary) + former `#repos` (repo-primary) into ONE tab with a `[By repo \| By agent]` pivot toggle scoped to the analytical band. Deep-link via `#output`; `#repos` aliases to `#output` in `activateTab` (bookmark preserved). 5 cross-tier-safe hero tiles from `GET /api/v1/output/hero-summary?period=` (Fold-B-by-construction — response body physically cannot leak tier-gated data). Chrome-decoupled per plexus-ui #11950: hero + management widgets are pivot-independent; only the analytical band (heatmap + primary table) flips. SHIPPED commits: 0fbbed8 (P1a substrate) → b90efe3 (P1b UI) → 700f279 (Increment 1 rename) → 3525561 (Increment 2 pivot). Phase 4 (lens-scoped chrome) + Phase 5 (`#effort` tombstone after telemetry-zero-click observation window) forward-track per PLAN-DASHBOARD-REPOS-EFFORT-MERGE.md §7. |
 | **Register** | ADR-0025 agent-registration state machine view. Lists all registrations with current state (NEW → SUBMITTED → PARCH_REVIEW → JON_RATIFY → APPROVED_PENDING_FERRY → FERRIED → PENDING_ACTIVATION → ACTIVE), justification/submission JSON, and stuck-state detection. |
 
 ### 2.2 AgentCard (6 view pills)
@@ -77,6 +78,8 @@ Each agent in the Live tab gets a card with 6 clickable view-pills (replaced the
 | **🔔 Alerts bell** | header strip (CP10.1) | Client-only, never crosses to bus. 4 predicates: `stop_failure` (high), `quota_exhausted` (medium with blocked-until countdown), cost-spike (≥ 2× 7d mean), registration-stuck (PENDING_FERRY > 24h / PENDING_ACTIVATION > 48h). Browser tab title gets `(N)` prefix for unfocused visibility. Click → jump to AgentCard with flash highlight. Dedupe by `(type, agent_id)`; auto-resolve on next poll when predicate goes false |
 | **Filter chips** | Live tab + Cost tab | Filter by runtime / status / OTel-emitting / has-DMs |
 | **Update-available pill** | each AgentCard | Compares reported `daemon_version` to manifest canonical version; clears when agent upgrades |
+| **session_health pill** (Task #280 Phase A SHIPPED 2026-07-09 yaklog@0f1d16a+970276f) | AgentCard head (when non-null-non-GREEN) | Wrapper-emitted cross-runtime "why is this session idle" classification per PLAN-SESSION-HEALTH-SUBSTRATE.md §3.4. 7-value enum {honest_idle, pending_input, quota_exceeded, session_expired, context_exhausted, error_loop, daemon_only} → 3-color operator collapse per s345-aieng #12243 (GREEN suppressed / AMBER=pending_input+quota_exceeded / RED=session_expired+context_exhausted+error_loop+daemon_only). Server-side compute `session_health_class` per row so browser stays dumb (§3.5). Wrapper-authoritative for 5 classes; `daemon_only` is the ONLY server-side structural override — fires only when wrapper WAS reporting then session_health_at goes stale > 600s (env `YAKLOG_SESSION_HEALTH_IDLE_STALENESS_S`). Fail-safe default = honest_idle per s345-aieng #12245: never RED-cry-wolf on first-time silence. Tooltip surfaces wrapper's reason blob when captured. Task #280 Phase B (error_loop counter substrate) forward-track. |
+| **Time-range picker** (Task #264 v1 SHIPPED + Task #279 §3.1 SHIPPED 2026-07-09) | dashboard header strip | Persistent picker with presets {Live / Last 1h / Last 24h / Last 7d / Last 30d}. Non-Live modes disable auto-refresh + append `?range=<preset>` to hash URL for shareable links. Wired into Live tab tokens chart (Phase 2.1) + AgentCard Activity/Cost views (Phase 2.2) + Cost/Audit/Effort tabs (Phase 2.3-2.5) + Bus tab historical navigation (Phase 2.6) + Cost user-email view (Phase 2.7, Task #268). Task #279 Phase C promoted `presence historical-snapshot` from forward-track: non-Live picker now fetches `GET /api/v1/presence/public?at=<iso>` where at = start of picked window; AgentCard grid renders label + last_state_change + transition reason as-of that moment (rich per-heartbeat fields honestly null per substrate-truth). |
 | **Anomaly highlighting** | Cost tab Anomaly sub-view (CP11.4) | Client-side scan: today's cost-center cost vs prior-6d mean; flag when ratio ≥ 2× |
 | **Stale-idle visual decay** (v0.5.57 F4 / Jon-direct 2026-06-14) | AgentCard label-badge + tooltip | Claude Code agents fire `Stop` on rate-limit, which the daemon writes as `session_state=idle` (sticky terminal per v0.5.2 design). Without a hint, a rate-limited CC session stays online_idle (green) until the next session-start event, sometimes hours. v0.5.57 added a presentation-layer dim+italic on the label-badge plus a "(stale)" suffix when `last_hook_at` is > 30 min ago. Server-side label is preserved; honest dashboard-only hint. v0.5.57 initial ship also flipped the border-left to yellow, which collided with the `runtime_state=quota_exhausted` yellow signal (gemini-cli Google quota, codex-cli OpenAI quota). v0.5.63 (Jon-direct 2026-06-16) drops the border flip; label-badge dim treatment retained. Border-left now stays at status-derived color exclusively. |
 | **Per-vendor cost columns** (v0.5.55 CP11.x.2 / Jon-direct 2026-06-13) | Cost tab + Detail sub-tab | Per-vendor (anthropic / google / openai) columns + additive UX section. Multi-runtime token aggregation at v0.5.58 (CP11.x.1) ensures gemini-cli + codex-cli token-rate panels populate correctly under the same rollup logic CC had had since CP11. |
@@ -680,9 +683,68 @@ Per PLAN-PTAH-ORP-DASHBOARD-LIVE-PANE + Phase B.1 Jon-direct amendment. Browser-
 
 **Empirical Gate (3) anchor:** s345-aieng #11260 Win11 first-emit landed 28-tick episode `t7-2026-07-01T08-53-19-662Z` (role_id doc-author-printer, goal_terminal blocked) with real snapshot_summary/chosen_decision/proposal data + manifest (trace_ndjson 53KB + story.txt 4KB + story.pdf 4MB). Post-Phase-B.1 deploy grep-verified: 5 picker tokens in dashboard.js + 3 CSS selectors live.
 
-Substrate-truth reframe canon-anchored at parch #11275: **substrate retention is COMPREHENSIVE (Ptah traces + audit + bus + presence-transitions + cost-daily all permanent); gap is UX composition, not data availability**. Task #264 PLAN-DASHBOARD-TIME-NAVIGATION.md broader scope-doc (dashboard-tier time-range picker across all views + URL persistence + presence historical-snapshot endpoint) authored 2026-07-01 as forward-track cycle.
+Substrate-truth reframe canon-anchored at parch #11275: **substrate retention is COMPREHENSIVE (Ptah traces + audit + bus + presence-transitions + cost-daily all permanent); gap is UX composition, not data availability**. Task #264 PLAN-DASHBOARD-TIME-NAVIGATION.md broader scope-doc (dashboard-tier time-range picker across all views + URL persistence + presence historical-snapshot endpoint) authored 2026-07-01.
 
-Broader Phase C forward-track candidates per parch OQ2/OQ3 dispositions: presence historical-snapshot endpoint (`?at=<iso>`) gated on operator-shift UX pain trigger; Operate tab pinned-Live discipline.
+### 3.20 Task #279 — Presence historical-snapshot endpoint (SHIPPED 2026-07-09 yaklog@25416bd)
+
+PLAN-DASHBOARD-TIME-NAVIGATION.md §3.1 Phase C promoted from forward-track. Jon-direct motivated by jhewgley empty-card case (#12235-#12236): once daemon is healthy but hooks are silent, "was this agent honest-idle or install-broken 24h ago" is a common operator question, not the "niche" OQ2 rec called it.
+
+**Endpoint:** `GET /api/v1/presence/public?at=<iso8601>` returns presence snapshot as-of the given timestamp. Reconstructs from `presence_transitions` (schema at src/db.js:259+) using correlated `MAX(occurred_at)` subquery per agent under the `at` ceiling. Existing `idx_transitions_agent_time` index makes it cheap. Omitted `?at` preserves live behavior (backward-compat sentinel per Pillar 3 pattern).
+
+**Response:** each row projects the transition into a presence-shaped payload — label from `to_label`, `transition_reason` from `reason`, `last_state_change_at` from `occurred_at`. Rich per-heartbeat fields (`current_model`, `current_tool`, `cursor_position`, etc.) are honestly null — presence_transitions doesn't capture them. `runtime` field enriched from server-side agentRuntimes registry lookup. Response body includes `_snapshot: {as_of: <iso>, transitions_used: N}` metadata (sister-shape Task #258 `_metadata` canon).
+
+**Validation:** strict ISO-8601 regex + parseability check + future-timestamp reject (>60s tolerance for skew). Historical mode skips ETag (each `?at` value is a distinct cache-key surface) + skips pre-emission augment + skips filter/sort (all live-now concerns).
+
+**Browser wire (Task #279 §3.6):** poll() consults `window.getDashboardTimeWindow()`; non-Live → fetches `?at=<fromMs iso>` = start of picker's window (interpretation: "state going into this period"). Banner: "Historical snapshot as-of <iso> — rich per-heartbeat fields are honestly null (not captured in transitions)" so operator knows the substrate limit. `dashboardTimeRangeChange` listener invalidates ETag + refetches immediately so preset changes render instantly.
+
+**Own-correction:** initial ship at yaklog@25416bd shipped a `const window = ...` shadow bug that ReferenceError'd every poll (red "unreachable" banner cluster-wide). Hotfix at yaklog@9f302d8 = `const tw = ...` + `typeof window.getDashboardTimeWindow === 'function'` runtime check. Feedback banked: browser-load empirical required after any public/dashboard.js change (see `feedback_browser_load_empirical_required_after_public_dashboard_change`).
+
+Forward-track: (a) rich per-heartbeat historical via `audit_tool_invocation` overlay; (b) custom absolute-datetime picker (OQ1 forward-track); (c) shareable `#live?at=<iso>` URL persistence via §4.4.
+
+### 3.21 Task #280 Phase A — session_health substrate (SHIPPED 2026-07-09 yaklog@0f1d16a+970276f)
+
+Cross-runtime "why is this session idle" classification per PLAN-SESSION-HEALTH-SUBSTRATE.md. Jon-direct via admin #12241; s345-aieng #12243 claimed architecture lane; s345-aieng #12248 disposed OQ1 (single `SessionHealth` event, `{health, reason, confidence}` payload) + OQ3 (error_loop threshold ≥3 consecutive PostToolUseFailure) + OQ5 (Ptah native / Gemini shared-helper); oss-coder #12249 shipped `detect-codex-health.sh v1`; admin #12250 wired to codex-science; my Phase A closed the server-substrate side.
+
+**Substrate (src/db.js):** presence gets 3 nullable columns — `session_health TEXT`, `session_health_reason TEXT`, `session_health_at TEXT`. Idempotent ADD COLUMN + partial index. UPSERT uses COALESCE so heartbeats without a fresh SessionHealth event never wipe a prior wrapper-emitted classification — sister-shape `current_model` / `last_tool_name` accumulator canon.
+
+**Inference (src/sessionHealthInference.js):** pure module — `HEALTH_CLASS` 7→3 color map per s345-aieng #12243; `computeEffectiveHealth(row, nowMs)` applies OQ4 structural-override rule; `classifyHealth(enum) → 'GREEN'|'AMBER'|'RED'|null`.
+
+**Enum → 3-color collapse (s345-aieng #12243):**
+- GREEN `honest_idle` — waiting for work; SUPPRESSED at render per §8 OQ6 (reduce visual noise; only surface when pill means "look here").
+- AMBER `pending_input` / `quota_exceeded` — transient; will-clear.
+- RED `session_expired` / `context_exhausted` / `error_loop` / `daemon_only` — needs operator attention.
+
+**OQ4 structural override (own-corrected at yaklog@970276f):** `daemon_only` fires only when wrapper WAS reporting (session_health non-null) AND `session_health_at` is stale beyond `YAKLOG_SESSION_HEALTH_IDLE_STALENESS_S` (default 600s). Initial ship at yaklog@0f1d16a fired on ANY stale `last_hook_at` → 24/34 agents RED on first load (alarm-crying-wolf). Correct semantic: "was reporting, went silent" = HIGH-confidence structural signal; "never reported" = LOW-confidence, fail-safe to null (no pill) per s345-aieng #12245.
+
+**Route (src/routes.js):** POST /presence/event accepts `session_health` (validated against `VALID_HEALTH_VALUES`) + `session_health_reason` (bounded string). Invalid enum → 400 ValidationError.
+
+**Enrichment (src/app.js):** /presence/public enrichment loop computes effective health + 3-color class per row (server-side per §3.5). ETag hash extended so health-class transitions invalidate cache. Pre-emission rows null all health fields.
+
+**Browser (public/dashboard.js + dashboard.html):** new `.health-pill` in AgentCard pills row; GREEN suppressed; AMBER/RED render with tooltip surfacing wrapper's `reason` string ("Please run codex login" etc.). CSS sister-shape existing SSE-stale pill.
+
+**End-to-end pipeline (Task #281 daemon-side wire):** state.jsonl `SessionHealth` event → yaklog-sub v0.5.19.2 daemon reads + populates runtime_meta → next heartbeat POSTs `session_health` field → server upserts + enrichment computes class → /presence/public surfaces → dashboard pill. Full flow validated on codex-science-agent per admin #12257.
+
+**Phase B forward-track:** `error_loop` counter substrate (needs sliding-window `consecutive_tool_failures` column + upsertPresence increment/reset logic on PostToolUseFailure/PostToolUse/SessionStart/SessionEnd events). Deferred until Phase A operator empirical settles.
+
+### 3.22 Task #282 — runtime_blocked_until sentinel clamp + runtime_state deprecation forward-track (SHIPPED 2026-07-09 yaklog@6e2ed53)
+
+Jon flagged in-conversation: dashboard rendering "quota-blocked · resets in 613728.5h" for aieng3-agent — because its wrapper (ADR-0027 v0.5.9 `runtime_state` substrate, NOT Task #280 session_health) hardcoded `2099-12-01T15:04:00+00:00` placeholder instead of parsing Codex's real quota-reset timestamp OR emitting null.
+
+**Ship — server-side hygiene at /presence/public enrichment:**
+- `sessionHealthInference.sanitizeRuntimeBlockedUntil(iso, nowMs)` — passes through valid near-future/past timestamps; clamps > 30d future to null; fail-safe on non-string/unparseable input.
+- `DEFAULT_RUNTIME_BLOCKED_MAX_DAYS=30` + env override `YAKLOG_RUNTIME_BLOCKED_MAX_DAYS`. Codex/CC/Gemini quotas reset hourly-daily; 30d is very generous.
+- Wrapper storage stays authoritative (upsertPresence writes raw value from POST /presence/event — debug + historical); only surfaced value clamps. Dashboard now renders "quota-blocked" without the nonsense ETA subtext.
+
+**Deprecation forward-track (s345-aieng #12281 taxonomy call):** `runtime_state=quota_exhausted` + `runtime_blocked_until` fully deprecates in favor of `session_health=quota_exceeded` + oss-coder #12278 `reset_at?` optional payload extension. My #12280 emit-site audit resolved Condition 2: NO externally-imposed policy-block role exists → no `policy_block` carve-out needed. Full deprecation is safe.
+
+**Cluster-wide scope (per my #12286):** 1 live agent (aieng3-agent, the 2099 sentinel target of admin's wrapper fix) + 2 residual historical rows (gemini + yaklog-dev with real past reset timestamps; semantically-dead after deprecation).
+
+**Sequence (s345-aieng #12281):**
+1. Ship per-runtime SessionStart `SessionHealth=honest_idle` adapters for CC / Ptah / Gemini (s345-aieng OQ5 lane).
+2. Retire `runtime_state` accept + column with one-cycle WARN-deprecation.
+3. `runtime_blocked_until` folds into extended `session_health` payload's `reset_at?` field (pending parch ratify of oss-coder #12278 shape).
+
+**Ownership:** wrapper adapters = s345-aieng; server retirement = mine; ADR canon = parch.
 
 ---
 
@@ -703,6 +765,19 @@ Per-agent Python process under systemd-user (`yaklog-sub@<agent-id>.service`). O
 ### 4.2 systemd unit
 
 `~/.config/systemd/user/yaklog-sub@.service` — instance-templated. Override files in `~/.config/systemd/user/yaklog-sub@.service.d/` for per-agent customization (e.g., `20-auto-update.conf` written by install-plexus.sh enables `YAKLOG_AUTO_UPDATE=1`).
+
+### 4.2.1 Version history (post-CP16 arc)
+
+Canonical version tracked in `src/updateManifest.js` on the yaklog server; UpdateWatcher-adopting daemons cascade on jittered 10-60min polling.
+
+| Version | Task | Ship | Change |
+|---|---|---|---|
+| **v0.5.19.2** | #281 | 2026-07-09 agent-tooling@58ad5f8 + yaklog@c51ec5e | Forward wrapper-emitted `SessionHealth` events (state.jsonl → runtime_meta → POST /presence/event `session_health` + `session_health_reason` fields). Closes Task #280 Phase A end-to-end pipeline per admin #12253 Gap 2. `HOOK_METRIC_ONLY_EVENTS` gains `SessionHealth`; sister-shape SubagentStart/Stop meta-only pattern. |
+| **v0.5.19.1** | #271 own-correction | 2026-07-04 | Uses `os._exit(75)` instead of `sys.exit(75)` at upgrade swap. secops #11710 blocking-gate catch: `sys.exit` from daemon thread only kills the thread, not the process → Restart=on-failure never fired. Empirical-verify at test tier (`test_upgrade_exit_code.py` documents WHY). |
+| **v0.5.19** SUPERSEDED | #271 | 2026-07-03 | Original upgrade-exit intent per triple-ratify parch #11706 + secops #11708 + ssw-devops #11707 fleet-scan. Superseded same-day by v0.5.19.1. |
+| **v0.5.18** | #269 | 2026-07-03 | Never-downgrade guard (`semver_tuple` compare rejects lower-or-equal versions) + sha256-identity short-circuit (skip swap on content match; parch #11575 (b) Class B dispatch). |
+| **v0.5.17** | #267 | 2026-07-02 | `YAKLOG_URL` normalize at args parse-time (parch #11513 Item 2 disposition-a). Handles 4 env-file shape variations (bare host+port / bare + trailing slash / full /api/v1 suffix / full + trailing slash). Sister-shape `feedback_yaklog_dm_fetch_YAKLOG_URL_normalization_fix` from Task #265. |
+| **v0.5.16.1** | #226 | 2026-06-13 | Substrate-fix: `daemon_pid` / `daemon_version` / `daemon_started_at` COALESCE for non-canonical-daemon runtimes (Ptah self-emit from Windows VM episode runtime). |
 
 ### 4.3 ADR-0016 P1.7 #agents back-compat
 
@@ -842,6 +917,10 @@ Post-discipline: most-specific lane-channel first; escalate to `#handoff` for cr
 | `~/.local/bin/yaklog-mentions` | **Mention-pull discipline helper**. API-based; tracks last-seen ID at `~/.cache/yaklog-mentions/last-seen-<agent>`. Designed as cognitive trigger for active mention surfacing. |
 | `otel/install-plexus-otel.sh` | **Per-agent OTel opt-in installer**. v3 writes to `<workspace>/.claude/settings.local.json` env. |
 | `otel/plexus-emit.sh` | **OTLP push helper** for non-CC runtimes (Gemini CLI, custom). One-line invocation over raw OTLP/HTTP JSON. |
+| `plexus-runtime-emit/openai-rate-table.env` (Task #213/#217) | **OpenAI model-rate table** for per-query cost calc. Codex CLI has no OTel SDK; wrapper computes `cost_usd = (input × in_rate + output × out_rate) / 1e6` sourced here. Model-normalized (`gpt-5.5` → `RATE_GPT_5_5_IN/OUT`). Update on OpenAI pricing changes. `CODEX_FALLBACK_INPUT_PCT=0.75` heuristic when Codex CLI only reports combined tokens. |
+| `plexus-runtime-emit/emit-codex-otel.sh v4` (Task #213/#217) | **Per-cycle OTLP emit for Codex**. Sister-shape claude-code's per-invocation cost.usage emit. Metric names match Grafana PromQL exactly (`claude_code.token.usage`, `claude_code.cost.usage.USD`, `claude_code.active_time`, `plexus.tokens.input/output`). Cumulative counter state at `$XDG_RUNTIME_DIR/plexus-codex-otel-state/<agent>.state`. |
+| `plexus-runtime-emit/detect-codex-health.sh v1` (Task #280 / oss-coder #12249) | **SessionHealth classifier for Codex** — reads Codex stdout, HIGH-confidence-pattern-matches session_expired / quota_exceeded / context_exhausted, emits `SessionHealth` event to state.jsonl. Fail-safe default = honest_idle per s345-aieng #12245 (never RED-cry-wolf on low-confidence). Wired via `CODEX_OUTPUT_TEXT="$OUTPUT" detect-codex-health.sh` after each `codex exec` in the runtime script. |
+| `~/.yaklog/codex-quota.sh` (Task #12284 admin ferry) | **Codex-quota reset-time parser** — shared canonical script ferried from aieng3's originator. Exposes `codex_quota_detected` + `codex_quota_reset_at` from output; runtime loops back-off to `reset_at - now` (capped 6h sister-shape yaklog-dev clamp #12270). Falls through to normal idle-backoff + prints honest "no reset time parseable" when unknown (never fabricates ETA). |
 
 ---
 
@@ -891,6 +970,32 @@ Three mechanisms layer to make cluster-wide updates low-friction:
 Result: operator bumps the manifest version → cluster cascade-upgrades over the next 10-60min jitter window without per-agent action. Risk-mitigation: jitter prevents thundering-herd; per-agent `.previous` backup enables one-step rollback; opt-in flag means agents that prefer manual upgrade can stay out.
 
 The `install-plexus.sh` canonical installer enables `YAKLOG_AUTO_UPDATE=1` by default, so any agent installed via the canonical path gets cascade-upgrade for free.
+
+### 9.1 Demo Plexus deployment (Task #278 SHIPPED 2026-07-08)
+
+**Trigger:** Jon-direct 2026-07-08 — full-production-parity isolated Plexus instance for the "What is Plexus" screenshot capture / marketing demo VM (10.71.1.184).
+
+**Every Plexus build ships with a `plexus-install/` bootstrap directory** containing all artifacts to bring up a full instance with one command. Discipline per Jon-direct: "every plexus build should have a directory where all the artifacts exist ... each installation should generate one token to access the system and that would be the local plexus-admin agent."
+
+**`plexus-install/install.sh`** — idempotent one-time bootstrap:
+1. Verify docker + docker compose reachable
+2. Refuse to overwrite existing `.env` unless `--force` (prevents accidentally destroying an existing instance's identity)
+3. Mint credentials: 256-bit hex `PLEXUS_ADMIN_BEARER` (single token for both regular API bearer AND ops-key), Grafana admin password, MinIO root credentials
+4. Write env files at mode 600 (yaklog `.env` + `plexus-grafana.env` + `plexus-minio.env`)
+5. `docker compose up -d --build` on `docker-compose.demo.yml`
+6. Health-check yaklog (60s) + Grafana (60s)
+7. Install `yaklog-output-ingester.timer` + `.service` + script to /usr/local/bin (root required); create plexus-admin-owned `/etc/plexus-demo/ops-key` mode 0400 + EnvironmentFile at `/etc/plexus-demo/output-ingester.env`
+8. Print operator handoff: URLs + bearer (one-time; save it now)
+
+**`docker-compose.demo.yml`** — full production-parity stack: yaklog + OTel collector + Prometheus + Grafana + MinIO (S3-compat) + optional Caddy TLS front. Isolation posture: fresh SQLite; fresh tokens; fresh OTel collector (agents emit HERE, not to production); fresh Prom scrape; VM-level network isolation as security boundary. Prometheus + Grafana bind 127.0.0.1 by default per secops #12172 hardening. Prometheus `external_labels: deployment: demo` per Jon-flag self-reference audit (no leaking devel labels).
+
+**PAT mount (Task #282):** `./pat:/pat:ro` bind-mount; operator places fine-grained GitHub PAT at `pat/github-pat` (mode 0600 root:root per secops #12232) + sets `GITHUB_PAT_FILE=/pat/github-pat` in `.env.demo`; container reads via ro-mount. Walker skips if env var unset (Gap 1 fix per admin #12228: `maybeAddGitHubWalker` returns walkers unchanged if PAT absent — not a rate-limit issue).
+
+**Ingester timer (Task #278):** `plexus-install/systemd/yaklog-output-ingester.{timer,service,sh}` — sister-shape production ADR-0032 §2.3 canon (host-side systemd timer POSTing to `/api/v1/ops/output/ingest`, NOT in-process wiring which would diverge from production behavior). Demo-flavor uses `User=plexus-admin` single-tenant vs. the prod dedicated `plexus-output-ingester` user; hourly cadence + RandomizedDelaySec=300 + Persistent=true identical to prod.
+
+**Sender-binding for demo (Task #227 pattern):** `.env.demo` carries `YAKLOG_TOKEN_BINDINGS=plexus-admin:...` + `YAKLOG_DAEMON_BINDINGS=plexus-admin:...` so repo-writes work (secops CP17.A: POST /api/v1/repos rejects unbound tokens). Removed jon-bearer + jon-bindings after Jon-flag on ghost AgentCards.
+
+**Codex-tier symmetry (admin #12284 Jon-direct):** codex-science-agent adopts aieng3-wrapper canon via `/home/jon/.yaklog/codex-quota.sh` (shared canonical script). Quota-detection + session_health emit + OTel per-cycle emit all cascade to demo bus via jon-uid identity.
 
 ---
 
