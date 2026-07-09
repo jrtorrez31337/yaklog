@@ -122,7 +122,14 @@ cat > "$ENV_FILE" <<EOF
 YAKLOG_DB_PATH=/data/yaklog.db
 YAKLOG_API_KEYS=${PLEXUS_ADMIN_BEARER}
 YAKLOG_OPS_API_KEYS=${PLEXUS_ADMIN_BEARER}
+YAKLOG_TOKEN_BINDINGS=plexus-admin:${PLEXUS_ADMIN_BEARER}
+YAKLOG_DAEMON_BINDINGS=plexus-admin:${PLEXUS_ADMIN_BEARER}
 YAKLOG_BIND_IP=0.0.0.0
+# GitHub PAT for outputIngester GitHubWalker. Optional: if unset, walker
+# no-ops (repos still registerable, just no commit walking). Operator
+# mints a fine-grained PAT (contents:read + metadata:read, scoped to the
+# specific public repos to track) + writes to pat/github-pat mode 0644.
+# GITHUB_PAT_FILE=/pat/github-pat
 EOF
 
 install -m 600 /dev/null "$GRAFANA_ENV"
@@ -178,6 +185,54 @@ for i in $(seq 1 60); do
     break
   fi
 done
+
+# ── 6b. Install output-ingester systemd timer ────────────────────────────
+#
+# outputIngester is host-side cron-driven per ADR-0032 §2.3 canon. The
+# script POSTs to /api/v1/ops/output/ingest hourly; walker no-ops until
+# GITHUB_PAT_FILE is configured + at least one repo is registered via
+# POST /api/v1/repos.
+
+SYSTEMD_DIR="$INSTALL_DIR/plexus-install/systemd"
+if [[ -d "$SYSTEMD_DIR" ]] && command -v systemctl >/dev/null 2>&1 && [[ "$(id -u)" == "0" || -n "${SUDO_UID:-}" ]]; then
+  log 'Installing output-ingester systemd timer…'
+
+  # Textfile directory for Prom scrape (owner = plexus-admin per unit)
+  install -d -m 0755 -o plexus-admin -g plexus-admin \
+    /var/lib/plexus-demo/textfile/output-ingester 2>/dev/null || true
+
+  # Ops-key file for the service to read (mode 0400, owned by plexus-admin)
+  install -d -m 0755 /etc/plexus-demo
+  printf '%s\n' "$PLEXUS_ADMIN_BEARER" > /etc/plexus-demo/ops-key
+  chown plexus-admin:plexus-admin /etc/plexus-demo/ops-key
+  chmod 0400 /etc/plexus-demo/ops-key
+
+  # EnvironmentFile pointing service at the ops-key file
+  cat > /etc/plexus-demo/output-ingester.env <<EOF
+PLEXUS_OPS_KEY_FILE=/etc/plexus-demo/ops-key
+EOF
+  chown plexus-admin:plexus-admin /etc/plexus-demo/output-ingester.env
+  chmod 0400 /etc/plexus-demo/output-ingester.env
+
+  # Install script + units
+  install -m 0755 -o root -g root \
+    "$SYSTEMD_DIR/yaklog-output-ingester.sh" \
+    /usr/local/bin/yaklog-output-ingester.sh
+  install -m 0644 -o root -g root \
+    "$SYSTEMD_DIR/yaklog-output-ingester.service" \
+    /etc/systemd/system/yaklog-output-ingester.service
+  install -m 0644 -o root -g root \
+    "$SYSTEMD_DIR/yaklog-output-ingester.timer" \
+    /etc/systemd/system/yaklog-output-ingester.timer
+
+  systemctl daemon-reload
+  systemctl enable --now yaklog-output-ingester.timer
+
+  ok 'output-ingester timer installed + enabled (hourly cadence).'
+else
+  log 'Skipping output-ingester systemd install (not root, or systemctl unavailable).'
+  log 'To install manually: sudo bash -c "cd $INSTALL_DIR && plexus-install/install.sh --systemd-only"'
+fi
 
 # ── 7. Operator handoff ──────────────────────────────────────────────────
 

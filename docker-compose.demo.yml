@@ -25,6 +25,10 @@ services:
       - "${YAKLOG_BIND_IP:-0.0.0.0}:3100:3100"
     volumes:
       - ./data:/data
+      # GitHub PAT mount (optional): operator places a fine-grained PAT
+      # at pat/github-pat (mode 0644) + sets GITHUB_PAT_FILE=/pat/github-pat
+      # in .env.demo. Walker skips if empty. Ro-mount = never writable.
+      - ./pat:/pat:ro
 
   # ────────────────────────────────────────────────────────────────────
   # Demo OTel collector — receives OTLP from Jon's real-fleet agents
