@@ -42,7 +42,7 @@ const MANIFEST = {
 
     {
       name: 'yaklog-sub daemon',
-      version: '0.5.19.1',
+      version: '0.5.19.2',
       source_repo: '/srv/git/agent-tooling.git',
       source_path: 'yaklog-sub/yaklog-sub',
       install_command:
@@ -50,11 +50,16 @@ const MANIFEST = {
         '"$WORK/at/yaklog-sub/install-plexus.sh"',
       description:
         'Per-agent Python daemon: tails state.jsonl, posts /presence/event ' +
-        'heartbeat. v0.5.19 fixes upgrade-exit to sys.exit(75) EX_TEMPFAIL so ' +
-        'Restart=on-failure units correctly restart post-swap (triple-ratify ' +
-        'parch #11706 + secops #11708 + ssw-devops #11707). v0.5.18 adds ' +
-        'never-downgrade guard + sha256-identity short-circuit.',
+        'heartbeat. v0.5.19.2 forwards wrapper-emitted SessionHealth events ' +
+        '(Task #281 / PLAN-SESSION-HEALTH-SUBSTRATE §3.4). v0.5.19 fixes ' +
+        'upgrade-exit to sys.exit(75) EX_TEMPFAIL so Restart=on-failure ' +
+        'units correctly restart post-swap. v0.5.18 adds never-downgrade ' +
+        'guard + sha256-identity short-circuit.',
       changed_in:
+        'v0.5.19.2 — SessionHealth forward per Task #281 / PLAN-SESSION-HEALTH-' +
+        'SUBSTRATE §3.4 (single event, {health, reason, confidence} payload; ' +
+        'HOOK_METRIC_ONLY_EVENTS member). Closes Task #280 Phase A end-to-end ' +
+        'pipeline per admin #12253 Gap 2. ' +
         'v0.5.19.1 — own-correction: os._exit(75) instead of sys.exit(75) ' +
         '(secops #11710 catch: sys.exit from daemon thread only kills thread). ' +
         'v0.5.19 (SUPERSEDED) — upgrade-exit intent per triple-ratify parch #11706 + ' +
