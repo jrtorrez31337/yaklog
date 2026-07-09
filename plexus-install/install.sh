@@ -128,7 +128,8 @@ YAKLOG_BIND_IP=0.0.0.0
 # GitHub PAT for outputIngester GitHubWalker. Optional: if unset, walker
 # no-ops (repos still registerable, just no commit walking). Operator
 # mints a fine-grained PAT (contents:read + metadata:read, scoped to the
-# specific public repos to track) + writes to pat/github-pat mode 0644.
+# specific public repos to track) + writes to pat/github-pat mode 0600
+# owned root:root (never world-readable per secops hygiene).
 # GITHUB_PAT_FILE=/pat/github-pat
 EOF
 
