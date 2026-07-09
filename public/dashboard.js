@@ -1498,22 +1498,38 @@
       body.appendChild(el('div', { class: 'chart-empty', style: 'padding: 20px 0;' }, `no ${acctState.by} cost data`));
       return;
     }
+    // Skip series whose label is missing — for account view, that's series
+    // whose OTel emit doesn't include user_email / user_account_id (e.g. our
+    // codex wrapper doesn't set them; some CC emits lack them too). Rendering
+    // "(unknown)" as if it were an account is worse than showing an empty
+    // state per Jon-flag.
     const labelFor = (m) => acctState.by === 'agent'
-      ? (m.plexus_agent_id || '(unknown)')
-      : (m.user_email || m.user_account_id || '(unknown)');
+      ? m.plexus_agent_id
+      : (m.user_email || m.user_account_id);
     const byName = new Map();
     for (const s of (result || [])) {
       const name = labelFor(s.metric);
+      if (!name) continue;
       byName.set(name, { name, cost: parseFloat(s.value[1]) || 0, tokens: 0 });
     }
     for (const s of tokenResult) {
       const name = labelFor(s.metric);
+      if (!name) continue;
       const existing = byName.get(name);
       const tokens = parseFloat(s.value[1]) || 0;
       if (existing) existing.tokens = tokens;
       else byName.set(name, { name, cost: 0, tokens });
     }
     const rows = [...byName.values()].sort((a, b) => (b.cost - a.cost) || (b.tokens - a.tokens));
+    // If everything got filtered (all series lacked the label attribute for
+    // this pivot), show the honest empty-state rather than an empty table.
+    if (rows.length === 0) {
+      const msg = acctState.by === 'account'
+        ? 'No account-level attribution on this cluster — emits lack user_email / user_account_id'
+        : `no ${acctState.by} cost data`;
+      body.appendChild(el('div', { class: 'chart-empty', style: 'padding: 20px 0;' }, msg));
+      return;
+    }
     const maxCost = Math.max(...rows.map(r => r.cost), 0.01);
     const maxTokens = Math.max(...rows.map(r => r.tokens), 1);
     const fmtTokens = (t) => t < 1000 ? String(Math.round(t))
