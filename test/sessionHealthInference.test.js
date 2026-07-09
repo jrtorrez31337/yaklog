@@ -49,12 +49,11 @@ test('§3.5 effective — daemon down → null', () => {
   assert.equal(computeEffectiveHealth(row), null);
 });
 
-test('§3.5 effective — wrapper honest_idle + fresh hook → honest_idle (no override)', () => {
+test('§3.5 effective — wrapper honest_idle + fresh session_health_at → honest_idle (no override)', () => {
   const nowMs = Date.parse('2026-07-09T12:00:00Z');
   const row = {
-    session_health: 'honest_idle', daemon_state: 'up',
-    session_state: 'idle',
-    last_hook_at: '2026-07-09T11:59:30Z',  // 30s ago
+    session_health: 'honest_idle', session_health_at: '2026-07-09T11:59:30Z',
+    daemon_state: 'up', session_state: 'idle',
     decommissioned_at: null,
   };
   assert.equal(computeEffectiveHealth(row, nowMs), 'honest_idle');
@@ -63,9 +62,8 @@ test('§3.5 effective — wrapper honest_idle + fresh hook → honest_idle (no o
 test('§3.5 OQ4 — structural daemon_only overrides stale wrapper claim', () => {
   const nowMs = Date.parse('2026-07-09T12:00:00Z');
   const row = {
-    session_health: 'honest_idle', daemon_state: 'up',
-    session_state: 'idle',
-    last_hook_at: '2026-07-09T11:00:00Z',  // 3600s ago — well past default 600s
+    session_health: 'honest_idle', session_health_at: '2026-07-09T11:00:00Z',  // 3600s ago
+    daemon_state: 'up', session_state: 'idle',
     decommissioned_at: null,
   };
   assert.equal(computeEffectiveHealth(row, nowMs), 'daemon_only');
@@ -74,46 +72,45 @@ test('§3.5 OQ4 — structural daemon_only overrides stale wrapper claim', () =>
 test('§3.5 daemon_only ELIGIBLE — active session_state does NOT trip override', () => {
   const nowMs = Date.parse('2026-07-09T12:00:00Z');
   const row = {
-    session_health: null, daemon_state: 'up',
+    session_health: 'honest_idle', session_health_at: '2026-07-09T11:00:00Z',
+    daemon_state: 'up',
     session_state: 'tool_running',   // not in eligible set
-    last_hook_at: '2026-07-09T11:00:00Z',
     decommissioned_at: null,
   };
   // active session with stale hook is SSE-stale territory, not daemon_only
-  assert.equal(computeEffectiveHealth(row, nowMs), null);
+  assert.equal(computeEffectiveHealth(row, nowMs), 'honest_idle');
 });
 
-test('§3.5 wrapper RED reported → RED preserved (structural does not downgrade)', () => {
+test('§3.5 wrapper RED reported (fresh) → RED preserved (structural does not downgrade)', () => {
   const nowMs = Date.parse('2026-07-09T12:00:00Z');
   const row = {
-    session_health: 'session_expired', daemon_state: 'up',
-    session_state: 'idle',
-    last_hook_at: '2026-07-09T11:59:00Z',  // fresh, no structural override
+    session_health: 'session_expired', session_health_at: '2026-07-09T11:59:00Z',
+    daemon_state: 'up', session_state: 'idle',
     decommissioned_at: null,
   };
   assert.equal(computeEffectiveHealth(row, nowMs), 'session_expired');
 });
 
-test('§3.5 no wrapper report + fresh hook → null (unreported)', () => {
+test('§3.5 no wrapper report → null (never trip daemon_only on first-time silence)', () => {
   const nowMs = Date.parse('2026-07-09T12:00:00Z');
   const row = {
-    session_health: null, daemon_state: 'up',
-    session_state: 'idle',
-    last_hook_at: '2026-07-09T11:59:00Z',
+    session_health: null, session_health_at: null,
+    daemon_state: 'up', session_state: 'idle',
     decommissioned_at: null,
   };
+  // Un-observed agent may be honest_idle / install-gap / dead — don't
+  // cry-wolf RED. Fail-safe to null per s345-aieng #12245.
   assert.equal(computeEffectiveHealth(row, nowMs), null);
 });
 
-test('§3.5 no wrapper report + stale hook → daemon_only', () => {
+test('§3.5 no wrapper report + very old hook → still null (no structural cry-wolf)', () => {
   const nowMs = Date.parse('2026-07-09T12:00:00Z');
   const row = {
-    session_health: null, daemon_state: 'up',
-    session_state: 'idle',
-    last_hook_at: '2026-07-09T11:00:00Z',
+    session_health: null, session_health_at: null,
+    daemon_state: 'up', session_state: 'idle',
     decommissioned_at: null,
   };
-  assert.equal(computeEffectiveHealth(row, nowMs), 'daemon_only');
+  assert.equal(computeEffectiveHealth(row, nowMs), null);
 });
 
 test('§3.5 default staleness constant', () => {

@@ -49,13 +49,20 @@ const DAEMON_ONLY_ELIGIBLE_STATES = new Set(['idle', 'unknown', 'idle_between_to
  *   1. If decommissioned → null (never surface health on a retired row).
  *   2. If daemon_state != 'up' → null (session_health is a runtime concept;
  *      offline daemons have their own label).
- *   3. If structural-daemon_only condition met (idle-eligible session_state
- *      + last_hook_at stale > staleness window) → override to 'daemon_only'.
- *      This is OQ4: structural + fresh beats fuzzy + stale.
+ *   3. Structural daemon_only override fires ONLY when the wrapper HAS
+ *      reported a session_health at some point AND that report is now stale
+ *      beyond the staleness window (session_health_at older than window)
+ *      AND session_state is idle-eligible. This is the "was reporting, went
+ *      silent" signature — a genuine crash-of-runtime while daemon lives.
+ *      A row with session_health = null (never reported) does NOT trip
+ *      daemon_only — an un-observed agent may be honest-idle or install-gap
+ *      or dead, and RED-crying-wolf on any of those trains operators to
+ *      ignore the pill (s345-aieng #12245 fail-safe default = honest_idle
+ *      until HIGH-confidence signal).
  *   4. Otherwise → the wrapper-emitted session_health as-persisted.
  *
- * @param {object} row presence row (must have session_health, session_state,
- *   daemon_state, last_hook_at, decommissioned_at fields).
+ * @param {object} row presence row (must have session_health, session_health_at,
+ *   session_state, daemon_state, decommissioned_at fields).
  * @param {number} [nowMs] optional now; defaults to Date.now(). Injectable
  *   for tests.
  * @returns {string|null} the effective health enum value or null.
@@ -64,11 +71,13 @@ function computeEffectiveHealth(row, nowMs = Date.now()) {
   if (row.decommissioned_at) return null;
   if (row.daemon_state !== 'up') return null;
 
-  // Structural daemon_only override
-  if (row.last_hook_at
+  // Structural daemon_only override (OQ4): only when the wrapper WAS
+  // reporting and stopped. Never trip on cluster-wide first-time silence.
+  if (row.session_health
+      && row.session_health_at
       && DAEMON_ONLY_ELIGIBLE_STATES.has(row.session_state)) {
-    const hookAgeMs = nowMs - new Date(row.last_hook_at).getTime();
-    if (Number.isFinite(hookAgeMs) && hookAgeMs > getIdleStalenessMs()) {
+    const reportAgeMs = nowMs - new Date(row.session_health_at).getTime();
+    if (Number.isFinite(reportAgeMs) && reportAgeMs > getIdleStalenessMs()) {
       return 'daemon_only';
     }
   }
