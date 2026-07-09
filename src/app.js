@@ -28,7 +28,7 @@ const { createConcurrencyLimiter } = require('./middleware/concurrencyLimit'); /
 const auth = require('./middleware/auth');
 const { opsKeyAuditMiddleware } = require('./middleware/opsKeyAudit'); // CP12.2 admin R1 fold
 const { initializeDb, listPresence, listPresenceAt, getGlobalHwm, envDiffBootDetector } = require('./db');
-const { computeEffectiveHealth, classifyHealth } = require('./sessionHealthInference');
+const { computeEffectiveHealth, classifyHealth, sanitizeRuntimeBlockedUntil } = require('./sessionHealthInference');
 
 // CP12.x.4.3 (parch canonical `c5b331c` 2026-06-19): session-state-aware
 // stale predicate. Exclusion-list fail-open shape per Option A — treats
@@ -376,6 +376,10 @@ app.get('/api/v1/presence/public', (req, res) => {
     const effective = computeEffectiveHealth(row);
     row.session_health = effective;
     row.session_health_class = classifyHealth(effective);
+    // Task #282 (Jon-flag on aieng3 2099-12-01 sentinel): server-side
+    // hygiene on runtime_blocked_until. Wrapper storage stays authoritative;
+    // only the surfaced value clamps to null when it's a placeholder sentinel.
+    row.runtime_blocked_until = sanitizeRuntimeBlockedUntil(row.runtime_blocked_until);
   }
   // 2026-06-19 (Jon-direct urgent): pre-emission AgentCards. Cluster has
   // token-bound agents (per YAKLOG_TOKEN_BINDINGS) that may not yet have

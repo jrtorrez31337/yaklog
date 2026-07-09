@@ -95,6 +95,44 @@ function classifyHealth(health) {
   return HEALTH_CLASS[health] || null;
 }
 
+// Task #282 (Jon-direct via bus): wrapper-emitted runtime_blocked_until
+// sentinel clamp. aieng3-agent (ADR-0027 runtime_state=quota_exhausted
+// substrate) was surfacing 2099-12-01 as its blocked_until because the
+// wrapper hardcoded a "far-future placeholder" instead of parsing the
+// real Codex quota-reset time. Dashboard rendered "resets in 613728h".
+// Server-side hygiene: at enrichment time, if runtime_blocked_until is
+// more than N days beyond now, treat as null. Wrapper storage stays
+// authoritative (debug-friendly); only the surfaced value clamps.
+//
+// Threshold: Codex/CC/Gemini quotas reset hourly-to-daily in practice.
+// A 30-day cap is generous vs. reality; anything beyond is a sentinel.
+// Overridable via YAKLOG_RUNTIME_BLOCKED_MAX_DAYS for edge cases.
+const DEFAULT_RUNTIME_BLOCKED_MAX_DAYS = 30;
+function getRuntimeBlockedMaxMs() {
+  const d = Number(process.env.YAKLOG_RUNTIME_BLOCKED_MAX_DAYS
+    || DEFAULT_RUNTIME_BLOCKED_MAX_DAYS);
+  if (!Number.isFinite(d) || d <= 0) return DEFAULT_RUNTIME_BLOCKED_MAX_DAYS * 86400 * 1000;
+  return d * 86400 * 1000;
+}
+
+/**
+ * Return the sanitized runtime_blocked_until for surface (dashboard etc.).
+ * Passes through valid non-sentinel timestamps; clamps far-future placeholders
+ * to null. Non-parseable values also return null (fail-safe).
+ *
+ * @param {string|null} isoStr
+ * @param {number} [nowMs] optional; injectable for tests.
+ * @returns {string|null}
+ */
+function sanitizeRuntimeBlockedUntil(isoStr, nowMs = Date.now()) {
+  if (isoStr == null) return null;
+  if (typeof isoStr !== 'string') return null;
+  const ms = Date.parse(isoStr);
+  if (!Number.isFinite(ms)) return null;
+  if (ms - nowMs > getRuntimeBlockedMaxMs()) return null;
+  return isoStr;
+}
+
 module.exports = {
   HEALTH_CLASS,
   VALID_HEALTH_VALUES,
@@ -103,4 +141,7 @@ module.exports = {
   DAEMON_ONLY_ELIGIBLE_STATES,
   computeEffectiveHealth,
   classifyHealth,
+  DEFAULT_RUNTIME_BLOCKED_MAX_DAYS,
+  getRuntimeBlockedMaxMs,
+  sanitizeRuntimeBlockedUntil,
 };

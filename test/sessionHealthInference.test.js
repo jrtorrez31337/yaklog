@@ -10,6 +10,8 @@ const {
   DEFAULT_IDLE_STALENESS_S,
   computeEffectiveHealth,
   classifyHealth,
+  DEFAULT_RUNTIME_BLOCKED_MAX_DAYS,
+  sanitizeRuntimeBlockedUntil,
 } = require('../src/sessionHealthInference');
 
 test('§3.5 classify — 3-color collapse (s345-aieng #12243)', () => {
@@ -115,4 +117,36 @@ test('§3.5 no wrapper report + very old hook → still null (no structural cry-
 
 test('§3.5 default staleness constant', () => {
   assert.equal(DEFAULT_IDLE_STALENESS_S, 600);
+});
+
+test('Task #282 — sanitizeRuntimeBlockedUntil clamps 2099 sentinel to null', () => {
+  const nowMs = Date.parse('2026-07-09T12:00:00Z');
+  assert.equal(
+    sanitizeRuntimeBlockedUntil('2099-12-01T15:04:00+00:00', nowMs),
+    null,
+    '2099-year placeholder = sentinel, should clamp'
+  );
+});
+
+test('Task #282 — near-future timestamp (within 30d) passes through', () => {
+  const nowMs = Date.parse('2026-07-09T12:00:00Z');
+  const in7d = '2026-07-16T12:00:00Z';
+  assert.equal(sanitizeRuntimeBlockedUntil(in7d, nowMs), in7d);
+});
+
+test('Task #282 — past timestamp passes through (already-cleared block)', () => {
+  const nowMs = Date.parse('2026-07-09T12:00:00Z');
+  const yesterday = '2026-07-08T12:00:00Z';
+  assert.equal(sanitizeRuntimeBlockedUntil(yesterday, nowMs), yesterday);
+});
+
+test('Task #282 — null / non-string / unparseable → null (fail-safe)', () => {
+  assert.equal(sanitizeRuntimeBlockedUntil(null), null);
+  assert.equal(sanitizeRuntimeBlockedUntil(undefined), null);
+  assert.equal(sanitizeRuntimeBlockedUntil(1234567890), null);
+  assert.equal(sanitizeRuntimeBlockedUntil('not-a-date'), null);
+});
+
+test('Task #282 — default max-days constant', () => {
+  assert.equal(DEFAULT_RUNTIME_BLOCKED_MAX_DAYS, 30);
 });
