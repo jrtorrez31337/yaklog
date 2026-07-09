@@ -259,12 +259,12 @@
       // of the picker's window (interpretation: "state going into this
       // period"). Server returns _snapshot metadata; skip ETag path so we
       // don't cross-cache live and historical responses.
-      const window = (typeof window !== 'undefined' && window.getDashboardTimeWindow)
+      const tw = (typeof window.getDashboardTimeWindow === 'function')
         ? window.getDashboardTimeWindow() : null;
       let url = '/api/v1/presence/public';
       let historicalAtIso = null;
-      if (window && window.fromMs) {
-        historicalAtIso = new Date(window.fromMs).toISOString();
+      if (tw && tw.fromMs) {
+        historicalAtIso = new Date(tw.fromMs).toISOString();
         url += '?at=' + encodeURIComponent(historicalAtIso);
       }
       const headers = (historicalAtIso == null && lastEtag) ? { 'If-None-Match': lastEtag } : {};
