@@ -1823,8 +1823,11 @@ function rollupOutputWindow({ daysBack = 30, endDateExclusive } = {}) {
 // Activity feed for Repos tab (CP17.C Task 2). UNION recent commits + PRs
 // from output_commit + output_pr; normalized into { kind, repo_key, actor,
 // summary, at_ts, ref } rows sorted DESC. Capped at limit rows for feed UX.
-function queryRepoActivityFeed({ from, to, limit = 50 }) {
+function queryRepoActivityFeed({ from, to, limit = 50, repo_key = null }) {
   const database = getDb();
+  // Task #277 Phase B: optional repo_key filter for #output repo-focused drill-in.
+  // Bound as parameter (never string-interpolated); NULL sentinel keeps
+  // cluster-wide behavior for existing consumers.
   const rows = database.prepare(`
     SELECT * FROM (
       SELECT
@@ -1836,6 +1839,7 @@ function queryRepoActivityFeed({ from, to, limit = 50 }) {
         commit_sha AS ref
       FROM output_commit
       WHERE date(occurred_at) >= @from AND date(occurred_at) <= @to
+        AND (@repo_key IS NULL OR repo = @repo_key)
       UNION ALL
       SELECT
         CASE WHEN merged_at IS NOT NULL THEN 'pr_merged' ELSE 'pr_opened' END AS kind,
@@ -1845,12 +1849,13 @@ function queryRepoActivityFeed({ from, to, limit = 50 }) {
         COALESCE(merged_at, opened_at) AS at_ts,
         CAST(pr_number AS TEXT) AS ref
       FROM output_pr
-      WHERE (opened_at IS NOT NULL AND date(opened_at) >= @from AND date(opened_at) <= @to)
-         OR (merged_at IS NOT NULL AND date(merged_at) >= @from AND date(merged_at) <= @to)
+      WHERE ((opened_at IS NOT NULL AND date(opened_at) >= @from AND date(opened_at) <= @to)
+         OR (merged_at IS NOT NULL AND date(merged_at) >= @from AND date(merged_at) <= @to))
+        AND (@repo_key IS NULL OR github_owner_repo = @repo_key)
     )
     ORDER BY at_ts DESC
     LIMIT @limit
-  `).all({ from, to, limit });
+  `).all({ from, to, limit, repo_key: repo_key ?? null });
   return rows;
 }
 
