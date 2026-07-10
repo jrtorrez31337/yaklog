@@ -1823,6 +1823,99 @@ function rollupOutputWindow({ daysBack = 30, endDateExclusive } = {}) {
 // Activity feed for Repos tab (CP17.C Task 2). UNION recent commits + PRs
 // from output_commit + output_pr; normalized into { kind, repo_key, actor,
 // summary, at_ts, ref } rows sorted DESC. Capped at limit rows for feed UX.
+// Task #277 Phase B / Task 3 — per-repo summary for #output tab drill-in.
+// Packs repo metadata + windowed counts + governance-quality signals in one
+// call. Sister-shape queryHeroSummary but scoped to a single repo. Returns
+// null when the repo is not in the output_repo allowlist (RepoNotFound).
+//
+// Response contract (per PLAN-OUTPUT-REFACTOR-COMMIT-HISTORY-B-REPO-FIRST.md §5.1):
+//   { period, repo:{...metadata}, counts:{commits, prs, merges, agents_engaged,
+//     attribution_gaps}, governance:{signed_commits, signed_pct,
+//     merge_commit_count, history_shape, attribution_completeness_pct} }
+function queryOutputRepoSummary({ repo_key, from, to }) {
+  const database = getDb();
+  if (!repo_key || typeof repo_key !== 'string') {
+    throw new Error('queryOutputRepoSummary: repo_key required');
+  }
+  const repoRow = database.prepare(
+    `SELECT * FROM output_repo WHERE github_owner_repo = ?`
+  ).get(repo_key);
+  if (!repoRow) return null;
+
+  const cRow = database.prepare(`
+    SELECT
+      COUNT(*) AS commits,
+      SUM(CASE WHEN signed = 1 THEN 1 ELSE 0 END) AS signed_commits,
+      SUM(CASE WHEN parent_count > 1 THEN 1 ELSE 0 END) AS merge_commit_count,
+      SUM(CASE WHEN attribution_method = 'null_fallback' THEN 1 ELSE 0 END) AS attribution_gaps,
+      COUNT(DISTINCT COALESCE(agent_attribution, 'unattributed')) AS agents_engaged
+    FROM output_commit
+    WHERE repo = @repo_key
+      AND date(occurred_at) >= @from AND date(occurred_at) <= @to
+  `).get({ repo_key, from, to });
+
+  const prRow = database.prepare(`
+    SELECT COUNT(*) AS prs
+    FROM output_pr
+    WHERE github_owner_repo = @repo_key
+      AND ((opened_at IS NOT NULL AND date(opened_at) >= @from AND date(opened_at) <= @to)
+        OR (merged_at IS NOT NULL AND date(merged_at) >= @from AND date(merged_at) <= @to))
+  `).get({ repo_key, from, to });
+
+  const mRow = database.prepare(`
+    SELECT COUNT(*) AS merges FROM output_merge
+    WHERE repo = @repo_key
+      AND date(occurred_at) >= @from AND date(occurred_at) <= @to
+  `).get({ repo_key, from, to });
+
+  const commits = cRow.commits || 0;
+  const signed_commits = cRow.signed_commits || 0;
+  const merge_commit_count = cRow.merge_commit_count || 0;
+  const attribution_gaps = cRow.attribution_gaps || 0;
+  // agents_engaged from COUNT(DISTINCT) already excludes 'unattributed' if all
+  // were attributed; when there ARE unattributed rows, we count the unattributed
+  // bucket as 1 pseudo-agent. Subtract that when attribution_gaps > 0.
+  const agents_engaged = Math.max(0, (cRow.agents_engaged || 0) - (attribution_gaps > 0 ? 1 : 0));
+
+  const signed_pct = commits > 0 ? Math.round((signed_commits / commits) * 100) : 0;
+  const attribution_completeness_pct = commits > 0
+    ? Math.round(((commits - attribution_gaps) / commits) * 100)
+    : null;
+  let history_shape;
+  if (commits === 0) history_shape = 'no-data';
+  else if (merge_commit_count > 0) history_shape = 'branchy';
+  else history_shape = 'linear';
+
+  return {
+    period: { from, to },
+    repo: {
+      github_owner_repo: repoRow.github_owner_repo,
+      github_repo_created_at: repoRow.github_repo_created_at,
+      github_default_branch: repoRow.github_default_branch,
+      github_size_kb: repoRow.github_size_kb,
+      github_primary_language: repoRow.github_primary_language,
+      github_visibility: repoRow.github_visibility,
+      github_repo_updated_at: repoRow.github_repo_updated_at,
+      github_repo_pushed_at: repoRow.github_repo_pushed_at,
+      github_last_meta_synced_at: repoRow.github_last_meta_synced_at,
+    },
+    counts: {
+      commits,
+      prs: prRow.prs || 0,
+      merges: mRow.merges || 0,
+      agents_engaged,
+      attribution_gaps,
+    },
+    governance: {
+      signed_commits,
+      signed_pct,
+      merge_commit_count,
+      history_shape,
+      attribution_completeness_pct,
+    },
+  };
+}
+
 function queryRepoActivityFeed({ from, to, limit = 50, repo_key = null }) {
   const database = getDb();
   // Task #277 Phase B: optional repo_key filter for #output repo-focused drill-in.
@@ -5134,6 +5227,8 @@ module.exports = {
   queryOutputDailyHeatmap,
   queryOutputDailyRepoList,
   queryRepoActivityFeed,
+  // Task #277 Phase B — repo-focused #output tab drill-in queries
+  queryOutputRepoSummary,
   queryOutputDailyAgentsInWindow,
   queryOutputDailyByAgent,
   closeDb,
