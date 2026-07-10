@@ -1916,6 +1916,77 @@ function queryOutputRepoSummary({ repo_key, from, to }) {
   };
 }
 
+// Task #277 Phase B / Task 4 — standalone governance-quality signals for a
+// single repo, isolated from queryOutputRepoSummary so it can be rendered
+// independently and/or emitted to a Prom textfile without pulling the whole
+// summary shape. Deliberately NON-DRY with respect to Summary: signals may
+// evolve independently at their own cadence.
+function queryOutputRepoGovernance({ repo_key, from, to }) {
+  const database = getDb();
+  if (!repo_key || typeof repo_key !== 'string') {
+    throw new Error('queryOutputRepoGovernance: repo_key required');
+  }
+  const cRow = database.prepare(`
+    SELECT
+      COUNT(*) AS total,
+      SUM(CASE WHEN signed = 1 THEN 1 ELSE 0 END) AS signed_count,
+      SUM(CASE WHEN parent_count > 1 THEN 1 ELSE 0 END) AS merge_count,
+      SUM(CASE WHEN attribution_method = 'null_fallback' THEN 1 ELSE 0 END) AS gap_count
+    FROM output_commit
+    WHERE repo = @repo_key
+      AND date(occurred_at) >= @from AND date(occurred_at) <= @to
+  `).get({ repo_key, from, to });
+
+  const prRow = database.prepare(`
+    SELECT
+      COUNT(*) AS pr_count,
+      SUM(CASE WHEN merged_at IS NOT NULL THEN 1 ELSE 0 END) AS merged_pr_count,
+      AVG(commit_count) AS mean_commits_per_pr
+    FROM output_pr
+    WHERE github_owner_repo = @repo_key
+      AND ((opened_at IS NOT NULL AND date(opened_at) >= @from AND date(opened_at) <= @to)
+        OR (merged_at IS NOT NULL AND date(merged_at) >= @from AND date(merged_at) <= @to))
+  `).get({ repo_key, from, to });
+
+  const total = cRow.total || 0;
+  const signed_count = cRow.signed_count || 0;
+  const merge_count = cRow.merge_count || 0;
+  const gap_count = cRow.gap_count || 0;
+  const pr_count = prRow.pr_count || 0;
+  const merged_pr_count = prRow.merged_pr_count || 0;
+  const signed_pct = total > 0 ? Math.round((signed_count / total) * 100) : 0;
+  const merge_pct = total > 0 ? Math.round((merge_count / total) * 100) : 0;
+  let history_shape;
+  if (total === 0) history_shape = 'no-data';
+  else if (merge_count > 0) history_shape = 'branchy';
+  else history_shape = 'linear';
+  const completeness_pct = total > 0 ? Math.round(((total - gap_count) / total) * 100) : null;
+  const mean_commits_per_pr = pr_count > 0
+    ? Math.round((prRow.mean_commits_per_pr || 0) * 10) / 10
+    : null;
+
+  return {
+    period: { from, to },
+    repo_key,
+    signals: {
+      signed_commits: { count: signed_count, total, pct: signed_pct },
+      merge_commits: { count: merge_count, total, pct: merge_pct, history_shape },
+      pr_structure: {
+        pr_count,
+        merged_pr_count,
+        mean_commits_per_pr,
+        note: pr_count > 0 ? null : 'no PR-based workflow',
+      },
+      attribution: {
+        total_commits: total,
+        attributed: total - gap_count,
+        gap_count,
+        completeness_pct,
+      },
+    },
+  };
+}
+
 function queryRepoActivityFeed({ from, to, limit = 50, repo_key = null }) {
   const database = getDb();
   // Task #277 Phase B: optional repo_key filter for #output repo-focused drill-in.
@@ -5229,6 +5300,7 @@ module.exports = {
   queryRepoActivityFeed,
   // Task #277 Phase B — repo-focused #output tab drill-in queries
   queryOutputRepoSummary,
+  queryOutputRepoGovernance,
   queryOutputDailyAgentsInWindow,
   queryOutputDailyByAgent,
   closeDb,
