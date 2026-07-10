@@ -1759,6 +1759,28 @@ function queryOutputDailyRepoList({ from, to }) {
     .sort((a, b) => b.commit_count - a.commit_count);
 }
 
+// Task #289 (sleuth #12427): dirty-day rollup driver.
+//
+// Rebuilds output_daily only for the dates dirtied by an ingester tick —
+// replaces the fixed 30-day window's cliff-loss on late-ingest of >30d rows
+// (repo reconnect via walkRepo(lastRef→HEAD), rebased/backdated commits,
+// GitHub historical backfill). Includes date(occurred_at)==today for the
+// most common dirty date per tick (rollupOutputWindow's i≥1 loop excludes
+// today — dirty-day fires per tick so today MUST be rebuilt).
+//
+// Idempotent per rebuildOutputDailyForDate. Duplicates deduped by callee.
+// Empty input → no-op. Returns { rolled, dates:[...], results:[{date, rows}] }.
+function rebuildOutputDailyForDates(dates) {
+  const uniq = Array.from(new Set(
+    (dates || []).filter((d) => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d)),
+  )).sort();
+  const results = [];
+  for (const date of uniq) {
+    results.push(rebuildOutputDailyForDate(date));
+  }
+  return { rolled: results.length, dates: uniq, results };
+}
+
 // Multi-day rollup driver — sister-shape rollupAuditWindow. Rolls a rolling
 // window of complete UTC days ending at end_date_exclusive (default = today).
 // Idempotent per rebuildOutputDailyForDate. Returns { rolled, window_days,
@@ -5093,6 +5115,7 @@ module.exports = {
   listAuditRepoChangesByRepo,
   // CP17.B rollup + query helpers
   rebuildOutputDailyForDate,
+  rebuildOutputDailyForDates,
   rollupOutputWindow,
   queryVirtualOutputDailyForDate,
   queryOutputDailySummary,

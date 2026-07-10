@@ -73,6 +73,17 @@ function loadKnownAgentIds(db) {
   return new Set(rows.map((r) => r.agent_id));
 }
 
+// Task #289: normalize an ISO-8601-ish timestamp to YYYY-MM-DD (UTC day).
+// SQLite's date() function treats T-delimited ISO strings the same way; we
+// pre-slice on the ingester side so dirty-set comparison is string-simple.
+// Returns null on unparseable input (caller should skip nulls into the set).
+function dateOf(iso) {
+  if (typeof iso !== 'string' || iso.length < 10) return null;
+  // Fast path: already YYYY-MM-DDTHH:MM:SS[.SSSZ] — take first 10 chars
+  const m = iso.slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(m) ? m : null;
+}
+
 // ── single repo ingest ────────────────────────────────────────────────────
 
 function ingestRepo(walker, repo, stmts, knownAgentIds, opts = {}) {
@@ -83,6 +94,10 @@ function ingestRepo(walker, repo, stmts, knownAgentIds, opts = {}) {
   let commitsIngested = 0;
   let mergesIngested = 0;
   let attributionGapCount = 0;
+  // Task #289 (sleuth #12427): dirty-set = DISTINCT date(occurred_at) over
+  // commits+merges ingested this tick. Rebuilds output_daily only for these
+  // dates, replacing the fixed-30-day loop's cliff-loss on late-ingest.
+  const dirtyDates = new Set();
 
   for (const c of commits) {
     // Phase 0 Item C: pass author_email to parser for direct-author
@@ -101,6 +116,7 @@ function ingestRepo(walker, repo, stmts, knownAgentIds, opts = {}) {
     if (res.changes > 0) {
       commitsIngested += 1;
       if (attr.attribution_method === 'null_fallback') attributionGapCount += 1;
+      if (row.occurred_at) dirtyDates.add(dateOf(row.occurred_at));
     }
   }
 
@@ -120,6 +136,7 @@ function ingestRepo(walker, repo, stmts, knownAgentIds, opts = {}) {
     const res = stmts.insertMerge.run(row);
     if (res.changes > 0) {
       mergesIngested += 1;
+      if (row.occurred_at) dirtyDates.add(dateOf(row.occurred_at));
     }
   }
 
@@ -135,7 +152,7 @@ function ingestRepo(walker, repo, stmts, knownAgentIds, opts = {}) {
     });
   }
 
-  return { commitsIngested, mergesIngested, attributionGapCount, substrate: walker.substrateType() };
+  return { commitsIngested, mergesIngested, attributionGapCount, dirtyDates, substrate: walker.substrateType() };
 }
 
 // ── CP13.6 Phase 2.2: GitHubWalker repo ingest (PR substrate) ─────────────
@@ -150,6 +167,7 @@ async function ingestRepoGithubCommits(walker, githubOwnerRepo, stmts, knownAgen
 
   let commitsIngested = 0;
   let attributionGapCount = 0;
+  const dirtyDates = new Set();
   if (!result.skipped && Array.isArray(result.commits)) {
     for (const c of result.commits) {
       const attr = parseAttribution(c._full_message, knownAgentIds, c.author_email);
@@ -165,6 +183,7 @@ async function ingestRepoGithubCommits(walker, githubOwnerRepo, stmts, knownAgen
       if (res.changes > 0) {
         commitsIngested += 1;
         if (attr.attribution_method === 'null_fallback') attributionGapCount += 1;
+        if (row.occurred_at) dirtyDates.add(dateOf(row.occurred_at));
       }
     }
   }
@@ -174,6 +193,7 @@ async function ingestRepoGithubCommits(walker, githubOwnerRepo, stmts, knownAgen
   return {
     commitsIngested,
     attributionGapCount,
+    dirtyDates,
     skipped: result.skipped || false,
     reason: result.reason || null,
   };
@@ -195,10 +215,16 @@ async function ingestRepoPrs(walker, githubOwnerRepo, opts = {}) {
   const result = await walker.walkRepo(githubOwnerRepo, cursor);
 
   let prsIngested = 0;
+  // Task #289: PR dirty-set = date(opened_at) UNION date(merged_at) for PRs
+  // touched this tick. Per sleuth #12427, PRs that open early + merge later
+  // dirty BOTH dates (open bucket + merge bucket update independently).
+  const dirtyDates = new Set();
   if (!result.skipped && Array.isArray(result.prs)) {
     for (const pr of result.prs) {
       dbModule.upsertOutputPr(pr);
       prsIngested += 1;
+      if (pr.opened_at) dirtyDates.add(dateOf(pr.opened_at));
+      if (pr.merged_at) dirtyDates.add(dateOf(pr.merged_at));
     }
   }
   if (result.cursor) {
@@ -206,6 +232,7 @@ async function ingestRepoPrs(walker, githubOwnerRepo, opts = {}) {
   }
   return {
     prsIngested,
+    dirtyDates,
     skipped: result.skipped || false,
     reason: result.reason || null,
     substrate: walker.substrateType(),
@@ -258,6 +285,11 @@ async function runOnce(opts = {}) {
   let totalMerges = 0;
   let totalAttributionGaps = 0;
   let totalPrs = 0;
+  // Task #289: aggregate every dirty date across walkers before triggering
+  // the rebuild. Sister-shape stays: per-repo results carry their own set
+  // for observability; the global set drives the rebuild.
+  const allDirtyDates = new Set();
+  const collect = (set) => { if (set) for (const d of set) if (d) allDirtyDates.add(d); };
 
   for (const walker of walkers) {
     if (walker.substrateType() === 'github') {
@@ -281,6 +313,8 @@ async function runOnce(opts = {}) {
         totalCommits += commitResult.commitsIngested;
         totalAttributionGaps += commitResult.attributionGapCount;
         totalPrs += prResult.prsIngested;
+        collect(commitResult.dirtyDates);
+        collect(prResult.dirtyDates);
       }
     } else {
       // Phase 1: BareGitWalker (sync walkRepo + output_commit/merge tables)
@@ -290,8 +324,21 @@ async function runOnce(opts = {}) {
         totalCommits += result.commitsIngested;
         totalMerges += result.mergesIngested;
         totalAttributionGaps += result.attributionGapCount;
+        collect(result.dirtyDates);
       }
     }
+  }
+
+  // Task #289 (sleuth #12427): dirty-day rollup replaces fixed 30-day
+  // window's cliff-loss on late-ingest of >30d rows. Fires only when
+  // rows landed this tick — no-op walks skip rebuild entirely. Today is
+  // naturally included (any commit landed today → date(now) in the set).
+  // Manual rollupOutputWindow endpoint remains for operator-driven
+  // arbitrary-range backfill (post-restore, initial catchup).
+  let daysRolled = 0;
+  if (allDirtyDates.size > 0) {
+    const rebuildResult = dbModule.rebuildOutputDailyForDates([...allDirtyDates]);
+    daysRolled = rebuildResult.rolled;
   }
 
   return {
@@ -300,6 +347,8 @@ async function runOnce(opts = {}) {
     totalMerges,
     totalAttributionGaps,
     totalPrs,
+    dirtyDates: [...allDirtyDates].sort(),
+    daysRolled,
     walkersUsed: walkers.map((w) => w.substrateType()),
   };
 }
