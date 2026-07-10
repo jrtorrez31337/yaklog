@@ -629,6 +629,25 @@
   .output-agent-primary-body th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px; }
   .output-agent-primary-body td.num { text-align: right; font-variant-numeric: tabular-nums; }
   .output-agent-primary-body tr:hover { background: var(--panel-hover, rgba(255,255,255,0.02)); }
+  /* Trajectory Lens (Task #288) — cumulative governance-coverage chart */
+  .output-trajectory-section { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; margin-bottom: 18px; padding: 14px; }
+  .output-trajectory-controls { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+  .output-trajectory-title { font-size: 14px; color: var(--text); font-weight: 600; margin-right: auto; }
+  .output-trajectory-controls label { font-size: 11px; color: var(--muted); display: inline-flex; gap: 5px; align-items: center; }
+  .output-trajectory-controls select { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 3px 6px; font: inherit; font-size: 12px; }
+  .output-trajectory-body { min-height: 220px; }
+  .output-trajectory-chart { display: block; width: 100%; height: auto; }
+  .output-trajectory-legend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 8px; font-size: 11px; }
+  .output-trajectory-legend .otl-item { display: inline-flex; gap: 5px; align-items: center; color: var(--muted); }
+  .output-trajectory-legend .otl-swatch { width: 10px; height: 10px; border-radius: 2px; flex: 0 0 auto; }
+  .output-trajectory-legend .otl-total { color: var(--text); font-variant-numeric: tabular-nums; }
+  .output-trajectory-empty { padding: 40px 12px; text-align: center; color: var(--muted); font-size: 12px; }
+  .otl-path { fill: none; stroke-width: 2; }
+  .otl-axis { stroke: var(--border); stroke-width: 1; }
+  .otl-axislabel { fill: var(--muted); font-size: 10px; }
+  .otl-dot { transition: r 0.08s; }
+  @media (prefers-reduced-motion: reduce) { .otl-dot { transition: none; } }
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
   /* Pivot-swap: hide repos-grid + management widgets when pivot=agent */
   [data-tab="output"].pivot-agent .repos-grid-section,
   [data-tab="output"].pivot-agent .repos-heatmap-controls label:has(#repos-heatmap-filter-repo) { display: none; }
@@ -2097,6 +2116,33 @@
     </div>
     <div class="repos-heatmap-body" id="repos-heatmap-body">
       <div class="cost-loading">switch to this tab to load activity heatmap.</div>
+    </div>
+  </section>
+
+  <!-- Band 2.5: Trajectory Lens — cumulative governance-coverage over time (Task #288).
+       Consumes /output/trajectory; pivot from the analytical-band toggle. OUTCOME-class
+       (cross-tier-safe); labels governance-anchored per techmark #12417 (no bare
+       activity-volume). Inline SVG, no chart-lib dep. -->
+  <section class="output-trajectory-section" aria-label="Governance coverage trajectory">
+    <div class="output-trajectory-controls">
+      <span class="output-trajectory-title" id="output-trajectory-title">Governance coverage — trajectory over time</span>
+      <label>Metric
+        <select id="output-trajectory-metric">
+          <option value="commits">Commits under governance</option>
+          <option value="merges">Merges under governance</option>
+          <option value="prs_merged">PRs merged under governance</option>
+          <option value="prs_opened">PRs opened under governance</option>
+        </select>
+      </label>
+      <label>Top
+        <select id="output-trajectory-topn">
+          <option value="5">5</option>
+          <option value="10">10</option>
+        </select>
+      </label>
+    </div>
+    <div class="output-trajectory-body" id="output-trajectory-body">
+      <div class="cost-loading">switch to this tab to load trajectory.</div>
     </div>
   </section>
 

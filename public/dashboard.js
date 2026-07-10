@@ -6282,6 +6282,7 @@
       btn.setAttribute('aria-selected', btn.dataset.pivot === dim ? 'true' : 'false');
     });
     if (dim === 'agent') _renderAgentPrimaryPanel();
+    _renderOutputTrajectory();  // trajectory re-pivots with the toggle
   }
 
   function _wireOutputPivotToggle() {
@@ -6298,6 +6299,110 @@
     });
   }
 
+  // ── Trajectory Lens (Task #288) — cumulative governance-coverage over time ──
+  // Consumes /output/trajectory; pivot from the analytical-band toggle. Inline SVG
+  // (no chart-lib dep per #12078). Governance-anchored labels per techmark #12417.
+  const _TRAJ_COLORS = ['#60a5fa', '#34d399', '#f59e0b', '#c084fc', '#f87171', '#22d3ee', '#a3e635', '#fb7185', '#818cf8', '#facc15'];
+  const _TRAJ_METRIC_LABEL = { commits: 'Commits', merges: 'Merges', prs_merged: 'PRs merged', prs_opened: 'PRs opened' };
+  let _trajMetric = 'commits';
+  let _trajTopN = 5;
+  function _svgEl(tag, attrs) {
+    const e = document.createElementNS('http://www.w3.org/2000/svg', tag);
+    if (attrs) for (const k in attrs) e.setAttribute(k, attrs[k]);
+    return e;
+  }
+  function _trajRangeQuery() {
+    const w = window.getDashboardTimeWindow && window.getDashboardTimeWindow();
+    if (!w) return 'period=30d';
+    const iso = (ms) => new Date(ms).toISOString().slice(0, 10);
+    return 'from=' + iso(w.fromMs) + '&to=' + iso(w.toMs);
+  }
+  function _buildTrajectoryChart(series, data) {
+    const W = 820, H = 260, PL = 10, PR = 10, PT = 16, PB = 30;
+    const plotW = W - PL - PR, plotH = H - PT - PB;
+    const pts0 = series[0].points || [];
+    const n = pts0.length;
+    let maxY = 0;
+    for (const s of series) { const last = s.points[s.points.length - 1]; if (last && last.value_cumulative > maxY) maxY = last.value_cumulative; }
+    maxY = maxY || 1;
+    const xOf = (i) => PL + (n <= 1 ? plotW / 2 : (i / (n - 1)) * plotW);
+    const yOf = (v) => PT + plotH - (v / maxY) * plotH;
+    const metricLbl = _TRAJ_METRIC_LABEL[_trajMetric] || _trajMetric;
+    const svg = _svgEl('svg', { class: 'output-trajectory-chart', viewBox: `0 0 ${W} ${H}`, role: 'img', preserveAspectRatio: 'xMidYMid meet' });
+    // AT summary: name + final total per series
+    svg.setAttribute('aria-label', 'Cumulative ' + metricLbl + ' under governance over ' + n + ' days. '
+      + series.map((s) => s.key + ' reached ' + (s.points[s.points.length - 1] || {}).value_cumulative).join('; ') + '.');
+    // baseline x-axis
+    svg.appendChild(_svgEl('line', { class: 'otl-axis', x1: PL, y1: PT + plotH, x2: PL + plotW, y2: PT + plotH }));
+    series.forEach((s, si) => {
+      const color = _TRAJ_COLORS[si % _TRAJ_COLORS.length];
+      const d = s.points.map((p, i) => (i === 0 ? 'M' : 'L') + ' ' + xOf(i).toFixed(1) + ' ' + yOf(p.value_cumulative).toFixed(1)).join(' ');
+      svg.appendChild(_svgEl('path', { class: 'otl-path', d, stroke: color }));
+      const last = s.points[s.points.length - 1];
+      if (last) svg.appendChild(_svgEl('circle', { class: 'otl-dot', cx: xOf(n - 1).toFixed(1), cy: yOf(last.value_cumulative).toFixed(1), r: 3, fill: color }));
+    });
+    // date axis labels (first + last)
+    if (n > 0) {
+      const first = _svgEl('text', { class: 'otl-axislabel', x: PL, y: H - 10 }); first.textContent = pts0[0].date; svg.appendChild(first);
+      const lastT = _svgEl('text', { class: 'otl-axislabel', x: PL + plotW, y: H - 10, 'text-anchor': 'end' }); lastT.textContent = pts0[n - 1].date; svg.appendChild(lastT);
+    }
+    const wrap = el('div');
+    wrap.appendChild(svg);
+    // legend (governance-anchored) with per-series totals
+    const legend = el('div', { class: 'output-trajectory-legend' });
+    series.forEach((s, si) => {
+      const item = el('span', { class: 'otl-item' });
+      const sw = el('span', { class: 'otl-swatch' }); sw.style.background = _TRAJ_COLORS[si % _TRAJ_COLORS.length];
+      item.appendChild(sw);
+      item.appendChild(document.createTextNode(s.key + ' '));
+      const total = el('span', { class: 'otl-total' }, String((s.points[s.points.length - 1] || {}).value_cumulative ?? 0));
+      item.appendChild(total);
+      legend.appendChild(item);
+    });
+    wrap.appendChild(legend);
+    // sr-only data table fallback (a11y — AT reads the values, not the curve)
+    const srt = el('table', { class: 'sr-only' });
+    const cap = el('caption'); cap.textContent = 'Cumulative ' + metricLbl + ' under governance per day'; srt.appendChild(cap);
+    const th = el('thead'); const thr = el('tr'); thr.appendChild(el('th', null, 'Date'));
+    series.forEach((s) => thr.appendChild(el('th', null, s.key))); th.appendChild(thr); srt.appendChild(th);
+    const tb = el('tbody');
+    pts0.forEach((_, i) => {
+      const tr = el('tr'); tr.appendChild(el('td', null, pts0[i].date));
+      series.forEach((s) => tr.appendChild(el('td', null, String((s.points[i] || {}).value_cumulative ?? 0))));
+      tb.appendChild(tr);
+    });
+    srt.appendChild(tb); wrap.appendChild(srt);
+    return wrap;
+  }
+  async function _renderOutputTrajectory() {
+    const body = document.getElementById('output-trajectory-body');
+    if (!body) return;
+    const title = document.getElementById('output-trajectory-title');
+    if (title) title.textContent = (_TRAJ_METRIC_LABEL[_trajMetric] || _trajMetric) + ' under governance — trajectory over time';
+    try {
+      const url = '/api/v1/output/trajectory?pivot=' + _outputPivot + '&metric=' + _trajMetric + '&top_n=' + _trajTopN + '&' + _trajRangeQuery();
+      const r = await fetch(url, { cache: 'no-store' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const data = await r.json();
+      const series = Array.isArray(data.series) ? data.series : [];
+      clearChildren(body);
+      if ((data._metadata && data._metadata.computed_empty_period) || series.length === 0 || !(series[0].points || []).length) {
+        body.appendChild(el('div', { class: 'output-trajectory-empty' }, 'No governance activity in this window.'));
+        return;
+      }
+      body.appendChild(_buildTrajectoryChart(series, data));
+    } catch (err) {
+      clearChildren(body);
+      body.appendChild(el('div', { class: 'output-trajectory-empty' }, 'Couldn’t load trajectory. Retry shortly.'));
+    }
+  }
+  function _wireOutputTrajectory() {
+    const m = document.getElementById('output-trajectory-metric');
+    if (m) m.addEventListener('change', () => { _trajMetric = m.value; _renderOutputTrajectory(); });
+    const t = document.getElementById('output-trajectory-topn');
+    if (t) t.addEventListener('change', () => { _trajTopN = parseInt(t.value, 10) || 5; _renderOutputTrajectory(); });
+  }
+
   function mountReposTab() {
     if (_reposMounted) return;
     _reposMounted = true;
@@ -6305,18 +6410,20 @@
     _wireReposControls();
     _wireReposManagement();
     _wireOutputPivotToggle();
+    _wireOutputTrajectory();
+    _renderOutputTrajectory();
     _refreshReposAll();
     // Time-nav: rerender all bands on picker change.
     document.addEventListener('dashboardTimeRangeChange', () => {
       // Only render if Repos tab currently active (perf)
       const active = document.querySelector('.tab-panel[data-tab="output"]');
-      if (active && active.classList.contains('active')) _refreshReposAll();
+      if (active && active.classList.contains('active')) { _refreshReposAll(); _renderOutputTrajectory(); }
     });
     // 60s auto-refresh gated on isLiveMode() sister-shape Cost hero discipline.
     setInterval(() => {
       if (window.isDashboardLive && !window.isDashboardLive()) return;
       const active = document.querySelector('.tab-panel[data-tab="output"]');
-      if (active && active.classList.contains('active')) _refreshReposAll();
+      if (active && active.classList.contains('active')) { _refreshReposAll(); _renderOutputTrajectory(); }
     }, 60_000);
   }
 
