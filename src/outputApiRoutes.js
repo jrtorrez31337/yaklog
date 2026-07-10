@@ -257,6 +257,35 @@ publicRouter.get('/hero-summary', (req, res) => {
   }
 });
 
+// ── PUBLIC: GET /trajectory — Task #288 Trajectory Lens ─────────────────
+// Running-sum series over output_daily rows, grouped by pivot (agent|repo).
+// Sister-shape peetzweg's cumulativeSeries at commit-history.com; ours is
+// governance-anchored per techmark #12417 labeling discipline: the pill/tile
+// vocabulary at buyer-visible surface is "Governance coverage — trajectory
+// over time" NOT bare "commits over time" (Fold-B activity-volume-brag risk).
+//
+// Fold-B tier: this endpoint returns OUTCOME-class metric only (cumulative
+// count of counted units). Passes THE-RULE + THE-TEST per s345 #11947 +
+// techmark #12417 classification. No ratio, no velocity, no headcount.
+publicRouter.get('/trajectory', (req, res) => {
+  try {
+    const { from, to, period } = resolveRange(req);
+    const pivot = (req.query.pivot || 'agent').toLowerCase();
+    const metric = (req.query.metric || 'commits').toLowerCase();
+    const topN = req.query.top_n ? Number(req.query.top_n) : 5;
+    const includeUnattributed = req.query.include_unattributed === '1';
+    const result = dbModule.queryOutputDailyTrajectory({
+      from, to, pivot, metric, top_n: topN,
+      include_unattributed: includeUnattributed,
+    });
+    const isEmpty = result.series.length === 0
+      || result.series.every((s) => s.points.every((p) => p.value_cumulative === 0));
+    return res.json(attachMetadata({ period, ...result }, isEmpty));
+  } catch (e) {
+    return res.status(400).json({ error: 'ValidationError', message: e.message });
+  }
+});
+
 // ── OPS: PUT /attribution (manual correction for parser misses) ───────────
 
 opsRouter.use(enforceOpsKey);

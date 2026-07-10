@@ -1755,6 +1755,101 @@ function queryOutputDailyByAgent({ agent_id, from, to }) {
   return [...byRepo.values()].sort((a, b) => b.commit_count - a.commit_count);
 }
 
+// Task #288 Trajectory Lens — running-sum series over output_daily rows,
+// grouped by pivot dimension (agent or repo). Sister-shape peetzweg's
+// cumulativeSeries() at commit-history.com; ours is governance-anchored per
+// techmark #12417 labeling discipline (buyer-visible surface).
+//
+// Params:
+//   from, to            YYYY-MM-DD (inclusive)
+//   pivot               'agent' | 'repo'
+//   metric              'commits' | 'merges' | 'prs_opened' | 'prs_merged'
+//   top_n               limit series returned to top-N pivot keys by final
+//                       cumulative total (default 5; keeps browser render
+//                       readable; caller can raise for detail views)
+//   include_unattributed  bool; agent-pivot only — when false (default) drops
+//                       'unattributed' bucket from series (Fold-B: unattributed
+//                       activity is not governance-scope, don't foreground)
+//
+// Returns:
+//   { from, to, pivot, metric, series: [{ key, points: [{date, value_cumulative}] }] }
+//
+// The series' points span the full [from, to] window even if some dates have
+// zero activity — the cumulative running-sum needs the zero-holds to render
+// as a flat trajectory segment (visualization must reflect "no growth" faithfully).
+function queryOutputDailyTrajectory({
+  from, to, pivot = 'agent', metric = 'commits',
+  top_n = 5, include_unattributed = false,
+} = {}) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+    throw new Error(`queryOutputDailyTrajectory: from/to must be YYYY-MM-DD`);
+  }
+  const VALID_PIVOTS = new Set(['agent', 'repo']);
+  const VALID_METRICS = new Set(['commits', 'merges', 'prs_opened', 'prs_merged']);
+  if (!VALID_PIVOTS.has(pivot)) {
+    throw new Error(`queryOutputDailyTrajectory: pivot must be one of ${[...VALID_PIVOTS].join(', ')}`);
+  }
+  if (!VALID_METRICS.has(metric)) {
+    throw new Error(`queryOutputDailyTrajectory: metric must be one of ${[...VALID_METRICS].join(', ')}`);
+  }
+
+  const rows = _readOutputDailyRowsInRange({ from, to });
+
+  // Enumerate all dates in window (inclusive both ends) so cumulative series
+  // has continuous points even on zero-activity dates.
+  const allDates = [];
+  const fromMs = Date.parse(from + 'T00:00:00Z');
+  const toMs = Date.parse(to + 'T00:00:00Z');
+  for (let ms = fromMs; ms <= toMs; ms += 86400 * 1000) {
+    allDates.push(new Date(ms).toISOString().slice(0, 10));
+  }
+
+  // Group rows by pivot-key → date → metric-delta
+  // pivotKeyOf returns null when unattributed and !include_unattributed
+  const keyField = pivot === 'agent' ? 'agent_id' : 'repo_key';
+  const pivotKeyOf = (row) => {
+    const k = row[keyField];
+    if (pivot === 'agent' && k === 'unattributed' && !include_unattributed) return null;
+    return k;
+  };
+
+  const perKeyDeltas = new Map();  // key → Map(date → delta)
+  for (const r of rows) {
+    const key = pivotKeyOf(r);
+    if (key == null) continue;
+    if (!perKeyDeltas.has(key)) perKeyDeltas.set(key, new Map());
+    const dateMap = perKeyDeltas.get(key);
+    const delta = Number(r[metric] || 0);
+    dateMap.set(r.date, (dateMap.get(r.date) || 0) + delta);
+  }
+
+  // Build cumulative series per key
+  const seriesAll = [];
+  for (const [key, dateMap] of perKeyDeltas.entries()) {
+    let cum = 0;
+    const points = allDates.map((date) => {
+      cum += dateMap.get(date) || 0;
+      return { date, value_cumulative: cum };
+    });
+    seriesAll.push({ key, points, final_total: cum });
+  }
+
+  // Rank by final cumulative + slice top_n
+  seriesAll.sort((a, b) => b.final_total - a.final_total);
+  const series = seriesAll.slice(0, Math.max(1, Number(top_n) || 5))
+    .map(({ key, points }) => ({ key, points }));
+
+  return {
+    from, to, pivot, metric,
+    series,
+    _metadata: {
+      total_series_pre_topn: seriesAll.length,
+      top_n: Math.max(1, Number(top_n) || 5),
+      include_unattributed,
+    },
+  };
+}
+
 function insertMessage({ channel, sender, body, metadata = null, isPrivate = false }) {
   const database = getDb();
   const mentions = parseMentions(body);
@@ -4879,6 +4974,7 @@ module.exports = {
   rollupOutputWindow,
   queryVirtualOutputDailyForDate,
   queryOutputDailySummary,
+  queryOutputDailyTrajectory,
   queryHeroSummary,
   queryOutputDailyHeatmap,
   queryOutputDailyRepoList,
