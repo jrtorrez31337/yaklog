@@ -1,58 +1,51 @@
 #!/usr/bin/env bash
-# plexus-install — one-time bootstrap for a fresh Plexus instance.
+# install.sh — Plexus interactive installer (Task #284 / PLAN-PLEXUS-
+# INSTALL-BUNDLE.md). Consumes an install bundle produced by
+# build-bundle.sh (which pre-saves all OCI images so no registry access
+# is needed at install time).
 #
-# Per Jon-direct 2026-07-08: every Plexus build ships with an install
-# directory containing all artifacts + scripts to bring up a full instance
-# with a single command. Each install generates ONE plexus-admin bearer;
-# that agent operates the instance.
+# Discovery order for OCI images:
+#   1. ./images/*.tar in this script's directory (pre-built bundle)
+#   2. Falls back to `docker pull` if the tar is missing AND `--allow-pull`
+#      is set (build-host convenience; NOT the portable-install path).
 #
-# What this script does:
-#   1. Verify docker + docker compose are installed + running
-#   2. Mint a strong random token → PLEXUS_ADMIN_BEARER (single token; used
-#      as both ops-key AND regular API bearer for the plexus-admin agent)
-#   3. Mint Grafana admin password + MinIO root credentials
-#   4. Write .env + service env files (mode 600)
-#   5. `docker compose up -d --build`
-#   6. Wait for all services healthy
-#   7. Print operator handoff: URLs + bearer (one-time; save it now)
+# Usage:
+#   sudo ./install.sh                    # interactive
+#   sudo ./install.sh --non-interactive  # uses env vars for all prompts
+#   ./install.sh --help                  # show all env-var overrides
 #
-# Idempotency: if .env already exists, script refuses to overwrite unless
-# --force is passed. Prevents accidentally destroying an existing instance.
+# Env-var equivalents for each prompt (usable in --non-interactive mode):
+#   INSTANCE_NAME       default: plexus
+#   INSTALL_DIR         default: /opt/${INSTANCE_NAME}
+#   YAKLOG_BIND_IP      default: 0.0.0.0
+#   PLEXUS_BIND_IP      default: 127.0.0.1
+#   EXTERNAL_HOSTNAME   default: autodetected via `hostname -I`
+#   DASHBOARD_PORT      default: 3100
+#   PROM_PORT           default: 9090
+#   GRAFANA_PORT        default: 3001
+#   OTLP_GRPC_PORT      default: 4327
+#   OTLP_HTTP_PORT      default: 4328
+#   OTEL_HEALTH_PORT    default: 13134
+#   MINIO_PORT          default: 9000
+#   MINIO_CONSOLE_PORT  default: 9001
 
 set -euo pipefail
 
-INSTALL_DIR="${INSTALL_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
-COMPOSE_FILE="${COMPOSE_FILE:-$INSTALL_DIR/docker-compose.demo.yml}"
-ENV_FILE="${ENV_FILE:-$INSTALL_DIR/.env}"
-GRAFANA_ENV="${GRAFANA_ENV:-$INSTALL_DIR/plexus-grafana.env}"
-MINIO_ENV="${MINIO_ENV:-$INSTALL_DIR/plexus-minio.env}"
-DATA_DIR="${DATA_DIR:-$INSTALL_DIR/data}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+NON_INTERACTIVE=0
+ALLOW_PULL=0
 FORCE=0
 
 for arg in "$@"; do
   case "$arg" in
-    --force) FORCE=1 ;;
+    --non-interactive) NON_INTERACTIVE=1 ;;
+    --allow-pull)      ALLOW_PULL=1 ;;
+    --force)           FORCE=1 ;;
     --help|-h)
-      cat <<HELP
-Usage: $0 [--force]
-
-Bootstraps a fresh Plexus instance in $INSTALL_DIR.
-
-Options:
-  --force      Overwrite existing .env / service env files. Destroys the
-               current instance's identity. Use with care.
-  -h, --help   Show this help.
-
-Environment:
-  INSTALL_DIR    Base install directory (default: script's parent)
-  COMPOSE_FILE   Path to docker-compose.yml (default: \$INSTALL_DIR/docker-compose.yml)
-HELP
+      sed -n '3,30p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
-    *)
-      echo "Unknown arg: $arg (use --help)" >&2
-      exit 2
-      ;;
+    *) echo "Unknown arg: $arg" >&2; exit 2 ;;
   esac
 done
 
@@ -60,217 +53,324 @@ log() { printf '\033[36m[plexus-install]\033[0m %s\n' "$*"; }
 err() { printf '\033[31m[plexus-install]\033[0m %s\n' "$*" >&2; }
 ok()  { printf '\033[32m[plexus-install]\033[0m %s\n' "$*"; }
 
-# ── 1. Prerequisites ─────────────────────────────────────────────────────
+# ── 0. Bundle sanity ────────────────────────────────────────────────────
+
+[[ -f "$SCRIPT_DIR/docker-compose.yml" ]] || {
+  err "docker-compose.yml missing from bundle. Are you running install.sh from the bundle directory?"
+  exit 2
+}
+[[ -d "$SCRIPT_DIR/templates" ]] || {
+  err "templates/ missing from bundle."
+  exit 2
+}
+[[ -d "$SCRIPT_DIR/otel" ]] || {
+  err "otel/ missing from bundle."
+  exit 2
+}
+[[ -d "$SCRIPT_DIR/systemd" ]] || {
+  err "systemd/ missing from bundle."
+  exit 2
+}
+
+# ── 1. Prerequisite check ───────────────────────────────────────────────
 
 log 'Checking prerequisites…'
 
-if ! command -v docker >/dev/null 2>&1; then
-  err 'docker not installed. Install docker first (see https://docs.docker.com/engine/install/).'
+command -v docker  >/dev/null || { err "docker not installed"; exit 1; }
+command -v openssl >/dev/null || { err "openssl not installed"; exit 1; }
+command -v envsubst >/dev/null || { err "envsubst not installed (install gettext-base)"; exit 1; }
+docker compose version >/dev/null 2>&1 || {
+  err "docker compose plugin missing (install docker-compose-plugin)"
+  exit 1
+}
+docker info >/dev/null 2>&1 || {
+  err "docker daemon not reachable. systemctl start docker (or fix docker permissions)."
+  exit 1
+}
+
+ok "docker + docker compose + openssl + envsubst reachable."
+
+# ── 2. Prompt helper ────────────────────────────────────────────────────
+
+ask() {
+  local prompt="$1"
+  local default="$2"
+  local var="$3"
+  # Non-interactive: env var must be set OR default applies
+  if [[ "$NON_INTERACTIVE" -eq 1 ]]; then
+    local current="${!var:-$default}"
+    printf -v "$var" '%s' "$current"
+    log "  $var=$current"
+    return
+  fi
+  local reply
+  local default_display="${default:-<none>}"
+  read -r -p "  $prompt [$default_display]: " reply
+  if [[ -z "$reply" ]]; then
+    printf -v "$var" '%s' "$default"
+  else
+    printf -v "$var" '%s' "$reply"
+  fi
+}
+
+# ── 3. Collect settings ─────────────────────────────────────────────────
+
+echo
+log 'Collecting install settings…'
+echo
+
+: "${INSTANCE_NAME:=plexus}"
+: "${INSTALL_DIR:=/opt/${INSTANCE_NAME}}"
+: "${YAKLOG_BIND_IP:=0.0.0.0}"
+: "${PLEXUS_BIND_IP:=127.0.0.1}"
+: "${DASHBOARD_PORT:=3100}"
+: "${PROM_PORT:=9090}"
+: "${GRAFANA_PORT:=3001}"
+: "${OTLP_GRPC_PORT:=4327}"
+: "${OTLP_HTTP_PORT:=4328}"
+: "${OTEL_HEALTH_PORT:=13134}"
+: "${MINIO_PORT:=9000}"
+: "${MINIO_CONSOLE_PORT:=9001}"
+: "${TRACK_GITHUB_REPO:=}"
+
+# Autodetect external hostname if not set
+if [[ -z "${EXTERNAL_HOSTNAME:-}" ]]; then
+  EXTERNAL_HOSTNAME="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  [[ -z "$EXTERNAL_HOSTNAME" ]] && EXTERNAL_HOSTNAME="127.0.0.1"
+fi
+
+ask "Instance name"                                "$INSTANCE_NAME"     INSTANCE_NAME
+# Re-derive INSTALL_DIR default if it uses the OLD instance name
+if [[ "$INSTALL_DIR" == "/opt/plexus" ]]; then
+  INSTALL_DIR="/opt/$INSTANCE_NAME"
+fi
+ask "Install dir"                                  "$INSTALL_DIR"       INSTALL_DIR
+ask "Dashboard bind IP (0.0.0.0 or 127.0.0.1)"     "$YAKLOG_BIND_IP"    YAKLOG_BIND_IP
+ask "External hostname/IP for URLs"                "$EXTERNAL_HOSTNAME" EXTERNAL_HOSTNAME
+ask "Track a public GitHub repo? (owner/name)"     "$TRACK_GITHUB_REPO" TRACK_GITHUB_REPO
+
+# ── 4. Confirm + create install dir ─────────────────────────────────────
+
+echo
+log 'Settings:'
+echo "  INSTANCE_NAME     = $INSTANCE_NAME"
+echo "  INSTALL_DIR       = $INSTALL_DIR"
+echo "  YAKLOG_BIND_IP    = $YAKLOG_BIND_IP"
+echo "  PLEXUS_BIND_IP    = $PLEXUS_BIND_IP"
+echo "  EXTERNAL_HOSTNAME = $EXTERNAL_HOSTNAME"
+echo "  DASHBOARD_PORT    = $DASHBOARD_PORT"
+[[ -n "$TRACK_GITHUB_REPO" ]] && echo "  TRACK_GITHUB_REPO = $TRACK_GITHUB_REPO"
+echo
+
+if [[ "$NON_INTERACTIVE" -eq 0 ]]; then
+  read -r -p "Proceed with install? [Y/n]: " reply
+  [[ "$reply" =~ ^[nN] ]] && { log 'Aborted by operator.'; exit 0; }
+fi
+
+if [[ -d "$INSTALL_DIR" ]] && [[ "$FORCE" -eq 0 ]]; then
+  err "$INSTALL_DIR already exists. Pass --force to overwrite (destroys existing instance identity)."
   exit 1
 fi
 
-if ! docker compose version >/dev/null 2>&1; then
-  err 'docker compose plugin not installed. Install docker-compose-plugin.'
-  exit 1
-fi
+mkdir -p "$INSTALL_DIR"
 
-if ! docker info >/dev/null 2>&1; then
-  err 'docker daemon not reachable. Start docker (systemctl start docker) or fix docker permissions.'
-  exit 1
-fi
+# ── 5. Load OCI images from bundle (or pull as fallback) ────────────────
 
-ok 'docker + docker compose reachable.'
+log 'Loading OCI images from bundle…'
 
-if [[ ! -f "$COMPOSE_FILE" ]]; then
-  err "Compose file not found at $COMPOSE_FILE. Are you running install.sh from a valid yaklog checkout?"
-  exit 1
-fi
+IMAGES=(
+  "yaklog.tar|yaklog:latest"
+  "otel-collector.tar|otel/opentelemetry-collector-contrib:0.112.0"
+  "prometheus.tar|prom/prometheus:v2.55.0"
+  "grafana.tar|grafana/grafana:11.6.0"
+  "minio.tar|minio/minio:latest"
+)
 
-# ── 2. Idempotency guard ─────────────────────────────────────────────────
+for spec in "${IMAGES[@]}"; do
+  tar_name="${spec%|*}"
+  image="${spec##*|}"
+  tar_path="$SCRIPT_DIR/images/$tar_name"
+  if [[ -f "$tar_path" ]]; then
+    docker load -i "$tar_path" >/dev/null
+    ok "  loaded $image (from bundle)"
+  elif [[ "$ALLOW_PULL" -eq 1 ]]; then
+    docker pull --platform linux/amd64 "$image" >/dev/null
+    ok "  pulled $image (registry fallback)"
+  else
+    err "  $tar_name missing from bundle + --allow-pull not set. Bundle is incomplete."
+    exit 3
+  fi
+done
 
-if [[ -f "$ENV_FILE" ]] && [[ "$FORCE" -eq 0 ]]; then
-  err ".env already exists at $ENV_FILE."
-  err 'This looks like an already-installed instance. Refusing to overwrite (would destroy identity).'
-  err 'If you really want to re-install: pass --force (this wipes the current plexus-admin bearer).'
-  exit 1
-fi
-
-# ── 3. Mint credentials ──────────────────────────────────────────────────
+# ── 6. Mint credentials ──────────────────────────────────────────────────
 
 log 'Minting credentials…'
 
-# Single token for plexus-admin — used as both regular bearer AND ops-key.
-# 32 bytes hex = 64 hex chars = 256-bit entropy. Standard-strong.
 PLEXUS_ADMIN_BEARER="plexus_$(openssl rand -hex 32)"
-
-# Grafana admin password (separate; Grafana has its own auth model)
 GRAFANA_ADMIN_PW="$(openssl rand -hex 16)"
-
-# MinIO root credentials
 MINIO_ROOT_PW="$(openssl rand -hex 24)"
+GENERATED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 ok 'Credentials minted (kept in memory; written to env files at mode 600).'
 
-# ── 4. Write env files ───────────────────────────────────────────────────
+# ── 7. Materialize configs into INSTALL_DIR ─────────────────────────────
 
-log 'Writing service env files…'
+log "Materializing config into $INSTALL_DIR…"
 
-install -m 600 /dev/null "$ENV_FILE"
-cat > "$ENV_FILE" <<EOF
-# plexus-install generated $(date -u +%Y-%m-%dT%H:%M:%SZ)
-# DO NOT commit or share. This file contains the plexus-admin bearer.
-YAKLOG_DB_PATH=/data/yaklog.db
-YAKLOG_API_KEYS=${PLEXUS_ADMIN_BEARER}
-YAKLOG_OPS_API_KEYS=${PLEXUS_ADMIN_BEARER}
-YAKLOG_TOKEN_BINDINGS=plexus-admin:${PLEXUS_ADMIN_BEARER}
-YAKLOG_DAEMON_BINDINGS=plexus-admin:${PLEXUS_ADMIN_BEARER}
-YAKLOG_BIND_IP=0.0.0.0
-# GitHub PAT for outputIngester GitHubWalker. Optional: if unset, walker
-# no-ops (repos still registerable, just no commit walking). Operator
-# mints a fine-grained PAT (contents:read + metadata:read, scoped to the
-# specific public repos to track) + writes to pat/github-pat mode 0600
-# owned root:root (never world-readable per secops hygiene).
-# GITHUB_PAT_FILE=/pat/github-pat
-EOF
+# Copy static docker-compose.yml + otel dir + create pat/ mount point + data
+install -m 0644 "$SCRIPT_DIR/docker-compose.yml" "$INSTALL_DIR/docker-compose.yml"
+mkdir -p "$INSTALL_DIR/otel" "$INSTALL_DIR/pat" "$INSTALL_DIR/data"
+install -m 0644 "$SCRIPT_DIR/otel/collector-config.yaml" "$INSTALL_DIR/otel/collector-config.yaml"
 
-install -m 600 /dev/null "$GRAFANA_ENV"
-cat > "$GRAFANA_ENV" <<EOF
+# envsubst the .env template
+export PLEXUS_ADMIN_BEARER INSTANCE_NAME YAKLOG_BIND_IP PLEXUS_BIND_IP \
+       DASHBOARD_PORT PROM_PORT GRAFANA_PORT OTLP_GRPC_PORT OTLP_HTTP_PORT \
+       OTEL_HEALTH_PORT MINIO_PORT MINIO_CONSOLE_PORT GENERATED_AT
+envsubst < "$SCRIPT_DIR/templates/env.tmpl" > "$INSTALL_DIR/.env"
+chmod 600 "$INSTALL_DIR/.env"
+
+# envsubst prometheus.yml.tmpl → otel/prometheus.yml
+envsubst < "$SCRIPT_DIR/templates/prometheus.yml.tmpl" > "$INSTALL_DIR/otel/prometheus.yml"
+
+# Grafana + MinIO env files (simple, no template)
+cat > "$INSTALL_DIR/plexus-grafana.env" <<EOF
 GF_SECURITY_ADMIN_USER=admin
 GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PW}
 EOF
+chmod 600 "$INSTALL_DIR/plexus-grafana.env"
 
-install -m 600 /dev/null "$MINIO_ENV"
-cat > "$MINIO_ENV" <<EOF
+cat > "$INSTALL_DIR/plexus-minio.env" <<EOF
 MINIO_ROOT_USER=plexus-admin
 MINIO_ROOT_PASSWORD=${MINIO_ROOT_PW}
 EOF
+chmod 600 "$INSTALL_DIR/plexus-minio.env"
 
-# Ensure data dir exists (host bind for SQLite)
-mkdir -p "$DATA_DIR"
+ok 'Config materialized (mode 600 on secrets).'
 
-ok 'env files written (mode 600).'
+# ── 8. Bring up the stack ────────────────────────────────────────────────
 
-# ── 5. Bring up the stack ────────────────────────────────────────────────
+log "Bringing up Plexus stack…"
 
-log 'Building + starting Plexus stack (docker compose up -d --build)…'
-log 'First build downloads images + compiles yaklog; expect 2-5 minutes.'
+(cd "$INSTALL_DIR" && docker compose --env-file .env up -d)
 
-(cd "$INSTALL_DIR" && docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --build)
+ok 'Stack starting; waiting for health…'
 
-ok 'Stack starting.'
+# ── 9. Wait for yaklog + grafana healthy ────────────────────────────────
 
-# ── 6. Wait for health ────────────────────────────────────────────────────
-
-log 'Waiting for yaklog health check…'
 for i in $(seq 1 60); do
-  if curl -sf --max-time 2 http://127.0.0.1:3100/api/v1/health >/dev/null 2>&1; then
+  if curl -sf --max-time 2 "http://127.0.0.1:${DASHBOARD_PORT}/api/v1/health" >/dev/null 2>&1; then
     ok "yaklog healthy after ${i}s."
     break
   fi
   sleep 1
-  if [[ $i -eq 60 ]]; then
+  if [[ "$i" -eq 60 ]]; then
     err 'yaklog did not become healthy within 60s. Check `docker compose logs yaklog`.'
-    exit 1
+    exit 4
   fi
 done
 
-log 'Waiting for Grafana health check…'
 for i in $(seq 1 60); do
-  if curl -sf --max-time 2 http://127.0.0.1:3001/api/health >/dev/null 2>&1; then
+  if curl -sf --max-time 2 "http://127.0.0.1:${GRAFANA_PORT}/api/health" >/dev/null 2>&1; then
     ok "Grafana healthy after ${i}s."
     break
   fi
   sleep 1
-  if [[ $i -eq 60 ]]; then
-    err 'Grafana slow to start; continuing (may still be initializing).'
+  if [[ "$i" -eq 60 ]]; then
+    log 'Grafana slow to start; continuing (may still be initializing).'
     break
   fi
 done
 
-# ── 6b. Install output-ingester systemd timer ────────────────────────────
-#
-# outputIngester is host-side cron-driven per ADR-0032 §2.3 canon. The
-# script POSTs to /api/v1/ops/output/ingest hourly; walker no-ops until
-# GITHUB_PAT_FILE is configured + at least one repo is registered via
-# POST /api/v1/repos.
+# ── 10. Install output-ingester systemd timer (root only) ───────────────
 
-SYSTEMD_DIR="$INSTALL_DIR/plexus-install/systemd"
-if [[ -d "$SYSTEMD_DIR" ]] && command -v systemctl >/dev/null 2>&1 && [[ "$(id -u)" == "0" || -n "${SUDO_UID:-}" ]]; then
+if [[ "$(id -u)" == "0" || -n "${SUDO_UID:-}" ]] && command -v systemctl >/dev/null; then
   log 'Installing output-ingester systemd timer…'
 
-  # Textfile directory for Prom scrape (owner = plexus-admin per unit)
-  install -d -m 0755 -o plexus-admin -g plexus-admin \
-    /var/lib/plexus-demo/textfile/output-ingester 2>/dev/null || true
+  ETC_DIR="/etc/plexus-${INSTANCE_NAME}"
+  TEXTFILE_DIR="/var/lib/plexus-${INSTANCE_NAME}/textfile/output-ingester"
+  OPS_USER="root"
+  OPS_KEY_PATH="${ETC_DIR}/ops-key"
+  INGESTER_SCRIPT="/usr/local/bin/yaklog-output-ingester-${INSTANCE_NAME}.sh"
 
-  # Ops-key file for the service to read (mode 0400, owned by plexus-admin)
-  install -d -m 0755 /etc/plexus-demo
-  printf '%s\n' "$PLEXUS_ADMIN_BEARER" > /etc/plexus-demo/ops-key
-  chown plexus-admin:plexus-admin /etc/plexus-demo/ops-key
-  chmod 0400 /etc/plexus-demo/ops-key
+  install -d -m 0755 "$ETC_DIR"
+  install -d -m 0755 "$TEXTFILE_DIR"
 
-  # EnvironmentFile pointing service at the ops-key file
-  cat > /etc/plexus-demo/output-ingester.env <<EOF
-PLEXUS_OPS_KEY_FILE=/etc/plexus-demo/ops-key
-EOF
-  chown plexus-admin:plexus-admin /etc/plexus-demo/output-ingester.env
-  chmod 0400 /etc/plexus-demo/output-ingester.env
+  printf '%s\n' "$PLEXUS_ADMIN_BEARER" > "$OPS_KEY_PATH"
+  chmod 0400 "$OPS_KEY_PATH"
 
-  # Install script + units
-  install -m 0755 -o root -g root \
-    "$SYSTEMD_DIR/yaklog-output-ingester.sh" \
-    /usr/local/bin/yaklog-output-ingester.sh
-  install -m 0644 -o root -g root \
-    "$SYSTEMD_DIR/yaklog-output-ingester.service" \
-    /etc/systemd/system/yaklog-output-ingester.service
-  install -m 0644 -o root -g root \
-    "$SYSTEMD_DIR/yaklog-output-ingester.timer" \
-    /etc/systemd/system/yaklog-output-ingester.timer
+  install -m 0755 "$SCRIPT_DIR/systemd/yaklog-output-ingester.sh" "$INGESTER_SCRIPT"
+
+  # envsubst .service template
+  export OPS_USER OPS_KEY_PATH TEXTFILE_DIR INGESTER_SCRIPT
+  envsubst < "$SCRIPT_DIR/templates/yaklog-output-ingester.service.tmpl" \
+    > "/etc/systemd/system/yaklog-output-ingester-${INSTANCE_NAME}.service"
+
+  cp "$SCRIPT_DIR/systemd/yaklog-output-ingester.timer" \
+    "/etc/systemd/system/yaklog-output-ingester-${INSTANCE_NAME}.timer"
+  # Timer file references the .service by name; fix the Unit= line
+  sed -i "s|Requires=yaklog-output-ingester.service|Requires=yaklog-output-ingester-${INSTANCE_NAME}.service|" \
+    "/etc/systemd/system/yaklog-output-ingester-${INSTANCE_NAME}.timer"
+  sed -i "s|Unit=yaklog-output-ingester.service|Unit=yaklog-output-ingester-${INSTANCE_NAME}.service|" \
+    "/etc/systemd/system/yaklog-output-ingester-${INSTANCE_NAME}.timer"
 
   systemctl daemon-reload
-  systemctl enable --now yaklog-output-ingester.timer
+  systemctl enable --now "yaklog-output-ingester-${INSTANCE_NAME}.timer"
 
   ok 'output-ingester timer installed + enabled (hourly cadence).'
 else
-  log 'Skipping output-ingester systemd install (not root, or systemctl unavailable).'
-  log 'To install manually: sudo bash -c "cd $INSTALL_DIR && plexus-install/install.sh --systemd-only"'
+  log 'Skipping systemd install (not root, or systemctl unavailable).'
+  log 'To install manually: sudo bash -c "cd $SCRIPT_DIR && ./install.sh --systemd-only INSTANCE_NAME=$INSTANCE_NAME"'
 fi
 
-# ── 7. Operator handoff ──────────────────────────────────────────────────
+# ── 11. Optional: register the GitHub repo Jon asked about ──────────────
 
-HOSTNAME_LOCAL="$(hostname -I 2>/dev/null | awk '{print $1}' || echo '127.0.0.1')"
+if [[ -n "$TRACK_GITHUB_REPO" ]]; then
+  log "Registering GitHub repo $TRACK_GITHUB_REPO on this instance…"
+  curl -sf -X POST -H "Authorization: Bearer $PLEXUS_ADMIN_BEARER" \
+       -H "Content-Type: application/json" \
+       "http://127.0.0.1:${DASHBOARD_PORT}/api/v1/repos" \
+       -d "{\"github_owner_repo\":\"${TRACK_GITHUB_REPO}\"}" | \
+    grep -q '"ok":true' && ok "Repo registered." || \
+    log "Repo register response was unexpected; check via curl."
+fi
+
+# ── 12. Operator handoff ────────────────────────────────────────────────
 
 cat <<HANDOFF
 
-════════════════════════════════════════════════════════════════════════
-  Plexus installation complete
-════════════════════════════════════════════════════════════════════════
+═══════════════════════════════════════════════════════════════════════
+  Plexus '${INSTANCE_NAME}' installation complete
+═══════════════════════════════════════════════════════════════════════
 
-  Dashboard:       http://${HOSTNAME_LOCAL}:3100/dashboard
-  Yaklog API:      http://${HOSTNAME_LOCAL}:3100/api/v1
-  Grafana admin:   http://${HOSTNAME_LOCAL}:3001/       user=admin  pass=${GRAFANA_ADMIN_PW}
-  MinIO admin:     http://127.0.0.1:9001/               user=plexus-admin  pass=${MINIO_ROOT_PW}
-                     (VM-internal only; SSH-forward to reach)
+  Dashboard:  http://${EXTERNAL_HOSTNAME}:${DASHBOARD_PORT}/dashboard
+  API:        http://${EXTERNAL_HOSTNAME}:${DASHBOARD_PORT}/api/v1
+  Grafana:    http://${EXTERNAL_HOSTNAME}:${GRAFANA_PORT}/  (user=admin  pass=${GRAFANA_ADMIN_PW})
+  MinIO:      http://127.0.0.1:${MINIO_CONSOLE_PORT}/       (user=plexus-admin  pass=${MINIO_ROOT_PW})
+              (127.0.0.1-bound; SSH-forward to reach)
 
-  ── plexus-admin agent bearer (SAVE THIS NOW; not shown again) ──
+  ── plexus-admin bearer (SAVE THIS NOW; not shown again) ──
   ${PLEXUS_ADMIN_BEARER}
 
   Use it as:
     Authorization: Bearer ${PLEXUS_ADMIN_BEARER}
 
-  The plexus-admin agent has BOTH regular API + ops-key privileges (it's
-  the sole operator identity on this instance). Register additional agents
-  via POST /api/v1/register + ratify with this same bearer.
+  This bearer has BOTH regular API + ops-key privileges — the sole
+  operator identity on this instance. Register additional agents via
+  POST /api/v1/register + ratify with this same bearer.
 
   Verify install:
-    $INSTALL_DIR/plexus-install/verify.sh
+    ${SCRIPT_DIR}/verify.sh --install-dir ${INSTALL_DIR}
 
   Bring down:
-    cd $INSTALL_DIR && docker compose --env-file .env down
+    cd ${INSTALL_DIR} && docker compose down
+
+  Fully uninstall (removes volumes + systemd):
+    ${SCRIPT_DIR}/uninstall.sh --install-dir ${INSTALL_DIR} --force
 
   Files (mode 600 — DO NOT commit):
-    .env                    (yaklog + plexus-admin bearer)
-    plexus-grafana.env      (Grafana admin creds)
-    plexus-minio.env        (MinIO root creds)
+    ${INSTALL_DIR}/.env
+    ${INSTALL_DIR}/plexus-grafana.env
+    ${INSTALL_DIR}/plexus-minio.env
 
-════════════════════════════════════════════════════════════════════════
+═══════════════════════════════════════════════════════════════════════
 HANDOFF

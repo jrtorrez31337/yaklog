@@ -1,0 +1,117 @@
+# Plexus OTel collector config — Stage 1 (Plan C Q1=C4 hybrid; Q2=Prometheus).
+# Receives OTLP from each per-agent CC session; emits Prom scrape on :8889
+# for the Plexus Prometheus container to pull; logs OTLP traffic to stdout
+# (visible via `docker logs plexus-otel-collector`) for Stage 1 smoke + audit.
+#
+# Stage 1 scope: metrics + logs pipelines only; traces deferred (CC beta
+# tracing requires org allowlist; not Stage 1).
+#
+# Stage 1 auth model: collector accepts any Bearer header. Network isolation
+# (devel LAN; container on yaklog_default docker network) is the security
+# boundary. Stage 2 adds yaklog-token validation. PRODUCTION must add
+# proper auth — flagged in PLAN-C-STAGE-1-BUILD-PLAN.md §7 risks.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317  # exposed on host as 4327
+      http:
+        endpoint: 0.0.0.0:4318  # exposed on host as 4328
+
+processors:
+  # Resource processor: explicitly a no-op in Stage 1.
+  # CP1 attempt: had `insert plexus.collector_received_at="true"` as a
+  # "presence flag" -- this produced a literal "true" string as a Prom label
+  # value on EVERY series (caught during CP2 canary 2026-05-25). Useless as
+  # a label, just noise + cardinality. Removed.
+  #
+  # Identity + fingerprint fields (user_email, user_id, user_account_id,
+  # user_account_uuid, organization_id, host_arch, os_type, os_version,
+  # terminal_type, service_version) intentionally NOT scrubbed here -- in
+  # this cluster each agent runs under its own unix UID + its own Claude
+  # Pro/Max account, so those fields are legitimate per-account slicing
+  # dims (per Jon-direct 2026-05-25 mid CP4 design; see feedback memory
+  # feedback_plexus_identity_overlay_not_columns). Presentation-layer
+  # hygiene (overlay popup vs splattered columns) is a dashboard-side
+  # concern, NOT a collector-side scrub.
+  #
+  # If a future deployment IS multi-org-multi-user and DOES need to scrub
+  # PII at the collector boundary, add a resource processor here with
+  # `delete` actions on the relevant keys -- but that's a per-deployment
+  # config choice, not a Stage 1 default.
+
+  # CP4 hardening 2026-05-25: drop session_id resource attribute on the
+  # metrics pipeline. Why:
+  #   - session_id is unique per CC process invocation = high cardinality
+  #   - cumulative cost per session is rarely useful; per-session in logs is
+  #   - CC's OTEL_METRICS_INCLUDE_SESSION_ID=false in agent-env-template was
+  #     set but session_id still appeared in Prom labels after CP3 canary
+  #     (env var not honored, or only on specific metric types)
+  #
+  # Attempts during CP4:
+  #   1. `attributes` processor — doesn't see resource attrs.
+  #   2. `resource/drop_session_id` (namespaced) — config parsed, didn't apply.
+  #   3. `resource` (no namespace) — same: zpages /debug/pipelinez showed
+  #      only `batch` in the metrics pipeline, not `resource`. Silent drop.
+  #   4. `transform` w/ OTTL (THIS) — explicit context: resource, statement
+  #      to delete the key. OTTL is the most explicit (and most-tested)
+  #      contrib path for attribute mutation.
+  transform/drop_session_id:
+    # Actual OTel attribute key from CC is "session.id" (dotted); the
+    # prometheus exporter converts dots → underscores at export, which is
+    # why it appears as `session_id` in Prom labels. So delete by the
+    # DOTTED name. Discovered via detailed debug exporter dump 2026-05-25.
+    metric_statements:
+      - context: datapoint
+        statements:
+          - delete_key(attributes, "session.id")
+
+  # Batch processor: standard performance optimization; group exports.
+  batch:
+    timeout: 5s
+    send_batch_size: 512
+
+exporters:
+  # Prometheus exporter: exposes metrics on :8889/metrics for Prom to scrape.
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    # Preserve resource attributes (plexus.agent_id etc.) as Prom labels.
+    resource_to_telemetry_conversion:
+      enabled: true
+    # Default conversion: counters -> _total suffix; dots -> underscores.
+    # claude_code.token.usage (Counter) -> claude_code_token_usage_total
+  # Debug exporter: stage-1 visibility — every received metric/log emits
+  # one stderr line. Turn down verbosity for production.
+  debug:
+    verbosity: basic
+    sampling_initial: 5
+    sampling_thereafter: 200
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133  # exposed on host as 13134
+  zpages:
+    endpoint: 0.0.0.0:55679  # internal; useful for collector troubleshooting
+
+service:
+  extensions: [health_check, zpages]
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      # CP4: transform/drop_session_id uses OTTL to explicitly delete the
+      # session_id resource attribute BEFORE batch+export, so it never
+      # lands as a Prom label. (Plain `resource` processor silently
+      # didn't apply on 0.112.0-contrib — see comments by processor def.)
+      processors: [transform/drop_session_id, batch]
+      exporters: [prometheus, debug]
+    logs:
+      receivers: [otlp]
+      # session_id IS useful on logs (correlate a session's log events).
+      # Drop only on the metrics pipeline.
+      processors: [batch]
+      exporters: [debug]  # Stage 1: stdout-only for audit visibility;
+                          # Stage 1 CP4 may add a file sink for retention
+  telemetry:
+    logs:
+      level: info

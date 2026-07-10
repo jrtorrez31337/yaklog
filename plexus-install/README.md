@@ -1,109 +1,148 @@
-# plexus-install — one-time Plexus stand-up
+# plexus-install — portable Plexus install bundle
 
-Every Plexus build ships this directory. Point it at a fresh VM with docker installed, run one script, get a fully-wired Plexus instance with a plexus-admin bearer.
+Every Plexus build ships two things:
+
+1. **A source directory** (`plexus-install/` in the yaklog repo). Contains the installer, templates, and configs. Used by developers.
+2. **A shippable bundle** (`dist/plexus-install-bundle-<sha>-<utc>/`). Contains the source directory PLUS pre-saved OCI images. Portable: scp to any fresh Linux host and run `./install.sh`. No network access needed at install time.
+
+## Build the bundle (on a build-host with docker + git)
+
+```bash
+cd plexus-install
+./build-bundle.sh
+# → dist/plexus-install-bundle-<sha>-<utc>/
+# → dist/plexus-install-bundle-<sha>-<utc>.tar.gz  (~1.5GB)
+```
+
+`build-bundle.sh` produces both a directory + a tarball. The tarball is what you ship.
+
+## Install on a fresh host
+
+```bash
+# On the target host
+tar xzf plexus-install-bundle-<sha>-<utc>.tar.gz
+cd plexus-install-bundle-<sha>-<utc>/
+sudo ./install.sh
+```
+
+The installer asks 5 questions (all with sensible defaults):
+
+```
+Instance name [plexus]:                     ← used as container-name prefix + label
+Install dir [/opt/plexus]:                  ← where .env + docker-compose.yml live
+Dashboard bind IP [0.0.0.0]:                ← 0.0.0.0=external / 127.0.0.1=local-only
+External hostname/IP for URLs [autodetect]: ← printed in handoff banner
+Track a public GitHub repo? [none]:         ← optional: register a repo at install
+Proceed with install? [Y/n]:
+```
+
+Then it:
+1. Loads OCI images from `images/*.tar` (no `docker pull`, no `docker build` — offline)
+2. Mints a fresh plexus-admin bearer (256-bit hex; single token for both regular API + ops-key)
+3. Mints Grafana admin password + MinIO root credentials
+4. Materializes `.env` + `otel/prometheus.yml` from templates (envsubst)
+5. `docker compose up -d`
+6. Waits for yaklog + Grafana health
+7. Installs the output-ingester systemd timer (if run as root)
+8. Prints URLs + bearer + verify command
+
+**Save the printed bearer.** It's mode-600 in `.env` on the box, and NOT shown again at any handoff other than the initial install.
 
 ## What you get
 
-- `plexus-demo` (yaklog + dashboard)
-- `plexus-otel-collector` (OTLP receiver on `:4327` gRPC / `:4328` HTTP)
-- `plexus-prometheus` (metrics storage, 15d retention)
-- `plexus-grafana` (admin/observability UI on `:3001`)
-- `plexus-minio` (S3 Object Lock substrate for external audit anchor; VM-internal)
+Every service uses the instance name as prefix. If INSTANCE_NAME=my-plexus, containers are:
 
-Every service points at itself (no cross-cluster subscribe / export). One installation = one identity boundary.
+| Container | Image | Default port |
+|---|---|---|
+| `my-plexus` (yaklog + dashboard) | yaklog:latest (built from source) | 3100 |
+| `my-plexus-otel-collector` | otel/opentelemetry-collector-contrib:0.112.0 | 4327 gRPC / 4328 HTTP |
+| `my-plexus-prometheus` | prom/prometheus:v2.55.0 | 9090 |
+| `my-plexus-grafana` | grafana/grafana:11.6.0 | 3001 |
+| `my-plexus-minio` | minio/minio:latest | 9000 / 9001 (127.0.0.1 only) |
 
-## Prerequisites
-
-- Linux host with docker + docker compose plugin
-- User in the docker group (or sudo access)
-- Ports free: `3100` (yaklog), `3001` (Grafana), `9090` (Prometheus), `4327/4328` (OTel)
-- `curl` + `openssl` (any modern distro has both)
-
-## Install
-
-```bash
-# Clone the yaklog repo (contains this install dir)
-git clone <yaklog-source> plexus-install
-cd plexus-install
-
-# Run the one-time bootstrap
-./plexus-install/install.sh
-```
-
-That's it. The script:
-1. Verifies docker
-2. Mints a **single random token** → your plexus-admin bearer
-3. Mints Grafana + MinIO credentials
-4. Writes `.env` / `plexus-grafana.env` / `plexus-minio.env` (mode 600)
-5. `docker compose up -d --build`
-6. Waits for health
-7. Prints URLs + bearer + verify command
-
-**Save the printed bearer.** It is not shown again — the file is mode 600 in `.env`.
+All services point at themselves — no cross-cluster subscribe / export. Isolation posture: VM-level network isolation is the security boundary.
 
 ## Verify
 
 ```bash
-./plexus-install/verify.sh
+sudo ./verify.sh --install-dir /opt/plexus
 ```
 
-Runs 14 checks: service containers up, endpoints reachable, self-reference audit (Prometheus external labels, scrape targets, Grafana datasource). Any fail → check `docker compose logs`.
+Runs container-status + endpoint-reachability + self-reference audit (Prom `deployment` label matches instance name) + systemd timer state.
 
-## Use
+## Non-interactive install
 
 ```bash
-# Bearer is the plexus-admin agent's credential — has BOTH regular API + ops-key privileges
-BEARER=$(grep YAKLOG_API_KEYS .env | cut -d= -f2)
-
-# Post to the bus
-curl -sX POST http://localhost:3100/api/v1/messages \
-  -H "Authorization: Bearer $BEARER" \
-  -H "Content-Type: application/json" \
-  -d '{"channel":"handoff","sender":"plexus-admin","body":"hello"}'
-
-# Register a new agent (plexus-admin ratifies via same bearer)
-curl -sX POST http://localhost:3100/api/v1/register \
-  -H "Content-Type: application/json" \
-  -d '{"agent_id":"agent-example","contact":"agent-example@example.com"}'
-
-# Ratify the pending registration (ops-key path)
-curl -sX POST http://localhost:3100/api/v1/ops/register/<id>/ratify \
-  -H "Authorization: Bearer $BEARER"
+INSTANCE_NAME=demo-vm \
+INSTALL_DIR=/opt/demo-vm \
+YAKLOG_BIND_IP=0.0.0.0 \
+EXTERNAL_HOSTNAME=demo.example.com \
+sudo ./install.sh --non-interactive
 ```
+
+All prompts have env-var equivalents (see `./install.sh --help`).
 
 ## Bring down
 
 ```bash
-cd plexus-install
-docker compose --env-file .env down
+cd /opt/plexus && docker compose down          # keeps data
+cd /opt/plexus && docker compose down -v       # drops volumes (destroys data)
 ```
 
-Data persists in `./data/` (SQLite) + docker volumes (Prom / Grafana / MinIO). Wipe with:
+## Full uninstall
 
 ```bash
-docker compose --env-file .env down -v   # -v drops volumes
-rm -rf ./data
+sudo ./uninstall.sh --install-dir /opt/plexus --force
 ```
 
-## Re-install
+Removes: docker containers + volumes + systemd units + `/etc/plexus-<instance>/` + `/var/lib/plexus-<instance>/` + install dir. Dry-run by default; `--force` executes.
 
-Refusing to overwrite an existing `.env` is the default idempotency guard. To force:
+## Re-install / migrate
 
-```bash
-./plexus-install/install.sh --force
-```
+Installer refuses to overwrite an existing `.env` by default. Use `--force` to wipe the current identity + start fresh (destroys current plexus-admin bearer + all bus data unless you `--keep-data` on uninstall first).
 
-This wipes the current plexus-admin identity + mints a fresh one.
+## Ports + firewall
 
-## Files this creates (all mode 600 — DO NOT commit)
+Only two ports typically need external exposure:
 
-- `.env` — yaklog config + plexus-admin bearer
-- `plexus-grafana.env` — Grafana admin creds
-- `plexus-minio.env` — MinIO root creds
-- `data/` — yaklog SQLite database (host bind)
+- **3100** (yaklog / dashboard) — bind to `0.0.0.0` if operators reach from LAN
+- **4327/4328** (OTLP receivers) — bind to `0.0.0.0` if agents on OTHER hosts emit here
+
+Everything else (Prometheus, Grafana, MinIO) defaults to `127.0.0.1`-bound. SSH-forward to reach.
+
+## Prerequisites on the install host
+
+- Linux (amd64 — arm64 is v2 forward-track)
+- docker + docker compose plugin (`docker compose version` reports `v2.x+`)
+- `curl`, `openssl`, `envsubst` (gettext-base)
+- Ports free per the config you pick (defaults: 3100 / 3001 / 9090 / 4327-4328 / 9000-9001 / 13134)
+- Root for the systemd timer install (installer detects + skips gracefully if not root)
 
 ## Architecture note
 
-The plexus-admin agent is the sole operator identity per instance. It holds both regular API bearer + ops-key privileges (they're the same string in this MVP). Additional agents register via `POST /api/v1/register` and plexus-admin ratifies them with the same bearer.
+The plexus-admin agent is the **sole operator identity** per instance. It holds both regular API bearer + ops-key privileges (same string in this MVP). Additional agents register via `POST /api/v1/register` and plexus-admin ratifies them with the same bearer.
 
-Sister-shape production discipline: plexus-admin is a **local** identity — never cross-instance. If you have two Plexus installations, they have two distinct plexus-admin bearers + two distinct identity boundaries.
+Sister-shape production discipline: plexus-admin is a **local** identity — never cross-instance. Two Plexus installations = two distinct plexus-admin bearers = two distinct identity boundaries.
+
+## Files created (mode 600 — DO NOT commit)
+
+Inside `$INSTALL_DIR/`:
+- `.env` — yaklog config + plexus-admin bearer + port bindings
+- `plexus-grafana.env` — Grafana admin creds
+- `plexus-minio.env` — MinIO root creds
+- `docker-compose.yml` — copied from bundle
+- `otel/prometheus.yml` — generated from template with instance label
+- `otel/collector-config.yaml` — copied from bundle
+- `data/` — yaklog SQLite database (host bind)
+- `pat/` — GitHub PAT mount point (empty until operator places a fine-grained PAT)
+
+Under `/etc/plexus-<instance>/` + `/var/lib/plexus-<instance>/` (if root install):
+- `ops-key` (mode 0400) — read by systemd ingester timer
+- `textfile/output-ingester/` — Prom scrape target
+
+## Refs
+
+- PLAN-PLEXUS-INSTALL-BUNDLE.md
+- Task #284 (this)
+- Task #278 (v1 plexus-install)
+- Task #185 (external-party clean-install milestone — closed by Jon's manual install of this bundle)

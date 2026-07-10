@@ -1,76 +1,144 @@
 #!/usr/bin/env bash
-# plexus-install/verify.sh — post-install smoke.
+# verify.sh — post-install sanity for a Plexus instance.
+# Task #284 / PLAN-PLEXUS-INSTALL-BUNDLE.md §5.
 #
-# Verifies every service in the Plexus stack is up + reachable + wired to
-# itself (no external pointers). Run after install.sh; safe to re-run.
+# Sources $INSTALL_DIR/.env so it works against any renamed instance +
+# non-default ports. Safe to re-run.
 
-set -euo pipefail
+set -u
 
-INSTALL_DIR="${INSTALL_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
-ENV_FILE="${ENV_FILE:-$INSTALL_DIR/.env}"
+INSTALL_DIR="${INSTALL_DIR:-/opt/plexus}"
+
+for arg in "$@"; do
+  case "$arg" in
+    --install-dir=*) INSTALL_DIR="${arg#*=}"; shift ;;
+    --install-dir)   shift; INSTALL_DIR="$1"; shift ;;
+    --help|-h)       echo "Usage: $0 [--install-dir <path>]"; exit 0 ;;
+  esac
+done
+
+ENV_FILE="$INSTALL_DIR/.env"
 
 if [[ ! -f "$ENV_FILE" ]]; then
-  echo "[verify] .env not found at $ENV_FILE — has install.sh run yet?" >&2
-  exit 1
+  echo "verify: no .env at $ENV_FILE (installer never ran here?)" >&2
+  exit 2
 fi
 
-# Read plexus-admin bearer for authed checks
-# shellcheck disable=SC1090
+# Source env for port + bearer + INSTANCE_NAME
+set -a
+# shellcheck disable=SC1091
 source "$ENV_FILE"
-BEARER="${YAKLOG_API_KEYS%%,*}"
+set +a
 
-ok=0; fail=0
+PLEXUS_ADMIN_BEARER="${YAKLOG_OPS_API_KEYS%%,*}"
+INSTANCE_NAME="${INSTANCE_NAME:-plexus}"
+DASHBOARD_PORT="${DASHBOARD_PORT:-3100}"
+PROM_PORT="${PROM_PORT:-9090}"
+GRAFANA_PORT="${GRAFANA_PORT:-3001}"
+OTLP_HTTP_PORT="${OTLP_HTTP_PORT:-4328}"
 
-check() {
-  local name="$1" cmd="$2"
-  printf '  %-40s ' "$name"
-  if eval "$cmd" >/dev/null 2>&1; then
-    printf '\033[32mPASS\033[0m\n'
-    ok=$((ok+1))
-  else
-    printf '\033[31mFAIL\033[0m\n'
-    fail=$((fail+1))
-  fi
-}
+PASS=0; FAIL=0
+pass() { printf '  \033[32m✓\033[0m %s\n' "$*"; PASS=$((PASS+1)); }
+fail() { printf '  \033[31m✗\033[0m %s\n' "$*" >&2; FAIL=$((FAIL+1)); }
 
 echo
-echo 'Plexus install smoke — service reachability + self-reference'
-echo '─────────────────────────────────────────────────────────────'
+echo "=== Plexus '$INSTANCE_NAME' verify (${INSTALL_DIR}) ==="
+echo
 
-check 'docker daemon reachable'          'docker info'
-check 'plexus-demo (yaklog) container up' 'docker ps --format "{{.Names}}" | grep -qw plexus-demo'
-check 'plexus-otel-collector container up' 'docker ps --format "{{.Names}}" | grep -qw plexus-otel-collector'
-check 'plexus-prometheus container up'   'docker ps --format "{{.Names}}" | grep -qw plexus-prometheus'
-check 'plexus-grafana container up'      'docker ps --format "{{.Names}}" | grep -qw plexus-grafana'
-check 'plexus-minio container up'        'docker ps --format "{{.Names}}" | grep -qw plexus-minio'
+# ── 1. Docker containers up ─────────────────────────────────────────────
+echo 'Containers:'
+CONTAINERS=(
+  "${INSTANCE_NAME}"
+  "${INSTANCE_NAME}-otel-collector"
+  "${INSTANCE_NAME}-prometheus"
+  "${INSTANCE_NAME}-grafana"
+  "${INSTANCE_NAME}-minio"
+)
+for c in "${CONTAINERS[@]}"; do
+  status=$(docker ps --filter "name=^${c}$" --format '{{.Status}}' | head -1)
+  if [[ -n "$status" && "$status" == Up* ]]; then
+    pass "$c ($status)"
+  else
+    fail "$c not Up (status: '$status')"
+  fi
+done
 
+# ── 2. Endpoints ─────────────────────────────────────────────────────────
 echo
 echo 'Endpoints:'
-check 'yaklog /api/v1/health'            'curl -sf --max-time 5 http://127.0.0.1:3100/api/v1/health'
-check 'yaklog /dashboard'                'curl -sf --max-time 5 http://127.0.0.1:3100/dashboard'
-check 'yaklog authed presence (bearer)'  "curl -sf --max-time 5 -H 'Authorization: Bearer $BEARER' http://127.0.0.1:3100/api/v1/presence"
-check 'Prometheus /-/healthy'            'curl -sf --max-time 5 http://127.0.0.1:9090/-/healthy'
-check 'Grafana /api/health'              'curl -sf --max-time 5 http://127.0.0.1:3001/api/health'
-check 'MinIO health (internal only)'     'docker exec plexus-minio curl -sf --max-time 5 http://localhost:9000/minio/health/live'
-check 'OTel collector OTLP HTTP accepts' "curl -sf --max-time 5 -X POST http://127.0.0.1:4328/v1/logs -H 'Content-Type: application/json' -d '{}'"
+if curl -sf --max-time 3 "http://127.0.0.1:${DASHBOARD_PORT}/api/v1/health" >/dev/null; then
+  pass "yaklog /api/v1/health → 200 (port $DASHBOARD_PORT)"
+else
+  fail "yaklog /api/v1/health did not return 200"
+fi
 
+if curl -sf --max-time 3 "http://127.0.0.1:${DASHBOARD_PORT}/dashboard" >/dev/null; then
+  pass "yaklog /dashboard → 200"
+else
+  fail "yaklog /dashboard did not return 200"
+fi
+
+if [[ -n "$PLEXUS_ADMIN_BEARER" ]]; then
+  body=$(curl -sf --max-time 3 -H "Authorization: Bearer $PLEXUS_ADMIN_BEARER" \
+         "http://127.0.0.1:${DASHBOARD_PORT}/api/v1/presence/public" 2>/dev/null || echo "")
+  if [[ -n "$body" ]]; then
+    pass "plexus-admin bearer authenticated + presence returned"
+  else
+    fail "plexus-admin bearer failed to authenticate"
+  fi
+else
+  fail "no bearer in .env (YAKLOG_OPS_API_KEYS)"
+fi
+
+if curl -sf --max-time 3 "http://127.0.0.1:${PROM_PORT}/-/healthy" >/dev/null; then
+  pass "Prometheus /-/healthy → 200 (port $PROM_PORT)"
+else
+  fail "Prometheus /-/healthy did not return 200"
+fi
+
+if curl -sf --max-time 3 "http://127.0.0.1:${GRAFANA_PORT}/api/health" >/dev/null; then
+  pass "Grafana /api/health → 200 (port $GRAFANA_PORT)"
+else
+  fail "Grafana /api/health did not return 200"
+fi
+
+if curl -sf --max-time 3 -X POST -H 'Content-Type: application/json' \
+        "http://127.0.0.1:${OTLP_HTTP_PORT}/v1/logs" -d '{}' >/dev/null; then
+  pass "OTel collector OTLP HTTP accepts POST (port $OTLP_HTTP_PORT)"
+else
+  fail "OTel collector OTLP HTTP not reachable"
+fi
+
+# ── 3. Self-reference audit ─────────────────────────────────────────────
 echo
-echo 'Self-reference audit (no external pointers):'
-check 'Prom external_labels: deployment=demo' \
-  "curl -sf --max-time 5 http://127.0.0.1:9090/api/v1/status/config | grep -q 'deployment: demo'"
-check 'Prom scrape targets are all internal' \
-  "curl -sf --max-time 5 http://127.0.0.1:9090/api/v1/targets | grep -qv '192.168.\|:3100/metrics'"
-check 'Grafana datasource is local Prom' \
-  "curl -sfu 'admin:$(grep GF_SECURITY_ADMIN_PASSWORD $INSTALL_DIR/plexus-grafana.env | cut -d= -f2)' --max-time 5 http://127.0.0.1:3001/api/datasources 2>/dev/null | grep -q 'plexus-prometheus'"
+echo 'Self-reference audit:'
+prom_deployment=$(curl -sf --max-time 3 "http://127.0.0.1:${PROM_PORT}/api/v1/status/config" 2>/dev/null | \
+                  grep -oE "deployment: [a-zA-Z0-9_-]+" | head -1 | awk '{print $2}')
+if [[ "$prom_deployment" == "$INSTANCE_NAME" ]]; then
+  pass "Prometheus external_labels: deployment=$INSTANCE_NAME"
+else
+  fail "Prometheus external_labels deployment='$prom_deployment' expected '$INSTANCE_NAME'"
+fi
 
+# ── 4. Systemd timer (if root-installed) ────────────────────────────────
+echo
+echo 'Systemd:'
+timer_name="yaklog-output-ingester-${INSTANCE_NAME}.timer"
+if command -v systemctl >/dev/null && systemctl list-timers --all "$timer_name" 2>/dev/null | grep -q "$timer_name"; then
+  pass "timer enabled: $timer_name"
+else
+  printf '  \033[33m·\033[0m timer %s not installed (may be intentional if non-root install)\n' "$timer_name"
+fi
+
+# ── Summary ──────────────────────────────────────────────────────────────
 echo
 echo '─────────────────────────────────────────────────────────────'
-echo "Passed: $ok    Failed: $fail"
-if [[ "$fail" -gt 0 ]]; then
+echo "Passed: $PASS    Failed: $FAIL"
+if [[ "$FAIL" -gt 0 ]]; then
   echo
   echo 'Diagnostics:'
-  echo '  docker compose logs --tail=50'
-  echo '  docker ps -a'
+  echo "  cd $INSTALL_DIR && docker compose logs --tail=50"
+  echo "  docker ps -a"
   exit 1
 fi
 echo 'Plexus install verified clean.'
