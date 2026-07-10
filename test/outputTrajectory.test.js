@@ -181,3 +181,39 @@ test('endpoint — malformed metric → 400', async () => {
     .query({ from: '2026-07-01', to: '2026-07-04', pivot: 'agent', metric: 'bogus' });
   assert.equal(r.status, 400);
 });
+
+// Task #277 Phase B / Task 2 — optional repo_key filter.
+
+test('queryOutputDailyTrajectory — repo_key filter scopes agent series to that repo', () => {
+  const r = queryOutputDailyTrajectory({
+    from: '2026-07-01', to: '2026-07-04',
+    pivot: 'agent', metric: 'commits', top_n: 5,
+    repo_key: 'repo2.git',
+  });
+  // repo2.git only has alice (3 commits on 07-02); bob + carol drop
+  assert.equal(r.series.length, 1);
+  assert.equal(r.series[0].key, 'agent-alice');
+  assert.deepEqual(r.series[0].points.map((p) => p.value_cumulative), [0, 3, 3, 3]);
+});
+
+test('queryOutputDailyTrajectory — repo_key filter with pivot=repo returns single-repo series', () => {
+  const r = queryOutputDailyTrajectory({
+    from: '2026-07-01', to: '2026-07-04',
+    pivot: 'repo', metric: 'commits', top_n: 5,
+    repo_key: 'repo1.git',
+  });
+  assert.equal(r.series.length, 1);
+  assert.equal(r.series[0].key, 'repo1.git');
+  // repo1: 5+2=7 on 07-01, +1 (unattr) on 07-02, 0 on 07-03, +4 (carol) on 07-04
+  assert.deepEqual(r.series[0].points.map((p) => p.value_cumulative), [7, 8, 8, 12]);
+});
+
+test('queryOutputDailyTrajectory — repo_key=null (default) preserves cluster-wide behavior', () => {
+  const r = queryOutputDailyTrajectory({
+    from: '2026-07-01', to: '2026-07-04',
+    pivot: 'repo', metric: 'commits', top_n: 5,
+    repo_key: null,
+  });
+  const keys = r.series.map((s) => s.key).sort();
+  assert.deepEqual(keys, ['repo1.git', 'repo2.git']);
+});

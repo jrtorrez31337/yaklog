@@ -1925,6 +1925,7 @@ function queryOutputDailyByAgent({ agent_id, from, to }) {
 function queryOutputDailyTrajectory({
   from, to, pivot = 'agent', metric = 'commits',
   top_n = 5, include_unattributed = false,
+  repo_key = null,
 } = {}) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
     throw new Error(`queryOutputDailyTrajectory: from/to must be YYYY-MM-DD`);
@@ -1938,7 +1939,11 @@ function queryOutputDailyTrajectory({
     throw new Error(`queryOutputDailyTrajectory: metric must be one of ${[...VALID_METRICS].join(', ')}`);
   }
 
-  const rows = _readOutputDailyRowsInRange({ from, to });
+  const allRows = _readOutputDailyRowsInRange({ from, to });
+  // Task #277 Phase B: optional repo_key filter for #output repo-focused drill-in.
+  // Applied post-fetch (rows are small; keeps the SQL simple + reused by
+  // other queries). NULL sentinel preserves cluster-wide behavior.
+  const rows = repo_key == null ? allRows : allRows.filter((r) => r.repo_key === repo_key);
 
   // Enumerate all dates in window (inclusive both ends) so cumulative series
   // has continuous points even on zero-activity dates.
