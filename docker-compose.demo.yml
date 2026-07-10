@@ -16,7 +16,12 @@
 
 services:
   yaklog:
+    # Task #285 tag-alignment: bundle produces yaklog:latest; demo compose
+    # consumes the same tag so `deploy-from-bundle.sh --target demo`
+    # picks up the newly-loaded image after `docker load`. build: . still
+    # supports local rebuild if the operator needs it (fallback path).
     build: .
+    image: yaklog:latest
     container_name: plexus-demo
     restart: unless-stopped
     env_file:

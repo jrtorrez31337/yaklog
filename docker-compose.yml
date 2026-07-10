@@ -1,6 +1,13 @@
 services:
   yaklog:
+    # Task #285 tag-alignment: bundle produces yaklog:latest; devel compose
+    # must consume the same tag so `docker load` from bundle + `docker
+    # compose up -d --force-recreate` picks up the newly-loaded image
+    # without needing a separate re-tag step. build: . still works for
+    # `docker compose up -d --build` local-dev workflow — output image
+    # gets both the anonymous <project>-<service> tag AND yaklog:latest.
     build: .
+    image: yaklog:latest
     container_name: yaklog
     restart: unless-stopped
     env_file:

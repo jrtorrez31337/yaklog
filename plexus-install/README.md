@@ -140,9 +140,47 @@ Under `/etc/plexus-<instance>/` + `/var/lib/plexus-<instance>/` (if root install
 - `ops-key` (mode 0400) — read by systemd ingester timer
 - `textfile/output-ingester/` — Prom scrape target
 
+## Deploy discipline (Task #285)
+
+Every push to `/srv/git/yaklog.git` main triggers an automatic bundle rebuild via the `post-receive` hook. The bundle in `dist/` is always fresh.
+
+**One-command deploy from bundle:**
+
+```bash
+# On devel — update internal Plexus + demo VM to the latest bundle
+/home/jon/yaklog/plexus-install/deploy-from-bundle.sh --target both
+
+# Or one at a time
+deploy-from-bundle.sh --target devel   # local devel yaklog only
+deploy-from-bundle.sh --target demo    # remote demo VM only (SSH: plexus-admin@10.71.1.184)
+```
+
+The script:
+1. Locates the freshest bundle in `dist/`
+2. Backs up the target's `/data/yaklog.db` per `feedback_db_rebuild_safety`
+3. `docker load < images/yaklog.tar` on the target
+4. `docker compose up -d --force-recreate --no-build yaklog`
+5. Health-checks the new container
+
+Both devel `docker-compose.yml` and `docker-compose.demo.yml` declare `image: yaklog:latest`, so the freshly-loaded image is picked up automatically.
+
+**Auto-deploy is deliberately not enabled.** The post-receive hook only rebuilds the bundle. Operator manually invokes `deploy-from-bundle.sh` after inspecting the build. Full auto-deploy is a forward-track once discipline is trusted.
+
+**Bundle rotation:** the hook keeps the last 5 bundles in `dist/`. Older ones are auto-purged.
+
+### Install the post-receive hook
+
+```bash
+sudo install -m 0755 /home/jon/yaklog/plexus-install/hooks/post-receive \
+  /srv/git/yaklog.git/hooks/post-receive
+```
+
+Verify it fires: `git push origin main` on any commit + watch `/var/log/yaklog-hook/post-receive.log` (or `/tmp/yaklog-hook/` if `/var/log/` unwritable).
+
 ## Refs
 
 - PLAN-PLEXUS-INSTALL-BUNDLE.md
-- Task #284 (this)
+- Task #284 (bundle)
+- Task #285 (auto-rebuild + deploy discipline)
 - Task #278 (v1 plexus-install)
 - Task #185 (external-party clean-install milestone — closed by Jon's manual install of this bundle)

@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+# post-receive — auto-rebuild the Plexus install bundle on every main push
+# to /srv/git/yaklog.git. Task #285.
+#
+# INSTALL: this file is a SOURCE canonical copy in plexus-install/hooks/.
+# To activate it on the bare-git repo:
+#   install -m 0755 plexus-install/hooks/post-receive \
+#     /srv/git/yaklog.git/hooks/post-receive
+#
+# Behavior on main-push:
+#   1. Fork a background job so the pusher doesn't block on ~2min rebuild
+#   2. Background job clones fresh, runs build-bundle.sh, logs to
+#      /var/log/yaklog-hook/build-<sha>.log (or /tmp/yaklog-hook/ if
+#      /var/log unwritable)
+#   3. Rotates dist/ — keeps last 5 bundles
+#   4. Emits notification via /home/jon/.local/bin/yaklog-notify if present
+#
+# Deploy from bundle is NOT automated (safety). Operator manually runs:
+#   /home/jon/yaklog/plexus-install/deploy-from-bundle.sh --target both
+#
+# once they trust the freshly-built bundle. Auto-deploy is forward-track.
+#
+# Failure modes:
+#   - Concurrent pushes: flock() serializes rebuilds (one at a time)
+#   - Build fails: log preserved, no deploy triggered, next push retries
+#   - Disk full: build-bundle.sh fails cleanly, log preserved
+
+set -euo pipefail
+
+LOG_DIR="/var/log/yaklog-hook"
+[[ -w "$(dirname "$LOG_DIR")" ]] || LOG_DIR="/tmp/yaklog-hook"
+mkdir -p "$LOG_DIR"
+
+MASTER_LOG="$LOG_DIR/post-receive.log"
+
+log() {
+  local msg
+  msg="$(date -u +%Y-%m-%dT%H:%M:%SZ) $*"
+  printf '%s\n' "$msg" | tee -a "$MASTER_LOG"
+}
+
+# Read refs being pushed from stdin (git provides this)
+while read -r old_sha new_sha ref; do
+  # Only trigger on main
+  if [[ "$ref" != "refs/heads/main" ]]; then
+    log "skip: ref $ref (not main)"
+    continue
+  fi
+
+  # If we're deleting the ref, skip
+  if [[ "$new_sha" == "0000000000000000000000000000000000000000" ]]; then
+    log "skip: main deletion"
+    continue
+  fi
+
+  log "fired: main $old_sha → $new_sha"
+
+  # Fork background job — pusher does NOT wait
+  (
+    # Re-open stdin/out/err detached so ssh push finishes cleanly
+    exec </dev/null
+    exec >>"$MASTER_LOG"
+    exec 2>&1
+
+    # Serialize concurrent rebuilds (belt-and-suspenders)
+    LOCK_FILE="$LOG_DIR/rebuild.lock"
+    exec 9>"$LOCK_FILE"
+    if ! flock -n 9; then
+      log "  another rebuild in progress; skipping (yaklog-hook.rebuild.lock)"
+      exit 0
+    fi
+
+    log "  starting bundle rebuild for $new_sha"
+
+    # Clone to a scratch workdir
+    WORK="$(mktemp -d /tmp/yaklog-hook-build.XXXXXX)"
+    trap 'rm -rf "$WORK"' EXIT
+
+    if ! git clone --quiet /srv/git/yaklog.git "$WORK/yaklog" 2>&1; then
+      log "  ERROR: clone failed"
+      exit 1
+    fi
+
+    # Point dist at the canonical location so post-hook `deploy-from-bundle.sh`
+    # sees the fresh bundle without needing --bundle-dir.
+    export DIST_DIR="/home/jon/yaklog/dist"
+    mkdir -p "$DIST_DIR"
+
+    # Build
+    BUILD_LOG="$LOG_DIR/build-${new_sha:0:12}-$(date -u +%Y%m%dT%H%M%SZ).log"
+    if ! "$WORK/yaklog/plexus-install/build-bundle.sh" >"$BUILD_LOG" 2>&1; then
+      log "  ERROR: build-bundle.sh failed. Log: $BUILD_LOG"
+      # Best-effort bus notify (optional; noop if binary missing)
+      if [[ -x /home/jon/.local/bin/yaklog-notify ]]; then
+        /home/jon/.local/bin/yaklog-notify \
+          "bundle rebuild FAILED on push $new_sha — see $BUILD_LOG" >/dev/null 2>&1 || true
+      fi
+      exit 1
+    fi
+
+    log "  bundle rebuild OK (build log: $BUILD_LOG)"
+
+    # ── Rotate dist/ — keep last 5 bundles ───────────────────────────
+    KEEP=5
+    cd "$DIST_DIR"
+    # Delete bundles older than the last KEEP (dirs + matching tarballs)
+    ls -td plexus-install-bundle-*/ 2>/dev/null | tail -n +$((KEEP + 1)) | while read -r old; do
+      log "  rotate: removing old bundle $old"
+      rm -rf "$old" "${old%/}.tar.gz"
+    done
+
+    # ── Bus notification (best-effort) ───────────────────────────────
+    LATEST_TAR=$(ls -t "$DIST_DIR"/plexus-install-bundle-*.tar.gz 2>/dev/null | head -1)
+    if [[ -x /home/jon/.local/bin/yaklog-notify ]]; then
+      /home/jon/.local/bin/yaklog-notify \
+        "bundle rebuilt for main $new_sha → $LATEST_TAR — deploy via plexus-install/deploy-from-bundle.sh --target both" \
+        >/dev/null 2>&1 || true
+    fi
+
+    log "  done: $LATEST_TAR"
+  ) &
+
+  disown $! 2>/dev/null || true
+done
