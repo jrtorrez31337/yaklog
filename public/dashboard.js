@@ -786,8 +786,14 @@
   // Task #264 v1: wire time-range picker click/keyboard handlers + sync UI to initial state
   _trpWireHandlers();
   _trpUpdateButtons();
-  // CP14.x: support direct #orp/<agent_id> deep-link on initial page load
-  activateTab(location.hash.slice(1) || 'live');
+  // CP14.x: support direct #orp/<agent_id> deep-link on initial page load.
+  // Deferred to next macro-task so the mount handlers' `let`-scoped state flags
+  // (declared later in the IIFE — e.g. _outputMounted at ~L6435, _reposMounted
+  // at ~L6184) have finished TDZ initialization before mountOutputTab/etc fire.
+  // Prior symptom: landing on #output with a fresh page crashed with
+  //   ReferenceError: Cannot access '_outputMounted' before initialization
+  // → no hero/list/heatmap/activity/trajectory rendered; whole tab blank.
+  setTimeout(() => activateTab(location.hash.slice(1) || 'live'), 0);
 
   // ────────────────────────────────────────────────────────────────────
   // CP2: PlexusChart — wraps uPlot with template-name + auto-refresh +
