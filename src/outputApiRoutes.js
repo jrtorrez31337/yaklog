@@ -274,12 +274,63 @@ publicRouter.get('/trajectory', (req, res) => {
     const metric = (req.query.metric || 'commits').toLowerCase();
     const topN = req.query.top_n ? Number(req.query.top_n) : 5;
     const includeUnattributed = req.query.include_unattributed === '1';
+    // Task #277 Phase B: optional repo_key filter for #output tab drill-in.
+    // Kept lightly-validated at the route (owner/name shape); the query fn
+    // does the actual filter via bound parameter.
+    const repoKey = typeof req.query.repo === 'string' ? req.query.repo.trim() : '';
+    if (repoKey && !/^[\w.-]+\/[\w.-]+$/.test(repoKey)) {
+      return res.status(400).json({ error: 'ValidationError', message: 'repo must match owner/name' });
+    }
     const result = dbModule.queryOutputDailyTrajectory({
       from, to, pivot, metric, top_n: topN,
       include_unattributed: includeUnattributed,
+      repo_key: repoKey || null,
     });
     const isEmpty = result.series.length === 0
       || result.series.every((s) => s.points.every((p) => p.value_cumulative === 0));
+    return res.json(attachMetadata({ period, ...result }, isEmpty));
+  } catch (e) {
+    return res.status(400).json({ error: 'ValidationError', message: e.message });
+  }
+});
+
+// Task #277 Phase B / Task 5 — GET /output/repo-summary
+// Backs the #output tab repo-context strip (drill-in state) per PLAN-OUTPUT-
+// REFACTOR-COMMIT-HISTORY-B-REPO-FIRST.md §5.1. Packs repo metadata + windowed
+// counts + governance signals in one call.
+publicRouter.get('/repo-summary', (req, res) => {
+  try {
+    const { from, to, period } = resolveRange(req);
+    const repo = typeof req.query.repo === 'string' ? req.query.repo.trim() : '';
+    if (!repo || !/^[\w.-]+\/[\w.-]+$/.test(repo)) {
+      return res.status(400).json({ error: 'ValidationError', message: 'repo query required; format owner/name' });
+    }
+    const summary = dbModule.queryOutputRepoSummary({ repo_key: repo, from, to });
+    if (!summary) {
+      return res.status(404).json({ error: 'RepoNotFound', message: `repo not under governance: ${repo}` });
+    }
+    const isEmpty = summary.counts.commits === 0;
+    return res.json(attachMetadata({ period, ...summary }, isEmpty));
+  } catch (e) {
+    return res.status(400).json({ error: 'ValidationError', message: e.message });
+  }
+});
+
+// Task #277 Phase B / Task 6 — GET /output/repo-governance
+// Isolates governance-quality signals for standalone rendering + future Prom
+// textfile emit per PLAN-OUTPUT-REFACTOR-COMMIT-HISTORY-B-REPO-FIRST.md §5.2.
+publicRouter.get('/repo-governance', (req, res) => {
+  try {
+    const { from, to, period } = resolveRange(req);
+    const repo = typeof req.query.repo === 'string' ? req.query.repo.trim() : '';
+    if (!repo || !/^[\w.-]+\/[\w.-]+$/.test(repo)) {
+      return res.status(400).json({ error: 'ValidationError', message: 'repo query required; format owner/name' });
+    }
+    // For governance we don't 404 on missing repo — the caller may be probing
+    // for signals on a repo that hasn't been added to output_repo yet.
+    // Return zeroed signals with note explaining.
+    const result = dbModule.queryOutputRepoGovernance({ repo_key: repo, from, to });
+    const isEmpty = result.signals.signed_commits.total === 0;
     return res.json(attachMetadata({ period, ...result }, isEmpty));
   } catch (e) {
     return res.status(400).json({ error: 'ValidationError', message: e.message });
