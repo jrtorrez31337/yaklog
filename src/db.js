@@ -1071,6 +1071,43 @@ function initializeDb() {
     )
   `).run();
 
+  // Task #290 (CP13.6 Phase 3): idempotent ALTER TABLE ADD COLUMN for
+  //   - output_commit governance-quality columns (signed / parent_count)
+  //   - output_repo GitHub metadata columns (creation_at / default_branch / size /
+  //     language / visibility / repo_updated_at / repo_pushed_at / meta_synced_at)
+  // ALTER TABLE IF NOT EXISTS ADD COLUMN is not available in SQLite; wrap each
+  // in try/catch instead — duplicate-column errors are the expected steady-state.
+  const _addColumn = (table, column, decl) => {
+    try {
+      db.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${decl}`).run();
+    } catch (e) {
+      if (!/duplicate column/i.test(String(e.message))) throw e;
+    }
+  };
+  _addColumn('output_commit', 'signed', 'INTEGER DEFAULT 0');
+  _addColumn('output_commit', 'parent_count', 'INTEGER DEFAULT 1');
+  _addColumn('output_repo', 'github_repo_created_at', 'TEXT');
+  _addColumn('output_repo', 'github_default_branch', 'TEXT');
+  _addColumn('output_repo', 'github_size_kb', 'INTEGER');
+  _addColumn('output_repo', 'github_primary_language', 'TEXT');
+  _addColumn('output_repo', 'github_visibility', 'TEXT');
+  _addColumn('output_repo', 'github_repo_updated_at', 'TEXT');
+  _addColumn('output_repo', 'github_repo_pushed_at', 'TEXT');
+  _addColumn('output_repo', 'github_last_meta_synced_at', 'TEXT');
+
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS output_github_commit_cursor (
+      github_owner_repo         TEXT PRIMARY KEY,
+      last_commit_committed_at  TEXT,
+      last_commit_sha           TEXT,
+      commits_synced_total      INTEGER NOT NULL DEFAULT 0,
+      rate_limit_remaining      INTEGER,
+      rate_limit_reset_at       TEXT,
+      last_walk_status          TEXT,
+      last_walk_message         TEXT
+    )
+  `).run();
+
   // CP17.A (Jon-direct 2026-07-06; secops #11759 SIGN-OFF; parch #11687 Class B):
   //   - bare_git_request: intent-record for agent-authored bare-git canonical
   //     creation; admin-agent auto-fulfills via poll+execute
@@ -1237,6 +1274,87 @@ function upsertOutputRepo({ github_owner_repo, bare_git_path = null, enabled = 1
       bare_git_path = COALESCE(excluded.bare_git_path, output_repo.bare_git_path),
       enabled       = excluded.enabled
   `).run(github_owner_repo, bare_git_path, enabled, nowIso, added_by);
+}
+
+// Task #290: refresh GitHub metadata columns on output_repo row. Called by the
+// ingester after a successful walkRepoMeta() pass. If the row doesn't exist,
+// this INSERTs it (added_at set to now) — sister-shape upsertOutputRepo but for
+// metadata-only columns.
+function upsertOutputRepoMeta(githubOwnerRepo, meta) {
+  const database = getDb();
+  const nowIso = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
+  database.prepare(`
+    INSERT INTO output_repo (
+      github_owner_repo, added_at,
+      github_repo_created_at, github_default_branch, github_size_kb,
+      github_primary_language, github_visibility, github_repo_updated_at,
+      github_repo_pushed_at, github_last_meta_synced_at
+    ) VALUES (
+      @github_owner_repo, @added_at,
+      @github_repo_created_at, @github_default_branch, @github_size_kb,
+      @github_primary_language, @github_visibility, @github_repo_updated_at,
+      @github_repo_pushed_at, @github_last_meta_synced_at
+    )
+    ON CONFLICT(github_owner_repo) DO UPDATE SET
+      github_repo_created_at      = excluded.github_repo_created_at,
+      github_default_branch       = excluded.github_default_branch,
+      github_size_kb              = excluded.github_size_kb,
+      github_primary_language     = excluded.github_primary_language,
+      github_visibility           = excluded.github_visibility,
+      github_repo_updated_at      = excluded.github_repo_updated_at,
+      github_repo_pushed_at       = excluded.github_repo_pushed_at,
+      github_last_meta_synced_at  = excluded.github_last_meta_synced_at
+  `).run({
+    github_owner_repo: githubOwnerRepo,
+    added_at: nowIso,
+    github_repo_created_at: meta.github_repo_created_at ?? null,
+    github_default_branch: meta.github_default_branch ?? null,
+    github_size_kb: meta.github_size_kb ?? null,
+    github_primary_language: meta.github_primary_language ?? null,
+    github_visibility: meta.github_visibility ?? null,
+    github_repo_updated_at: meta.github_repo_updated_at ?? null,
+    github_repo_pushed_at: meta.github_repo_pushed_at ?? null,
+    github_last_meta_synced_at: nowIso,
+  });
+}
+
+function getOutputGithubCommitCursor(githubOwnerRepo) {
+  const database = getDb();
+  return database.prepare(
+    `SELECT * FROM output_github_commit_cursor WHERE github_owner_repo = ?`
+  ).get(githubOwnerRepo) || null;
+}
+
+function upsertOutputGithubCommitCursor(githubOwnerRepo, cursor) {
+  const database = getDb();
+  database.prepare(`
+    INSERT INTO output_github_commit_cursor (
+      github_owner_repo, last_commit_committed_at, last_commit_sha,
+      commits_synced_total, rate_limit_remaining, rate_limit_reset_at,
+      last_walk_status, last_walk_message
+    ) VALUES (
+      @github_owner_repo, @last_commit_committed_at, @last_commit_sha,
+      @commits_synced_total, @rate_limit_remaining, @rate_limit_reset_at,
+      @last_walk_status, @last_walk_message
+    )
+    ON CONFLICT(github_owner_repo) DO UPDATE SET
+      last_commit_committed_at = excluded.last_commit_committed_at,
+      last_commit_sha          = excluded.last_commit_sha,
+      commits_synced_total     = excluded.commits_synced_total,
+      rate_limit_remaining     = excluded.rate_limit_remaining,
+      rate_limit_reset_at      = excluded.rate_limit_reset_at,
+      last_walk_status         = excluded.last_walk_status,
+      last_walk_message        = excluded.last_walk_message
+  `).run({
+    github_owner_repo: githubOwnerRepo,
+    last_commit_committed_at: cursor.last_commit_committed_at ?? null,
+    last_commit_sha: cursor.last_commit_sha ?? null,
+    commits_synced_total: cursor.commits_synced_total ?? 0,
+    rate_limit_remaining: cursor.rate_limit_remaining ?? null,
+    rate_limit_reset_at: cursor.rate_limit_reset_at ?? null,
+    last_walk_status: cursor.last_walk_status ?? null,
+    last_walk_message: cursor.last_walk_message ?? null,
+  });
 }
 
 function disableOutputRepo(githubOwnerRepo) {
@@ -4961,6 +5079,10 @@ module.exports = {
   upsertOutputRepo,
   disableOutputRepo,
   bootstrapOutputReposFromConfig,
+  // Task #290 (CP13.6 Phase 3): commit-walker + repo-meta helpers
+  upsertOutputRepoMeta,
+  getOutputGithubCommitCursor,
+  upsertOutputGithubCommitCursor,
   // CP17.A helpers
   insertBareGitRequest,
   getBareGitRequest,

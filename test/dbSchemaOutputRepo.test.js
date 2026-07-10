@@ -31,7 +31,12 @@ test('output_repo table exists with canonical columns', () => {
   const colNames = cols.map(c => c.name).sort();
   assert.deepEqual(colNames, [
     'added_at', 'added_by', 'bare_git_path', 'enabled',
-    'github_owner_repo', 'last_walked_at',
+    // Task #290 (CP13.6 Phase 3): GitHub repo-meta governance-coverage columns
+    'github_default_branch', 'github_last_meta_synced_at',
+    'github_owner_repo', 'github_primary_language',
+    'github_repo_created_at', 'github_repo_pushed_at', 'github_repo_updated_at',
+    'github_size_kb', 'github_visibility',
+    'last_walked_at',
   ]);
 });
 

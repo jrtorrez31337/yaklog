@@ -48,6 +48,10 @@ function makeMockGitHubWalker({ prs = [], skipped = false, reason = null } = {})
   return {
     substrateType: () => 'github',
     listRepos: () => ['jrtorrez31337/yaklog'],
+    // Task #290 (CP13.6 Phase 3): meta + commits walkers. Default to no-op
+    // skipped so this mock stays PR-focused; individual tests override.
+    walkRepoMeta: async () => ({ meta: null, skipped: true, reason: 'no-pat' }),
+    walkCommits: async (_repo, cursor) => ({ commits: [], skipped: true, reason: 'no-pat', cursor }),
     walkRepo: async (githubOwnerRepo, cursor) => ({
       prs: prs.map(p => ({ ...p, github_owner_repo: githubOwnerRepo })),
       skipped,

@@ -122,6 +122,7 @@ class BareGitWalker extends OutputWalker {
       // changed, bytes delta) require a separate `git show --stat` call;
       // batch separately for performance.
       const stats = this._gitShowStat(repoPath, parsed.sha);
+      const parents = parsed.parents.split(' ').filter(Boolean);
       const commitRow = {
         repo,
         commit_sha: parsed.sha,
@@ -140,6 +141,11 @@ class BareGitWalker extends OutputWalker {
         runtime_class: null,
         files_changed: stats.files_changed,
         bytes_delta: stats.bytes_delta,
+        // Task #290: governance-quality columns. `signed` from bare-git
+        // requires `git log --show-signature` which is expensive per-commit;
+        // defer to Task #290.1. `parent_count` is free (already parsed).
+        signed: 0,
+        parent_count: parents.length || 1,
         // Body kept transient on the returned row so the ingester can run
         // the attribution parser without re-fetching. NOT a schema column.
         _body: parsed.body,
@@ -148,7 +154,6 @@ class BareGitWalker extends OutputWalker {
       commits.push(commitRow);
 
       // Merge commits: parent_count >= 2. Emit a parallel output_merge row.
-      const parents = parsed.parents.split(' ').filter(Boolean);
       if (parents.length >= 2) {
         merges.push({
           repo,
@@ -452,6 +457,249 @@ class GitHubWalker extends OutputWalker {
       },
     };
   }
+
+  // CP13.6 Phase 3 (Task #290): repo-meta walker.
+  //
+  // One-shot GET /repos/:owner/:repo for governance-coverage signals
+  // (creation date, default branch, size, primary language, visibility,
+  // updated_at, pushed_at). Substrate parity with Task #290 PLAN:
+  // output_repo gains github_* metadata columns; walker is stateless per
+  // pass (no cursor — always fetch current shape).
+  //
+  // States mirror walkRepo() shape: no-pat / auth-fail / rate-limited /
+  // server-error / network-error / ok. `meta` is null on skipped paths.
+  async walkRepoMeta(githubOwnerRepo) {
+    const pat = this._loadPat();
+    if (!pat) {
+      return { meta: null, skipped: true, reason: 'no-pat' };
+    }
+    const url = `https://api.github.com/repos/${githubOwnerRepo}`;
+    let resp;
+    try {
+      resp = await this.fetcher(url, {
+        method: 'GET',
+        headers: {
+          'Authorization': `token ${pat}`,
+          'Accept': 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28',
+          'User-Agent': 'yaklog-output-ingester/CP13.6-p3',
+        },
+      });
+    } catch (err) {
+      return {
+        meta: null,
+        skipped: true,
+        reason: 'network-error',
+        error: String(err.message || err).slice(0, 200),
+      };
+    }
+    if (resp.status === 401) return { meta: null, skipped: true, reason: 'auth-fail' };
+    const rateRemaining = parseInt(resp.headers.get('x-ratelimit-remaining'), 10);
+    if (resp.status === 403 && rateRemaining === 0) {
+      return { meta: null, skipped: true, reason: 'rate-limited' };
+    }
+    if (!resp.ok) {
+      return { meta: null, skipped: true, reason: 'server-error', error: `HTTP ${resp.status}` };
+    }
+    const raw = await resp.json();
+    return {
+      meta: {
+        github_repo_created_at: raw.created_at || null,
+        github_default_branch: raw.default_branch || null,
+        github_size_kb: Number.isFinite(raw.size) ? raw.size : null,
+        github_primary_language: raw.language || null,
+        github_visibility: raw.visibility || (raw.private ? 'private' : 'public'),
+        github_repo_updated_at: raw.updated_at || null,
+        github_repo_pushed_at: raw.pushed_at || null,
+      },
+      skipped: false,
+    };
+  }
+
+  // CP13.6 Phase 3 (Task #290): commits walker.
+  //
+  // Paginated GET /repos/:owner/:repo/commits?since=<cursor.last_commit_committed_at>
+  // Follows Link: rel="next" for cursor-forward walk; caps at 10000 commits per
+  // pass to bound first-walk on large repos (subsequent passes are incremental
+  // via since= and typically fit in a few pages). GitHub committer-date is the
+  // canonical ordering axis; author-date can predate `since` on backport
+  // patches so we filter downstream.
+  //
+  // Rate-limit + auth-fail + network-error semantics mirror walkRepo().
+  // Cursor advances to max(commit.committer.date) of returned commits.
+  //
+  // Returned commits are output_commit-shape with `_full_message` (for
+  // attribution parsing at ingester tier) and `_body` (unused post-parse).
+  async walkCommits(githubOwnerRepo, cursor) {
+    const pat = this._loadPat();
+    if (!pat) return { commits: [], skipped: true, reason: 'no-pat', cursor };
+    const perPage = 100;
+    const maxCommits = 10000;
+    const headers = {
+      'Authorization': `token ${pat}`,
+      'Accept': 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+      'User-Agent': 'yaklog-output-ingester/CP13.6-p3',
+    };
+    const params = new URLSearchParams({ per_page: String(perPage) });
+    if (cursor && cursor.last_commit_committed_at) {
+      params.set('since', cursor.last_commit_committed_at);
+    }
+    let url = `https://api.github.com/repos/${githubOwnerRepo}/commits?${params}`;
+    const collected = [];
+    let rateLimitRemaining = null;
+    let rateLimitResetAt = null;
+    let lastResp = null;
+
+    while (url && collected.length < maxCommits) {
+      let resp;
+      try {
+        resp = await this.fetcher(url, { method: 'GET', headers });
+      } catch (err) {
+        return {
+          commits: [],
+          skipped: true,
+          reason: 'network-error',
+          cursor: {
+            ...(cursor || {}),
+            last_walk_status: 'error',
+            last_walk_message: String(err.message || err).slice(0, 200),
+          },
+        };
+      }
+      lastResp = resp;
+      const rrRemaining = parseInt(resp.headers.get('x-ratelimit-remaining'), 10);
+      const rrReset = parseInt(resp.headers.get('x-ratelimit-reset'), 10);
+      rateLimitRemaining = Number.isFinite(rrRemaining) ? rrRemaining : null;
+      rateLimitResetAt = Number.isFinite(rrReset)
+        ? new Date(rrReset * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z')
+        : null;
+
+      if (resp.status === 401) {
+        return {
+          commits: [],
+          skipped: true,
+          reason: 'auth-fail',
+          cursor: { ...(cursor || {}), last_walk_status: 'auth-failed', last_walk_message: 'GitHub PAT rejected (401)' },
+        };
+      }
+      if (resp.status === 403 && rrRemaining === 0) {
+        return {
+          commits: [],
+          skipped: true,
+          reason: 'rate-limited',
+          cursor: {
+            ...(cursor || {}),
+            last_walk_status: 'rate-limited',
+            last_walk_message: `rate-limit exhausted; resets at ${rateLimitResetAt}`,
+            rate_limit_remaining: 0,
+            rate_limit_reset_at: rateLimitResetAt,
+          },
+        };
+      }
+      // Empty repo: GitHub returns 409 Conflict on /commits when repo has no commits
+      if (resp.status === 409) {
+        return {
+          commits: [],
+          skipped: true,
+          reason: 'empty-repo',
+          cursor: { ...(cursor || {}), last_walk_status: 'ok', last_walk_message: 'empty repo' },
+        };
+      }
+      if (resp.status >= 500 || !resp.ok) {
+        return {
+          commits: [],
+          skipped: true,
+          reason: 'server-error',
+          cursor: { ...(cursor || {}), last_walk_status: 'error', last_walk_message: `HTTP ${resp.status}` },
+        };
+      }
+
+      const page = await resp.json();
+      if (!Array.isArray(page) || page.length === 0) break;
+      for (const c of page) {
+        if (collected.length >= maxCommits) break;
+        collected.push(c);
+      }
+      url = parseNextLink(resp.headers.get('link'));
+    }
+
+    // Normalize + compute next cursor
+    const now = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
+    let nextCommittedAt = cursor && cursor.last_commit_committed_at;
+    let nextSha = cursor && cursor.last_commit_sha;
+    const commits = [];
+    for (const raw of collected) {
+      const committedAt = raw.commit && raw.commit.committer && raw.commit.committer.date;
+      // De-dupe: `since=` is inclusive → skip cursor sha if present
+      if (nextSha && raw.sha === nextSha) continue;
+      commits.push(normalizeGithubCommit(raw, githubOwnerRepo));
+      if (!nextCommittedAt || (committedAt && committedAt > nextCommittedAt)) {
+        nextCommittedAt = committedAt;
+        nextSha = raw.sha;
+      }
+    }
+
+    const priorTotal = (cursor && cursor.commits_synced_total) || 0;
+    return {
+      commits,
+      skipped: false,
+      cursor: {
+        last_commit_committed_at: nextCommittedAt || now,
+        last_commit_sha: nextSha || null,
+        commits_synced_total: priorTotal + commits.length,
+        rate_limit_remaining: rateLimitRemaining,
+        rate_limit_reset_at: rateLimitResetAt,
+        last_walk_status: 'ok',
+        last_walk_message: collected.length >= maxCommits ? 'walk-cap-reached-10k' : null,
+      },
+    };
+  }
+}
+
+// Parse GitHub's `Link:` response header for rel="next" URL.
+// Header format: `<url1>; rel="next", <url2>; rel="last"`
+function parseNextLink(linkHeader) {
+  if (!linkHeader) return null;
+  for (const segment of linkHeader.split(',')) {
+    const [urlPart, ...relParts] = segment.split(';').map((s) => s.trim());
+    if (relParts.some((p) => p === 'rel="next"')) {
+      const m = urlPart.match(/^<(.+)>$/);
+      if (m) return m[1];
+    }
+  }
+  return null;
+}
+
+// Normalize a GitHub commit-API row to output_commit shape. Attribution +
+// runtime-class populate downstream via parseAttribution; body_digest
+// enables client-side dedupe (sister-shape bare-git).
+function normalizeGithubCommit(raw, githubOwnerRepo) {
+  const commit = raw.commit || {};
+  const author = commit.author || {};
+  const committer = commit.committer || {};
+  const subject = (commit.message || '').split('\n')[0];
+  const body = (commit.message || '').split('\n').slice(1).join('\n').replace(/^\n+/, '');
+  const verified = commit.verification && commit.verification.verified === true;
+  const parentCount = Array.isArray(raw.parents) ? raw.parents.length : 1;
+  return {
+    repo: githubOwnerRepo,
+    commit_sha: raw.sha,
+    author_name: author.name || '',
+    author_email: author.email || '',
+    committer_name: committer.name || author.name || '',
+    committer_email: committer.email || author.email || '',
+    occurred_at: committer.date || author.date || null,
+    branch: null, // GitHub commits API is branch-agnostic; default-branch resolved at repo-meta tier
+    subject,
+    body_digest: body ? sha256Hex(body) : null,
+    files_changed: null, // per-commit stats require additional GET /repos/:o/:r/commits/:sha; deferred
+    bytes_delta: null,
+    signed: verified ? 1 : 0,
+    parent_count: parentCount,
+    _body: body,
+    _full_message: commit.message || '',
+  };
 }
 
 // Normalize a GitHub API PR response to output_pr-shape row.

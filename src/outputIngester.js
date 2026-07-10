@@ -24,12 +24,14 @@ function prepareStatements(db) {
         repo, commit_sha, author_name, author_email,
         committer_name, committer_email, occurred_at, branch, subject,
         body_digest, agent_attribution, attribution_method,
-        runtime_class, files_changed, bytes_delta
+        runtime_class, files_changed, bytes_delta,
+        signed, parent_count
       ) VALUES (
         @repo, @commit_sha, @author_name, @author_email,
         @committer_name, @committer_email, @occurred_at, @branch, @subject,
         @body_digest, @agent_attribution, @attribution_method,
-        @runtime_class, @files_changed, @bytes_delta
+        @runtime_class, @files_changed, @bytes_delta,
+        @signed, @parent_count
       )
       ON CONFLICT(repo, commit_sha) DO NOTHING
     `),
@@ -138,6 +140,56 @@ function ingestRepo(walker, repo, stmts, knownAgentIds, opts = {}) {
 
 // ── CP13.6 Phase 2.2: GitHubWalker repo ingest (PR substrate) ─────────────
 
+// Task #290 (CP13.6 Phase 3): GitHub commit-walk substrate.
+// Uses the same output_commit table as bare-git ingest; attribution flows
+// through parseAttribution (with author_email + full-message body). Repo key
+// is `owner/repo` (bare-git uses `<name>.git`) — schema handles both.
+async function ingestRepoGithubCommits(walker, githubOwnerRepo, stmts, knownAgentIds, opts = {}) {
+  const cursor = dbModule.getOutputGithubCommitCursor(githubOwnerRepo);
+  const result = await walker.walkCommits(githubOwnerRepo, cursor);
+
+  let commitsIngested = 0;
+  let attributionGapCount = 0;
+  if (!result.skipped && Array.isArray(result.commits)) {
+    for (const c of result.commits) {
+      const attr = parseAttribution(c._full_message, knownAgentIds, c.author_email);
+      const row = {
+        ...c,
+        agent_attribution: attr.agent_attribution,
+        attribution_method: attr.attribution_method,
+        runtime_class: attr.runtime_class,
+      };
+      delete row._body;
+      delete row._full_message;
+      const res = stmts.insertCommit.run(row);
+      if (res.changes > 0) {
+        commitsIngested += 1;
+        if (attr.attribution_method === 'null_fallback') attributionGapCount += 1;
+      }
+    }
+  }
+  if (result.cursor) {
+    dbModule.upsertOutputGithubCommitCursor(githubOwnerRepo, result.cursor);
+  }
+  return {
+    commitsIngested,
+    attributionGapCount,
+    skipped: result.skipped || false,
+    reason: result.reason || null,
+  };
+}
+
+// Task #290: one-shot repo-meta refresh (creation_at / default_branch /
+// size / language / visibility / repo timestamps). Idempotent per-pass.
+async function ingestRepoMeta(walker, githubOwnerRepo) {
+  const result = await walker.walkRepoMeta(githubOwnerRepo);
+  if (!result.skipped && result.meta) {
+    dbModule.upsertOutputRepoMeta(githubOwnerRepo, result.meta);
+    return { metaSynced: true };
+  }
+  return { metaSynced: false, reason: result.reason || null };
+}
+
 async function ingestRepoPrs(walker, githubOwnerRepo, opts = {}) {
   const cursor = dbModule.getOutputPrCursor(githubOwnerRepo);
   const result = await walker.walkRepo(githubOwnerRepo, cursor);
@@ -209,11 +261,26 @@ async function runOnce(opts = {}) {
 
   for (const walker of walkers) {
     if (walker.substrateType() === 'github') {
-      // Phase 2.2: GitHubWalker uses async walkRepo + output_pr table
+      // Phase 3 (Task #290): meta → commits → PRs per repo. Meta refresh is
+      // cheap (single GET) and populates governance-coverage columns for the
+      // demo dashboard. Commit-walk uses output_commit (sister to bare-git);
+      // attribution flows through parseAttribution.
       for (const repo of walker.listRepos()) {
-        const result = await ingestRepoPrs(walker, repo, opts);
-        perRepo[repo] = result;
-        totalPrs += result.prsIngested;
+        const metaResult = await ingestRepoMeta(walker, repo);
+        const commitResult = await ingestRepoGithubCommits(walker, repo, stmts, knownAgentIds, opts);
+        const prResult = await ingestRepoPrs(walker, repo, opts);
+        perRepo[repo] = {
+          substrate: 'github',
+          metaSynced: metaResult.metaSynced,
+          commitsIngested: commitResult.commitsIngested,
+          attributionGapCount: commitResult.attributionGapCount,
+          prsIngested: prResult.prsIngested,
+          skipped: prResult.skipped,
+          reason: prResult.reason,
+        };
+        totalCommits += commitResult.commitsIngested;
+        totalAttributionGaps += commitResult.attributionGapCount;
+        totalPrs += prResult.prsIngested;
       }
     } else {
       // Phase 1: BareGitWalker (sync walkRepo + output_commit/merge tables)
@@ -242,6 +309,8 @@ module.exports = {
   // exposed for unit-testing
   ingestRepo,
   ingestRepoPrs,
+  ingestRepoMeta,
+  ingestRepoGithubCommits,
   prepareStatements,
   loadKnownAgentIds,
   maybeAddGitHubWalker,
