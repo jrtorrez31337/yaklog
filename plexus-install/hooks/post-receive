@@ -62,6 +62,14 @@ while read -r old_sha new_sha ref; do
     exec >>"$MASTER_LOG"
     exec 2>&1
 
+    # Git hooks inherit GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE etc. from
+    # the push context, pointing at the bare repo. Unset so `git clone`
+    # + `git rev-parse` inside build-bundle.sh see a clean env and use
+    # the working tree's .git dir.
+    unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY \
+          GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_QUARANTINE_PATH \
+          GIT_PUSH_CERT GIT_PUSH_CERT_KEY GIT_PUSH_CERT_STATUS
+
     # Serialize concurrent rebuilds (belt-and-suspenders)
     LOCK_FILE="$LOG_DIR/rebuild.lock"
     exec 9>"$LOCK_FILE"
