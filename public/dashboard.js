@@ -4400,7 +4400,7 @@
       tile.querySelector('.tile-sub').textContent =
         `${codified} policies codified · ${genuineGap} genuine instrumentation gaps in 7d` +
         noiseSuffix +
-        ` · presence-tier + forensic-content both wired (CP12.4 + Phase 1.5.D OPERATIONAL)`;
+        ` · presence-tier + forensic-content both wired`;
 
       tile.title =
         'Coverage gaps = policies codified + agents with genuine audit-trail gap in last 7d. ' +
@@ -4829,7 +4829,7 @@
     header.appendChild(el('div', { class: 'ci-substrate' }, 'substrate: s3-object-lock'));
     card.appendChild(header);
     card.appendChild(el('div', { class: 'ci-note' },
-      'Anchor covers chain high-water event_id + 100-event recent horizon (sample-based, not full Merkle). Reading-2 verify (CP12.12.1): match:false = genuine tamper signal, not chain-advancement noise. Click any day to inspect.'));
+      'Anchor covers chain high-water event_id + 100-event recent horizon (sample-based, not full Merkle). Reading-2 verify: match:false = genuine tamper signal, not chain-advancement noise. Click any day to inspect.'));
 
     const grid = el('div', { class: 'chain-integrity-grid' });
     card.appendChild(grid);
@@ -4936,7 +4936,7 @@
     const panel = document.getElementById('audit-sub-policies');
     clearChildren(panel);
     panel.appendChild(_renderAuditOpsBanner('Policy-as-code management is ops-key gated',
-      'Add/edit/ratify/deprecate rules; updates via /api/v1/ops/policy/rule. DSL evaluator is sandboxed per secops #7706 (100ms / 1MB / no fs-net-proc / no regex; use contains/startsWith/endsWith/IN/IS NULL).'));
+      'Add/edit/ratify/deprecate rules; updates via /api/v1/ops/policy/rule. DSL evaluator is sandboxed (100ms / 1MB / no fs-net-proc / no regex; use contains/startsWith/endsWith/IN/IS NULL).'));
 
     const ctrl = el('div', { class: 'budget-controls' });
     const addBtn = el('button', null, '+ Add / edit rule');
