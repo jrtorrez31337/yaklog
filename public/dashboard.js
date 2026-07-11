@@ -361,8 +361,16 @@
   }
   function _trpBuildHash(tab, range) {
     const t = tab || 'live';
-    if (!range || range === 'live') return '#' + t;
-    return '#' + t + '?range=' + range;
+    const params = [];
+    if (range && range !== 'live') params.push('range=' + range);
+    // ADR-0042 §4.1: preserve #output?repo= focus across time-range change / tab re-activation
+    const cur = String(window.location.hash || '');
+    const qi = cur.indexOf('?');
+    if (qi >= 0) {
+      const rp = new URLSearchParams(cur.slice(qi + 1)).get('repo');
+      if (rp) params.push('repo=' + encodeURIComponent(rp));
+    }
+    return '#' + t + (params.length ? '?' + params.join('&') : '');
   }
 
   function _trpUpdateButtons() {
@@ -6488,7 +6496,33 @@
       if (announce) announce.textContent = 'Showing all repos, aggregate view.';
       _setOutputPivot('repo');
     }
+    _outputPersistRepo();  // ADR-0042 §4.1 increment 1b: URL deep-link + localStorage
     _renderOutputTrajectory();
+  }
+  // Persist repo focus: #output?repo=<owner/name> via replaceState (no re-activation)
+  // + localStorage. 'all'/absent = aggregate. URL wins over localStorage on load.
+  function _outputPersistRepo() {
+    try { localStorage.setItem('plexus_output_last_repo', _outputRepo || 'all'); } catch (_) { /* private mode */ }
+    const cur = String(window.location.hash || '');
+    const qi = cur.indexOf('?');
+    const tab = (qi >= 0 ? cur.slice(1, qi) : cur.slice(1)) || 'output';
+    if (tab !== 'output') return;  // only manage the #output hash
+    const qs = new URLSearchParams(qi >= 0 ? cur.slice(qi + 1) : '');
+    if (_outputRepo) qs.set('repo', _outputRepo); else qs.delete('repo');
+    const str = qs.toString();
+    const newHash = '#output' + (str ? '?' + str : '');
+    if (window.location.hash !== newHash) history.replaceState(null, '', newHash);
+  }
+  function _resolveInitialRepo() {
+    let repo = null;
+    const cur = String(window.location.hash || '');
+    const qi = cur.indexOf('?');
+    if (qi >= 0) repo = new URLSearchParams(cur.slice(qi + 1)).get('repo');
+    if (!repo) { try { repo = localStorage.getItem('plexus_output_last_repo'); } catch (_) { /* private mode */ } }
+    if (!repo || repo === 'all') return;  // aggregate default stands
+    const input = document.getElementById('orp-input');
+    if (input) input.value = repo;
+    _setOutputRepo(repo);
   }
   function _loadRepoList() {
     return fetch('/api/v1/output/repos', { cache: 'no-store' })
@@ -6522,7 +6556,7 @@
     _wireReposManagement();
     _wireOutputPivotToggle();
     _wireRepoPicker();
-    _loadRepoList();
+    _loadRepoList().then(_resolveInitialRepo);  // deep-link / localStorage restore after list loads
     _wireOutputTrajectory();
     _renderOutputTrajectory();
     _refreshReposAll();
