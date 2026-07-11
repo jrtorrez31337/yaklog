@@ -6236,6 +6236,7 @@
   // Fold-B tier-gating travels via the existing ADR-0031 §3 audience-picker,
   // NOT this toggle (per plexus-ui #11950 chrome-decoupled precision).
   let _outputPivot = 'repo';
+  let _outputRepo = null;  // ADR-0042 §3: null = All-repos aggregate; 'owner/name' = repo-focused
 
   async function _renderAgentPrimaryPanel() {
     const body = document.getElementById('output-agent-primary-body');
@@ -6386,7 +6387,8 @@
     const title = document.getElementById('output-trajectory-title');
     if (title) title.textContent = (_TRAJ_METRIC_LABEL[_trajMetric] || _trajMetric) + ' under governance — trajectory over time';
     try {
-      const url = '/api/v1/output/trajectory?pivot=' + _outputPivot + '&metric=' + _trajMetric + '&top_n=' + _trajTopN + '&' + _trajRangeQuery();
+      const url = '/api/v1/output/trajectory?pivot=' + _outputPivot + '&metric=' + _trajMetric + '&top_n=' + _trajTopN + '&' + _trajRangeQuery()
+        + (_outputRepo ? '&repo=' + encodeURIComponent(_outputRepo) : '');
       const r = await fetch(url, { cache: 'no-store' });
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const data = await r.json();
@@ -6409,6 +6411,109 @@
     if (t) t.addEventListener('change', () => { _trajTopN = parseInt(t.value, 10) || 5; _renderOutputTrajectory(); });
   }
 
+  // ─── ADR-0042 §4.1 Repo picker (landing gesture) ────────────────────────
+  // WAI-ARIA combobox+listbox over GET /output/repos. Focus a repo → repo-scoped
+  // (trajectory pivot=agent + ?repo); "All repos" → aggregate (pivot=repo, no ?repo).
+  // Increment 1: drives the trajectory. URL deep-link + localStorage land in 1b.
+  let _repoList = [];
+  let _orpView = [];
+  let _orpActive = -1;
+  let _orpSort = 'recent';
+  const _orpRel = (iso) => {
+    if (!iso) return '—';
+    const days = (Date.now() - new Date(iso).getTime()) / 86400000;
+    return days < 1 ? 'today' : days < 2 ? '1 day ago' : Math.floor(days) + ' days ago';
+  };
+  const _orpSorters = {
+    recent: (a, b) => new Date(b.github_last_meta_synced_at || 0) - new Date(a.github_last_meta_synced_at || 0),
+    alpha: (a, b) => (a.github_owner_repo || '').localeCompare(b.github_owner_repo || ''),
+    size: (a, b) => (b.github_size_kb || 0) - (a.github_size_kb || 0),
+    age: (a, b) => new Date(a.github_repo_created_at || 0) - new Date(b.github_repo_created_at || 0),
+  };
+  function _orpCompute() {
+    const input = document.getElementById('orp-input');
+    const q = (input ? input.value : '').trim().toLowerCase();
+    _orpView = _repoList
+      .filter((r) => (r.github_owner_repo || '').toLowerCase().includes(q))
+      .sort(_orpSorters[_orpSort] || _orpSorters.recent);
+  }
+  function _orpRender() {
+    const listbox = document.getElementById('orp-listbox');
+    const input = document.getElementById('orp-input');
+    const countEl = document.getElementById('orp-count');
+    if (!listbox || !input) return;
+    clearChildren(listbox);
+    if (!_orpView.length) {
+      listbox.appendChild(el('li', { class: 'orp-none' },
+        _repoList.length ? 'No matching repos.' : 'No repos under governance yet.'));
+    }
+    _orpView.forEach((r, i) => {
+      const li = el('li', { class: 'orp-opt' + (i === _orpActive ? ' active' : ''), id: 'orp-opt-' + i, role: 'option' });
+      li.setAttribute('aria-selected', i === _orpActive ? 'true' : 'false');
+      li.appendChild(el('span', { class: 'orp-name' }, r.github_owner_repo));
+      li.appendChild(el('span', { class: 'orp-meta' }, _orpRel(r.github_last_meta_synced_at) + ' · ' + (r.github_size_kb || 0) + ' KB'));
+      li.addEventListener('click', () => _orpChoose(i));
+      listbox.appendChild(li);
+    });
+    const q = input.value.trim();
+    if (countEl) countEl.textContent = q
+      ? (_orpView.length + ' of ' + _repoList.length + ' repos')
+      : (_repoList.length + ' repo' + (_repoList.length === 1 ? '' : 's') + ' under governance');
+    input.setAttribute('aria-activedescendant', _orpActive >= 0 && _orpView[_orpActive] ? 'orp-opt-' + _orpActive : '');
+  }
+  function _orpSetOpen(open) {
+    const l = document.getElementById('orp-listbox');
+    const i = document.getElementById('orp-input');
+    if (l) l.hidden = !open;
+    if (i) i.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (!open) { _orpActive = -1; _orpRender(); }
+  }
+  function _orpChoose(i) {
+    const r = _orpView[i];
+    if (!r) return;
+    const input = document.getElementById('orp-input');
+    if (input) input.value = r.github_owner_repo;
+    _orpSetOpen(false);
+    _setOutputRepo(r.github_owner_repo);
+  }
+  function _setOutputRepo(repoKey) {
+    _outputRepo = repoKey || null;
+    const allBtn = document.getElementById('orp-all');
+    if (allBtn) allBtn.classList.toggle('active', !_outputRepo);
+    const announce = document.getElementById('orp-announce');
+    if (_outputRepo) {
+      if (announce) announce.textContent = 'Focused repo ' + _outputRepo + '. Showing its governance detail.';
+      _setOutputPivot('agent');  // repo-focused → contributors to this repo
+    } else {
+      if (announce) announce.textContent = 'Showing all repos, aggregate view.';
+      _setOutputPivot('repo');
+    }
+    _renderOutputTrajectory();
+  }
+  function _loadRepoList() {
+    return fetch('/api/v1/output/repos', { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : { repos: [] }))
+      .then((d) => { _repoList = Array.isArray(d.repos) ? d.repos : []; _orpCompute(); _orpRender(); })
+      .catch(() => { _repoList = []; _orpRender(); });
+  }
+  function _wireRepoPicker() {
+    const input = document.getElementById('orp-input');
+    const sort = document.getElementById('orp-sort');
+    const allBtn = document.getElementById('orp-all');
+    if (!input) return;
+    input.addEventListener('input', () => { _orpActive = -1; _orpCompute(); _orpRender(); _orpSetOpen(true); });
+    input.addEventListener('focus', () => { _orpCompute(); _orpRender(); _orpSetOpen(true); });
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowDown') { e.preventDefault(); _orpSetOpen(true); _orpActive = Math.min(_orpActive + 1, _orpView.length - 1); _orpRender(); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); _orpActive = Math.max(_orpActive - 1, 0); _orpRender(); }
+      else if (e.key === 'Enter' && _orpActive >= 0) { e.preventDefault(); _orpChoose(_orpActive); }
+      else if (e.key === 'Escape') { e.preventDefault(); _orpSetOpen(false); }
+    });
+    if (sort) sort.addEventListener('change', () => { _orpSort = sort.value; _orpCompute(); _orpRender(); });
+    if (allBtn) { allBtn.classList.add('active'); allBtn.addEventListener('click', () => { input.value = ''; _orpSetOpen(false); _setOutputRepo(null); }); }
+    document.addEventListener('click', (e) => { if (!e.target.closest('.output-repo-picker')) _orpSetOpen(false); });
+  }
+
   function mountReposTab() {
     if (_reposMounted) return;
     _reposMounted = true;
@@ -6416,6 +6521,8 @@
     _wireReposControls();
     _wireReposManagement();
     _wireOutputPivotToggle();
+    _wireRepoPicker();
+    _loadRepoList();
     _wireOutputTrajectory();
     _renderOutputTrajectory();
     _refreshReposAll();
