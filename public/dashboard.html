@@ -614,6 +614,29 @@
   .output-hero-state.is-error { color: var(--red); }
 
   /* ADR-0041 v2 Increment 2 — pivot toggle for the analytical band */
+  /* Repo picker — ADR-0042 §3 landing gesture. Stable dims; a11y-first. */
+  .output-repo-picker { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; margin-bottom: 16px; }
+  .orp-label { display: block; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
+  .orp-combo { position: relative; }
+  .orp-input { width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--fg); font: inherit; padding: 10px 12px; min-height: 44px; }
+  .orp-input:focus-visible { outline: none; border-color: var(--blue); box-shadow: 0 0 0 2px rgba(76,141,255,.35); }
+  .orp-listbox { position: absolute; z-index: 30; left: 0; right: 0; margin-top: 4px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; max-height: 300px; overflow: auto; padding: 4px; list-style: none; }
+  .orp-listbox[hidden] { display: none; }
+  .orp-opt { padding: 8px 10px; border-radius: 4px; cursor: pointer; display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+  .orp-opt .orp-name { color: var(--fg); }
+  .orp-opt .orp-meta { color: var(--muted); font-size: 12px; white-space: nowrap; }
+  .orp-opt.active, .orp-opt[aria-selected="true"] { background: rgba(76,141,255,.18); }
+  .orp-opt.active { outline: 2px solid var(--blue); outline-offset: -2px; }
+  .orp-opt:hover { background: rgba(255,255,255,.04); }
+  .orp-none { padding: 10px; color: var(--muted); }
+  .orp-count { margin: 10px 0 0; font-size: 12px; color: var(--muted); }
+  .orp-actions { display: flex; gap: 12px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
+  .orp-all { background: transparent; border: 1px solid var(--border); border-radius: 6px; color: var(--fg); font: inherit; padding: 8px 14px; min-height: 44px; cursor: pointer; }
+  .orp-all:focus-visible { outline: none; border-color: var(--blue); box-shadow: 0 0 0 2px rgba(76,141,255,.35); }
+  .orp-all:hover { border-color: var(--muted); }
+  .orp-all.active { border-color: var(--blue); color: var(--blue); }
+  .orp-sortwrap { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+  .orp-sortwrap label { color: var(--muted); font-size: 12px; }
   .output-pivot-toggle { display: inline-flex; gap: 2px; margin-bottom: 12px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 2px; }
   .output-pivot-toggle button { background: transparent; color: var(--muted); border: 0; border-radius: 4px; padding: 6px 14px; font-size: 12px; cursor: pointer; font-family: inherit; }
   .output-pivot-toggle button[aria-selected="true"] { background: var(--blue); color: white; font-weight: 600; }
@@ -2084,6 +2107,33 @@
        ADR-0041 v2 §2 synthesis: pivot re-pivots DATA only; hero + management widgets
        are pivot-independent. Fold-B tier-gating travels via ADR-0031 §3 audience-picker
        (existing), not via this toggle. -->
+  <!-- Band 1: Repo picker — primary landing gesture (ADR-0042 §3; repo-first).
+       Focus a repo → repo-scoped view (trajectory pivot=agent); All repos → aggregate.
+       WAI-ARIA combobox+listbox: a11y-structural, keyboard-first (Jon legally blind). -->
+  <section class="output-repo-picker" aria-label="Focus a repository">
+    <label class="orp-label" id="orp-label" for="orp-input">Focus a repo</label>
+    <div class="orp-combo">
+      <input id="orp-input" class="orp-input" type="text" role="combobox"
+        aria-expanded="false" aria-controls="orp-listbox" aria-autocomplete="list"
+        aria-labelledby="orp-label" autocomplete="off" placeholder="search repos…">
+      <ul id="orp-listbox" class="orp-listbox" role="listbox" aria-labelledby="orp-label" hidden></ul>
+    </div>
+    <p class="orp-count" id="orp-count" aria-live="polite"></p>
+    <div class="orp-actions">
+      <button type="button" class="orp-all" id="orp-all">All repos (aggregate view)</button>
+      <span class="orp-sortwrap">
+        <label for="orp-sort">Sort by</label>
+        <select id="orp-sort">
+          <option value="recent">Recent activity</option>
+          <option value="alpha">Alphabetical</option>
+          <option value="size">Size</option>
+          <option value="age">Age</option>
+        </select>
+      </span>
+    </div>
+    <span class="sr-only" role="status" aria-live="polite" id="orp-announce"></span>
+  </section>
+
   <nav class="output-pivot-toggle" role="tablist" aria-label="Analytical band pivot">
     <button type="button" role="tab" data-pivot="repo" aria-selected="true" aria-controls="tab-output">By repo</button>
     <button type="button" role="tab" data-pivot="agent" aria-selected="false" aria-controls="tab-output">By agent</button>
