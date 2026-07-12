@@ -4354,7 +4354,7 @@
       const j = await r.json();
       const tile = document.getElementById('tile-open-violations');
       if (!tile) return;
-      const rows = j.violations || [];
+      const rows = j.rows || j.violations || [];
       const sevCounts = { critical: 0, violation: 0, warn: 0, info: 0 };
       for (const v of rows) {
         const s = (v.severity_class || 'info').toLowerCase();
@@ -4497,7 +4497,7 @@
       const r = await fetch('/api/v1/plexus/public/policy/violations?disposition=pending&limit=50');
       const j = await r.json();
       clearChildren(list);
-      const rows = j.violations || [];
+      const rows = j.rows || j.violations || [];
       if (rows.length === 0) {
         list.appendChild(el('div', { class: 'audit-loading' }, 'No pending policy violations. Cluster discipline holding.'));
         return;
@@ -4640,7 +4640,7 @@
         const r = await fetch(`/api/v1/plexus/public/policy/violations?from=${sevenAgo}&to=${today}&limit=500`);
         const j = await r.json();
         const counts = new Map();
-        for (const v of (j.violations || [])) {
+        for (const v of (j.rows || j.violations || [])) {
           const k = v.rule_id || '(unknown)';
           counts.set(k, (counts.get(k) || 0) + 1);
         }
@@ -4691,7 +4691,7 @@
     try {
       const r = await fetch('/api/v1/plexus/public/policy/violations?limit=100');
       const j = await r.json();
-      const rows = j.violations || [];
+      const rows = j.rows || j.violations || [];
       clearChildren(body);
       if (rows.length === 0) {
         body.appendChild(el('div', { class: 'audit-loading' }, 'no policy violations recorded'));
