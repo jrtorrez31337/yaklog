@@ -197,7 +197,18 @@ router.get('/activity-feed', (req, res) => {
   try {
     const { from, to, period } = resolveRange(req);
     const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 50));
-    const activity = dbModule.queryRepoActivityFeed({ from, to, limit });
+    // Task #277 Phase C inc-4 (plexus-ui #12797): wire optional filter_repo
+    // to queryRepoActivityFeed's repo_key filter (already accepts it from
+    // my Phase B Task 1 commit 4547af8, but the ROUTE was missing the wire).
+    // Param name filter_repo matches the /repos/heatmap family convention.
+    const filterRepo = typeof req.query.filter_repo === 'string' ? req.query.filter_repo.trim() : '';
+    if (filterRepo && !/^[\w.-]+\/[\w.-]+$/.test(filterRepo)) {
+      return res.status(400).json({ error: 'ValidationError', message: 'filter_repo must match owner/name' });
+    }
+    const activity = dbModule.queryRepoActivityFeed({
+      from, to, limit,
+      repo_key: filterRepo || null,
+    });
     return res.json({ period, from, to, activity });
   } catch (e) {
     return res.status(400).json({ error: 'ValidationError', message: e.message });

@@ -303,30 +303,43 @@ function filterRatiosByAudience(ratios, audience) {
 function computeCompositionByAgent(db, opts = {}) {
   const periodDays = parsePeriod(opts.period);
   const bound = periodBound(periodDays);
+  const repoKey = opts.repo_key || null;
 
-  // Join across messages.sender + output_commit.agent_attribution +
-  // output_merge.merged_by_agent + cost_daily.agent_id. UNION the agent
-  // identifier domain then aggregate per-source.
+  // Task #277 Phase C inc-4 (plexus-ui #12797): optional repo_key filter for
+  // #output repo-focused drill-in. When null (cluster-wide), preserves the
+  // legacy universe. When set, agent universe still spans coord+commit+merge+cost
+  // but the per-source counts scope to `repo`/`repo` clauses. cost_daily has NO
+  // per-repo dimension in current schema, so cost_usd stays cluster-wide even
+  // when repo_key set — flagged as known limitation; sister-shape unaltered
+  // #cost tab behavior. coord_msgs likewise (no per-repo affinity in messages).
   const rows = db.prepare(`
     WITH agent_universe AS (
       SELECT DISTINCT sender AS agent_id FROM messages WHERE created_at >= ${bound}
       UNION
-      SELECT DISTINCT agent_attribution AS agent_id FROM output_commit WHERE occurred_at >= ${bound} AND agent_attribution IS NOT NULL
+      SELECT DISTINCT agent_attribution AS agent_id FROM output_commit
+        WHERE occurred_at >= ${bound} AND agent_attribution IS NOT NULL
+          AND (@repo_key IS NULL OR repo = @repo_key)
       UNION
-      SELECT DISTINCT merged_by_agent AS agent_id FROM output_merge WHERE occurred_at >= ${bound} AND merged_by_agent IS NOT NULL
+      SELECT DISTINCT merged_by_agent AS agent_id FROM output_merge
+        WHERE occurred_at >= ${bound} AND merged_by_agent IS NOT NULL
+          AND (@repo_key IS NULL OR repo = @repo_key)
       UNION
       SELECT DISTINCT agent_id FROM cost_daily WHERE date >= date('now', '-${periodDays} days') AND agent_id != ''
     )
     SELECT
       u.agent_id,
       (SELECT COUNT(*) FROM messages WHERE sender = u.agent_id AND created_at >= ${bound}) AS coord_msgs,
-      (SELECT COUNT(*) FROM output_commit WHERE agent_attribution = u.agent_id AND occurred_at >= ${bound}) AS commits,
-      (SELECT COUNT(*) FROM output_merge WHERE merged_by_agent = u.agent_id AND occurred_at >= ${bound}) AS merges,
+      (SELECT COUNT(*) FROM output_commit
+        WHERE agent_attribution = u.agent_id AND occurred_at >= ${bound}
+          AND (@repo_key IS NULL OR repo = @repo_key)) AS commits,
+      (SELECT COUNT(*) FROM output_merge
+        WHERE merged_by_agent = u.agent_id AND occurred_at >= ${bound}
+          AND (@repo_key IS NULL OR repo = @repo_key)) AS merges,
       (SELECT COALESCE(SUM(cost_usd), 0) FROM cost_daily WHERE agent_id = u.agent_id AND date >= date('now', '-${periodDays} days')) AS cost_usd
     FROM agent_universe u
     WHERE u.agent_id NOT IN ('plexus-admin', 'jon', 'Jon', 'ops', 'admin', '')
     ORDER BY merges DESC, coord_msgs DESC
-  `).all();
+  `).all({ repo_key: repoKey });
 
   return { rows, _period_days: periodDays };
 }

@@ -112,9 +112,16 @@ publicRouter.get('/composition', (req, res) => {
       message: 'by must be one of: agent, repo',
     });
   }
+  // Task #277 Phase C inc-4 (plexus-ui #12797): optional ?repo filter for
+  // #output repo-focused drill-in. Same shape as /trajectory / /repo-summary
+  // / /repo-governance — `repo=<owner/name>` regex-validated at route tier.
+  const repoQ = typeof req.query.repo === 'string' ? req.query.repo.trim() : '';
+  if (repoQ && !/^[\w.-]+\/[\w.-]+$/.test(repoQ)) {
+    return res.status(400).json({ error: 'ValidationError', message: 'repo must match owner/name' });
+  }
   const db = dbModule.initializeDb();
   const result = by === 'agent'
-    ? computeCompositionByAgent(db, { period })
+    ? computeCompositionByAgent(db, { period, repo_key: repoQ || null })
     : computeCompositionByRepo(db, { period });
   const isEmpty = !Array.isArray(result.rows) || result.rows.length === 0;
   return res.json(attachMetadata({ by, ...result }, isEmpty));
