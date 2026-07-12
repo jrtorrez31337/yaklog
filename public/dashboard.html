@@ -637,11 +637,17 @@
   .orp-all.active { border-color: var(--blue); color: var(--blue); }
   .orp-sortwrap { display: flex; align-items: center; gap: 8px; margin-left: auto; }
   .orp-sortwrap label { color: var(--muted); font-size: 12px; }
-  .output-pivot-toggle { display: inline-flex; gap: 2px; margin-bottom: 12px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 2px; }
-  .output-pivot-toggle button { background: transparent; color: var(--muted); border: 0; border-radius: 4px; padding: 6px 14px; font-size: 12px; cursor: pointer; font-family: inherit; }
-  .output-pivot-toggle button[aria-selected="true"] { background: var(--blue); color: white; font-weight: 600; }
-  .output-pivot-toggle button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
-  .output-pivot-toggle button:hover:not([aria-selected="true"]) { color: var(--text); }
+  /* Repo-context strip — ADR-0042 §4.2. Stable dims; shown only when repo-focused. */
+  .output-repo-context { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; margin-bottom: 16px; }
+  .orc-head { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+  .orc-repo { margin: 0; font-size: 15px; color: var(--fg); font-weight: 600; }
+  .orc-repo:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; border-radius: 3px; }
+  .orc-chips { display: flex; gap: 8px; flex-wrap: wrap; }
+  .orc-chip { font-size: 11px; color: var(--muted); background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 2px 8px; white-space: nowrap; }
+  .orc-counts { margin-top: 10px; font-size: 13px; color: var(--fg); display: flex; gap: 6px; flex-wrap: wrap; }
+  .orc-counts .orc-sep { color: var(--muted); }
+  .orc-counts .orc-num { font-weight: 600; }
+  .orc-state { margin-top: 8px; font-size: 12px; color: var(--muted); }
 
   /* Agent-primary composition panel (visible when pivot=agent) */
   .output-agent-primary-section { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; margin-bottom: 18px; padding: 14px; }
@@ -2134,10 +2140,18 @@
     <span class="sr-only" role="status" aria-live="polite" id="orp-announce"></span>
   </section>
 
-  <nav class="output-pivot-toggle" role="tablist" aria-label="Analytical band pivot">
-    <button type="button" role="tab" data-pivot="repo" aria-selected="true" aria-controls="tab-output">By repo</button>
-    <button type="button" role="tab" data-pivot="agent" aria-selected="false" aria-controls="tab-output">By agent</button>
-  </nav>
+  <!-- Band 1.5: Repo-context strip (ADR-0042 §4.2; Task #290 substrate). Shown only
+       when a repo is focused; hidden in aggregate. Stable dimensions on repo-switch.
+       Replaces the old pivot-toggle — the picker is the framing gesture; pivot is now
+       an internal facet driven by focus state (repo→agent, aggregate→repo). -->
+  <section class="output-repo-context" id="output-repo-context" aria-label="Focused repository details" hidden>
+    <div class="orc-head">
+      <h3 class="orc-repo" id="orc-repo" tabindex="-1">—</h3>
+      <div class="orc-chips" id="orc-chips"></div>
+    </div>
+    <div class="orc-counts" id="orc-counts"></div>
+    <div class="orc-state" id="orc-state" role="status" aria-live="polite" hidden></div>
+  </section>
 
   <!-- Band 2: GitHub-style commit heatmap (pivot-neutral — same 1-D per-day intensity strip
        regardless of pivot state per yaklog-dev #12077) -->
