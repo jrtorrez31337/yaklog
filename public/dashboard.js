@@ -6250,7 +6250,8 @@
     const body = document.getElementById('output-agent-primary-body');
     if (!body) return;
     try {
-      const r = await fetch('/api/v1/output/composition?by=agent&period=30d', { cache: 'no-store' });
+      // ADR-0042 §4.6 increment 4: scope composition to the focused repo when set.
+      const r = await fetch('/api/v1/output/composition?by=agent&period=30d' + (_outputRepo ? '&repo=' + encodeURIComponent(_outputRepo) : ''), { cache: 'no-store' });
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const data = await r.json();
       const rows = Array.isArray(data.rows) ? data.rows : [];
@@ -6608,6 +6609,7 @@
 
   function _setOutputRepo(repoKey, moveFocus) {
     _outputRepo = repoKey || null;
+    _reposState.filterRepo = _outputRepo || '';  // ADR-0042 §4.5/4.6: picker drives repo-scope for heatmap/feed/composition
     const allBtn = document.getElementById('orp-all');
     if (allBtn) allBtn.classList.toggle('active', !_outputRepo);
     const announce = document.getElementById('orp-announce');
@@ -6622,6 +6624,11 @@
     _renderRepoGovernance(_outputRepo);   // ADR-0042 §4.4 governance-quality panel
     _outputPersistRepo();  // ADR-0042 §4.1 increment 1b: URL deep-link + localStorage
     _renderOutputTrajectory();
+    // ADR-0042 §4.5/4.6 increment 4: re-scope the activity bands to the focused repo
+    // (or clear on aggregate). Heatmap+feed read _reposState.filterRepo; composition
+    // re-renders via _setOutputPivot('agent') above with the repo param.
+    if (typeof _renderReposHeatmap === 'function') _renderReposHeatmap();
+    if (typeof _renderReposActivityFeed === 'function') _renderReposActivityFeed();
     // a11y: on USER select of a repo, move focus to the context heading (not on
     // mount-restore — that would steal focus on cold load).
     if (moveFocus && _outputRepo) { const h = document.getElementById('orc-repo'); if (h) h.focus(); }
@@ -6838,7 +6845,8 @@
     const list = document.querySelector('#repos-activity-feed .repos-activity-feed-list');
     if (!list) return;
     try {
-      const res = await fetch(_reposReqUrl('/activity-feed?limit=50'), { cache: 'no-store' });
+      // ADR-0042 §4.5 increment 4: scope the activity feed to the focused repo when set.
+      const res = await fetch(_reposReqUrl('/activity-feed?limit=50' + (_reposState.filterRepo ? '&filter_repo=' + encodeURIComponent(_reposState.filterRepo) : '')), { cache: 'no-store' });
       if (!res.ok) {
         list.innerHTML = '';
         list.appendChild(el('div', { class: 'view-empty' }, "Couldn't load activity feed. Retry shortly."));
