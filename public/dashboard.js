@@ -6488,6 +6488,72 @@
   // (loading / RepoNotFound / error). _orcSeq guards against out-of-order responses
   // on rapid repo-switch. Optimistic key render keeps dimensions stable.
   let _orcSeq = 0;
+  // ADR-0042 §4.4 governance-quality panel. Two-tier honest microcopy: attribution
+  // completeness leads as a scored bar; signing/merges/PR render as neutral facts
+  // (promote to bars only when they carry real values). _ogpSeq guards out-of-order.
+  let _ogpSeq = 0;
+  async function _renderRepoGovernance(repoKey) {
+    const panel = document.getElementById('output-gov-panel');
+    if (!panel) return;
+    if (!repoKey) { panel.hidden = true; return; }
+    panel.hidden = false;
+    const seq = ++_ogpSeq;
+    const body = document.getElementById('ogp-body');
+    const stateEl = document.getElementById('ogp-state');
+    const setState = (m) => { if (stateEl) { stateEl.textContent = m || ''; stateEl.hidden = !m; } };
+    setState('Loading governance signals…');
+    try {
+      const r = await fetch('/api/v1/output/repo-governance?repo=' + encodeURIComponent(repoKey) + '&' + _trajRangeQuery(), { cache: 'no-store' });
+      if (seq !== _ogpSeq) return;
+      if (r.status === 404) { setState('This repo isn’t in the governance set.'); if (body) clearChildren(body); return; }
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const d = await r.json();
+      if (seq !== _ogpSeq) return;
+      const s = d.signals || {};
+      clearChildren(body);
+      const cap = (x) => x ? x.charAt(0).toUpperCase() + x.slice(1) : x;
+      const barRow = (label, pct, valText) => {
+        const row = el('div', { class: 'ogp-row' });
+        row.appendChild(el('div', { class: 'ogp-label' }, label));
+        const wrap = el('div', { class: 'ogp-bar-wrap' });
+        const bar = el('div', { class: 'ogp-bar' });
+        bar.style.width = Math.max(0, Math.min(100, pct || 0)) + '%';
+        wrap.appendChild(bar);
+        row.appendChild(wrap);
+        row.appendChild(el('div', { class: 'ogp-val' }, valText));
+        body.appendChild(row);
+      };
+      const factRow = (label, fact) => {
+        const row = el('div', { class: 'ogp-row' });
+        row.appendChild(el('div', { class: 'ogp-label' }, label));
+        row.appendChild(el('div', { class: 'ogp-fact' }, fact));
+        body.appendChild(row);
+      };
+      // 1. Attribution LEADS — the populated coverage signal, as a scored bar.
+      const attr = s.attribution || {};
+      if (attr.total_commits != null) {
+        const pct = attr.completeness_pct != null ? attr.completeness_pct : 0;
+        const gaps = attr.gap_count || 0;
+        barRow('Attribution completeness', pct, pct + '% · ' + gaps + (gaps === 1 ? ' gap' : ' gaps'));
+      }
+      // 2. Signing — bar when signed, else neutral fact (config choice, not a deficiency).
+      const sign = s.signed_commits || {};
+      if (sign.count > 0) barRow('Commit signing', sign.pct || 0, (sign.pct || 0) + '% (' + sign.count + '/' + sign.total + ')');
+      else factRow('Commit signing', 'Not enabled');
+      // 3. Merge/history — neutral fact (linear is a valid workflow, not a defect).
+      const mc = s.merge_commits || {};
+      if (mc.count > 0) factRow('Merge structure', mc.count + ' merge commits · ' + cap(mc.history_shape || '') + ' history');
+      else factRow('Merge structure', (mc.history_shape ? cap(mc.history_shape) : 'Linear') + ' history · 0 merge commits');
+      // 4. PR structure — neutral fact.
+      const pr = s.pr_structure || {};
+      if (pr.pr_count > 0) factRow('PR workflow', pr.pr_count + ' PRs' + (pr.mean_commits_per_pr != null ? ' · ' + pr.mean_commits_per_pr + ' commits/PR avg' : ''));
+      else factRow('PR workflow', 'Direct-commit workflow (no PRs)');
+      setState('');
+    } catch (err) {
+      if (seq !== _ogpSeq) return;
+      setState('Couldn’t load governance signals. Retry shortly.');
+    }
+  }
   async function _renderRepoContext(repoKey) {
     const strip = document.getElementById('output-repo-context');
     if (!strip) return;
@@ -6552,7 +6618,8 @@
       if (announce) announce.textContent = 'Showing all repos, aggregate view.';
       _setOutputPivot('repo');
     }
-    _renderRepoContext(_outputRepo);  // ADR-0042 §4.2 context strip (hidden in aggregate)
+    _renderRepoContext(_outputRepo);      // ADR-0042 §4.2 context strip (hidden in aggregate)
+    _renderRepoGovernance(_outputRepo);   // ADR-0042 §4.4 governance-quality panel
     _outputPersistRepo();  // ADR-0042 §4.1 increment 1b: URL deep-link + localStorage
     _renderOutputTrajectory();
     // a11y: on USER select of a repo, move focus to the context heading (not on
