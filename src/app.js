@@ -454,6 +454,19 @@ app.get('/api/v1/presence/public', (req, res) => {
       session_health_class: null,
     });
   }
+  // Task #294 (secops #12846/#12850): strip pre_emission augment rows from the
+  // PUBLIC read-path. Origin (a6761bb, Ptah CP14.1 staging 2026-06-19) added the
+  // augment for OPS-tier visibility ("we've provisioned Ptah but daemon not yet
+  // wired"). The customer-facing use-case came later; per secops #12850 the
+  // public read-path is a trust boundary and `pre_emission` = operational state,
+  // not customer state. Provisioned-but-not-emitting agents render as permanent
+  // DOWN cards on the public dashboard because timestamps are null → passive
+  // age-out has nothing to age against ("permanent public blemish" — 2nd
+  // incident this cycle per #12846). Fail-safe: filter at boundary.
+  //
+  // Ops teams that need the affordance use the AUTHED /api/v1/presence
+  // endpoint (routes.js), which does not run the augment.
+  //
   // Task #257 / CP16 Pillar 3 — server-side filter + sort per PLAN-CP16-PILLAR-3
   // + parch #11169 OQ disposition. Backward-compat: omitted params → unchanged
   // shape (no _filter object, no presence-array mutation).
@@ -464,8 +477,12 @@ app.get('/api/v1/presence/public', (req, res) => {
   const sortDir = req.query?.sort_dir; // 'asc' | 'desc' | undefined
   const hasFilter = !!(filterRuntime || filterStatus || filterSearch);
   const hasSort = !!sortField;
-  const totalPreFilter = presence.length;
-  let filtered = presence;
+  // Public-boundary filter always applies (Task #294), independent of user's
+  // filter/sort. Runs BEFORE user filter so totalPreFilter reflects the
+  // customer-facing count (excludes the ops-tier pre_emission augment).
+  const publicRows = presence.filter((r) => r.pre_emission !== true);
+  const totalPreFilter = publicRows.length;
+  let filtered = publicRows;
   if (hasFilter) {
     if (filterSearch && (typeof filterSearch !== 'string' || filterSearch.length > 64)) {
       return res.status(400).json({ error: 'ValidationError', message: 'filter[search] must be ≤64 chars.' });
