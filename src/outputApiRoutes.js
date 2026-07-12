@@ -116,8 +116,9 @@ publicRouter.get('/composition', (req, res) => {
   // #output repo-focused drill-in. Same shape as /trajectory / /repo-summary
   // / /repo-governance — `repo=<owner/name>` regex-validated at route tier.
   const repoQ = typeof req.query.repo === 'string' ? req.query.repo.trim() : '';
-  if (repoQ && !/^[\w.-]+\/[\w.-]+$/.test(repoQ)) {
-    return res.status(400).json({ error: 'ValidationError', message: 'repo must match owner/name' });
+  // repo_key may be github (owner/name) or bare-git (name.git). Accept both.
+  if (repoQ && !/^[\w.-]+(\/[\w.-]+)?$/.test(repoQ)) {
+    return res.status(400).json({ error: 'ValidationError', message: 'repo must match owner/name or name.git' });
   }
   const db = dbModule.initializeDb();
   const result = by === 'agent'

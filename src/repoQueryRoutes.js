@@ -202,8 +202,9 @@ router.get('/activity-feed', (req, res) => {
     // my Phase B Task 1 commit 4547af8, but the ROUTE was missing the wire).
     // Param name filter_repo matches the /repos/heatmap family convention.
     const filterRepo = typeof req.query.filter_repo === 'string' ? req.query.filter_repo.trim() : '';
-    if (filterRepo && !/^[\w.-]+\/[\w.-]+$/.test(filterRepo)) {
-      return res.status(400).json({ error: 'ValidationError', message: 'filter_repo must match owner/name' });
+    // repo_key may be github (owner/name) or bare-git (name.git). Accept both.
+    if (filterRepo && !/^[\w.-]+(\/[\w.-]+)?$/.test(filterRepo)) {
+      return res.status(400).json({ error: 'ValidationError', message: 'filter_repo must match owner/name or name.git' });
     }
     const activity = dbModule.queryRepoActivityFeed({
       from, to, limit,
