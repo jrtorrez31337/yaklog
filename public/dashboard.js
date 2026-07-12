@@ -6482,9 +6482,65 @@
     const input = document.getElementById('orp-input');
     if (input) input.value = r.github_owner_repo;
     _orpSetOpen(false);
-    _setOutputRepo(r.github_owner_repo);
+    _setOutputRepo(r.github_owner_repo, true);  // user select → move focus to context heading
   }
-  function _setOutputRepo(repoKey) {
+  // ADR-0042 §4.2 repo-context strip. Fetches /output/repo-summary; honest states
+  // (loading / RepoNotFound / error). _orcSeq guards against out-of-order responses
+  // on rapid repo-switch. Optimistic key render keeps dimensions stable.
+  let _orcSeq = 0;
+  async function _renderRepoContext(repoKey) {
+    const strip = document.getElementById('output-repo-context');
+    if (!strip) return;
+    if (!repoKey) { strip.hidden = true; return; }
+    strip.hidden = false;
+    const seq = ++_orcSeq;
+    const repoEl = document.getElementById('orc-repo');
+    const chipsEl = document.getElementById('orc-chips');
+    const countsEl = document.getElementById('orc-counts');
+    const stateEl = document.getElementById('orc-state');
+    const setState = (msg) => { if (stateEl) { stateEl.textContent = msg || ''; stateEl.hidden = !msg; } };
+    if (repoEl) repoEl.textContent = repoKey;  // optimistic, stable dims
+    setState('Loading repo details…');
+    try {
+      const r = await fetch('/api/v1/output/repo-summary?repo=' + encodeURIComponent(repoKey) + '&' + _trajRangeQuery(), { cache: 'no-store' });
+      if (seq !== _orcSeq) return;  // superseded by a newer switch
+      if (r.status === 404) { setState('This repo isn’t in the governance set.'); if (chipsEl) clearChildren(chipsEl); if (countsEl) clearChildren(countsEl); return; }
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const d = await r.json();
+      if (seq !== _orcSeq) return;
+      const repo = d.repo || {};
+      const counts = d.counts || {};
+      if (repoEl) repoEl.textContent = repo.github_owner_repo || repoKey;
+      clearChildren(chipsEl);
+      const chip = (t) => { if (t != null && t !== '') chipsEl.appendChild(el('span', { class: 'orc-chip' }, String(t))); };
+      chip(repo.github_primary_language);
+      chip(repo.github_visibility);
+      chip(repo.github_default_branch);
+      if (repo.github_size_kb != null) chip(repo.github_size_kb + ' KB');
+      if (repo.github_repo_created_at) chip('created ' + _orpRel(repo.github_repo_created_at));
+      if (repo.github_repo_pushed_at) chip('pushed ' + _orpRel(repo.github_repo_pushed_at));
+      clearChildren(countsEl);
+      const cparts = [
+        [counts.commits, 'commits'], [counts.prs, 'PRs'], [counts.merges, 'merges'],
+        [counts.agents_engaged, counts.agents_engaged === 1 ? 'agent' : 'agents'],
+        [counts.attribution_gaps, counts.attribution_gaps === 1 ? 'attribution gap' : 'attribution gaps'],
+      ];
+      cparts.forEach(([n, label]) => {
+        if (n == null) return;
+        if (countsEl.childNodes.length) countsEl.appendChild(el('span', { class: 'orc-sep' }, '·'));
+        const seg = el('span');
+        seg.appendChild(el('span', { class: 'orc-num' }, String(n)));
+        seg.appendChild(document.createTextNode(' ' + label));
+        countsEl.appendChild(seg);
+      });
+      setState('');
+    } catch (err) {
+      if (seq !== _orcSeq) return;
+      setState('Couldn’t load repo details. Retry shortly.');
+    }
+  }
+
+  function _setOutputRepo(repoKey, moveFocus) {
     _outputRepo = repoKey || null;
     const allBtn = document.getElementById('orp-all');
     if (allBtn) allBtn.classList.toggle('active', !_outputRepo);
@@ -6496,8 +6552,12 @@
       if (announce) announce.textContent = 'Showing all repos, aggregate view.';
       _setOutputPivot('repo');
     }
+    _renderRepoContext(_outputRepo);  // ADR-0042 §4.2 context strip (hidden in aggregate)
     _outputPersistRepo();  // ADR-0042 §4.1 increment 1b: URL deep-link + localStorage
     _renderOutputTrajectory();
+    // a11y: on USER select of a repo, move focus to the context heading (not on
+    // mount-restore — that would steal focus on cold load).
+    if (moveFocus && _outputRepo) { const h = document.getElementById('orc-repo'); if (h) h.focus(); }
   }
   // Persist repo focus: #output?repo=<owner/name> via replaceState (no re-activation)
   // + localStorage. 'all'/absent = aggregate. URL wins over localStorage on load.
@@ -6544,7 +6604,7 @@
       else if (e.key === 'Escape') { e.preventDefault(); _orpSetOpen(false); }
     });
     if (sort) sort.addEventListener('change', () => { _orpSort = sort.value; _orpCompute(); _orpRender(); });
-    if (allBtn) { allBtn.classList.add('active'); allBtn.addEventListener('click', () => { input.value = ''; _orpSetOpen(false); _setOutputRepo(null); }); }
+    if (allBtn) { allBtn.classList.add('active'); allBtn.addEventListener('click', () => { input.value = ''; _orpSetOpen(false); _setOutputRepo(null, true); }); }
     document.addEventListener('click', (e) => { if (!e.target.closest('.output-repo-picker')) _orpSetOpen(false); });
   }
 
