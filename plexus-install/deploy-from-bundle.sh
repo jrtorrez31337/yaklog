@@ -89,6 +89,20 @@ deploy_devel() {
   if docker exec yaklog test -f /data/yaklog.db 2>/dev/null; then
     docker exec yaklog sh -c "cp /data/yaklog.db /data/$backup"
     ok "  db backup: /data/$backup"
+
+    # Prune stale pre-deploy backups per feedback_db_backup_retention_two_week_expiry
+    # + bus #12787 cluster-wide git outage precedent (7GB * 10+ deploys/day
+    # filled 118GB root disk in 24h). Keep last-3 (current + 2 rollback tiers),
+    # delete older. Belt+suspenders: OR-gate on 2wk canon.
+    docker exec yaklog sh -c "
+      cd /data
+      # Keep 3 newest by mtime; delete rest
+      ls -1t yaklog.db.bak-*-pre-deploy-* 2>/dev/null | tail -n +4 | xargs -r rm -f
+      # Also expire anything >14 days regardless (canon backstop)
+      find . -maxdepth 1 -name 'yaklog.db.bak-*-pre-deploy-*' -mtime +14 -delete 2>/dev/null || true
+    "
+    remaining=$(docker exec yaklog sh -c "ls -1 /data/yaklog.db.bak-*-pre-deploy-* 2>/dev/null | wc -l")
+    ok "  db backups on volume: ${remaining} retained (keep-last-3 + 14d canon)"
   fi
 
   # Load fresh yaklog image
@@ -140,9 +154,11 @@ deploy_demo() {
     cd /tmp
     # Extract
     tar xzf "$tar_base"
-    # Backup demo db
+    # Backup demo db + prune stale (keep-last-3 + 14d canon per
+    # feedback_db_backup_retention_two_week_expiry / bus #12787 precedent)
     if sudo docker exec plexus-demo test -f /data/yaklog.db 2>/dev/null; then
       sudo docker exec plexus-demo sh -c "cp /data/yaklog.db /data/yaklog.db.bak-\$(date -u +%Y%m%d-%H%M%S)-pre-deploy"
+      sudo docker exec plexus-demo sh -c "cd /data && ls -1t yaklog.db.bak-*-pre-deploy* 2>/dev/null | tail -n +4 | xargs -r rm -f; find . -maxdepth 1 -name 'yaklog.db.bak-*-pre-deploy*' -mtime +14 -delete 2>/dev/null || true"
     fi
     # Load fresh yaklog image
     sudo docker load -i "/tmp/${bundle_name_remote}/images/yaklog.tar" >/dev/null
