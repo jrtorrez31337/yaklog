@@ -4833,7 +4833,7 @@
   function _buildChainIntegrityCard() {
     const card = el('div', { class: 'chain-integrity-card' });
     const header = el('div', { class: 'ci-header' });
-    header.appendChild(el('div', { class: 'ci-title' }, 'Chain integrity (Phase 3 (A) anchor verify)'));
+    header.appendChild(el('div', { class: 'ci-title' }, 'Chain integrity (anchor verify)'));
     header.appendChild(el('div', { class: 'ci-substrate' }, 'substrate: s3-object-lock'));
     card.appendChild(header);
     card.appendChild(el('div', { class: 'ci-note' },
