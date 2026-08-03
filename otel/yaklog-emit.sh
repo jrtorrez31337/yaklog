@@ -21,7 +21,7 @@
 # calling runtime's launcher:
 #   YAKLOG_AGENT_ID       e.g. gemini-agent
 #   YAKLOG_CLUSTER_ID     default ssw-dev
-#   YAKLOG_DEPLOYMENT     default devel
+#   YAKLOG_DEPLOYMENT     default local
 #   YAKLOG_SERVICE_NAME   e.g. gemini-cli   (free-form; analogous to CC's "claude-code")
 #   YAKLOG_OTLP_ENDPOINT  default http://<yaklog-host>:4328
 #   YAKLOG_TOKEN          reused as OTLP Bearer (no separate credential)
@@ -47,7 +47,7 @@ set -euo pipefail
 
 YAKLOG_OTLP_ENDPOINT="${YAKLOG_OTLP_ENDPOINT:-http://<yaklog-host>:4328}"
 YAKLOG_CLUSTER_ID="${YAKLOG_CLUSTER_ID:-ssw-dev}"
-YAKLOG_DEPLOYMENT="${YAKLOG_DEPLOYMENT:-devel}"
+YAKLOG_DEPLOYMENT="${YAKLOG_DEPLOYMENT:-local}"
 YAKLOG_SERVICE_NAME="${YAKLOG_SERVICE_NAME:-unknown}"
 
 err() { printf 'yaklog-emit: %s\n' "$*" >&2; }

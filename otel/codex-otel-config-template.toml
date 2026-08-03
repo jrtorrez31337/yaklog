@@ -12,7 +12,7 @@
 # security model. PRODUCTION must upgrade per Plan C Stage 1 §7 risks.
 
 [otel]
-environment = "yaklog-devel"
+environment = "yaklog-local"
 log_user_prompt = false
 exporter = "otlp-grpc"
 

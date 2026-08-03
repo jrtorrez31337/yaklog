@@ -1,5 +1,5 @@
 # Yaklog Prometheus config — DEMO variant of otel/prometheus.yml.
-# Only delta: external_labels reflect yaklog-demo, not devel.
+# Only delta: external_labels reflect yaklog-demo, not the production deployment.
 #
 # Retention 15 days for Stage 1 (set via --storage.tsdb.retention.time
 # in docker-compose command args).

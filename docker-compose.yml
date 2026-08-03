@@ -100,7 +100,7 @@ services:
     # exist on the host BEFORE first-time `docker compose up`, OR the
     # container will spin up with Grafana's default admin/admin (security
     # hole). Production deploys should fail-fast on missing file; for
-    # devel we accept the env_file lookup will error out the container
+    # in local-dev we accept the env_file lookup will error out the container
     # which is fail-safe enough.
     env_file:
       - ${YAKLOG_GRAFANA_ENV_FILE:-./yaklog-grafana.env}

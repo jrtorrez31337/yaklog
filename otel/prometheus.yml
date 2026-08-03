@@ -8,7 +8,7 @@ global:
   evaluation_interval: 15s
   external_labels:
     cluster: yaklog-stage-1
-    deployment: devel
+    deployment: local
 
 scrape_configs:
   # Self-scrape: Prom monitoring itself; standard practice.

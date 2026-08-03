@@ -13,7 +13,7 @@ Requires=yaklog-audit-rollup.service
 [Timer]
 OnCalendar=*:25
 RandomizedDelaySec=300
-# Catch up on missed firings after devel restart/network outage
+# Catch up on missed firings after yaklog-host restart/network outage
 Persistent=true
 Unit=yaklog-audit-rollup.service
 

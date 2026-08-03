@@ -15,7 +15,7 @@
 #   4. authorized_keys         — per-user ssh access
 #   5. gh hosts.yml            — per-user gh CLI auth state
 #
-# Per-agent attribution heuristic (devel + operator-host cluster canon):
+# Per-agent attribution heuristic (yaklog-host cluster):
 #   - /home/<user>/agents/<agent>/.claude/...  → agent_id = <agent>-agent
 #   - /home/<user>/.ssh/...                    → agent_id = <user> (uid-mapped)
 #   - /home/<user>/.config/...                 → agent_id = <user> (uid-mapped)

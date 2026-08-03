@@ -15,8 +15,8 @@
 #   ✗ Tool input/output bodies in spans (OTEL_LOG_TOOL_CONTENT needs beta-tracing)
 #
 # Privacy posture: this is the FULL enterprise data capture per Yaklog
-# positioning. Data lands in the Yaklog collector + Prom + Grafana on devel
-# (~/yaklog otel-stack). Customer data does NOT leave the devel boundary
+# positioning. Data lands in the Yaklog collector + Prom + Grafana on the yaklog host
+# (~/yaklog otel-stack). Customer data does NOT leave the yaklog-host boundary
 # under Stage 1 default config. Data-management mechanism (retention,
 # redaction, access-control) deferred to future workstream w/ s345-agent.
 # See PLAN-C-OTEL-DESIGN.md §6 + task #60.
@@ -27,7 +27,7 @@
 export CLAUDE_CODE_ENABLE_TELEMETRY=1
 
 # Where to push (OTLP/HTTP). Stage 1: collector accepts any Bearer; auth is
-# network-isolation (devel LAN). If you're not on devel LAN, OTel push will
+# network-isolation (yaklog LAN). If you're not on yaklog LAN, OTel push will
 # fail silently — that's fine, your CC session still works.
 export OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
 export OTEL_EXPORTER_OTLP_ENDPOINT=http://<yaklog-host>:4328
@@ -44,7 +44,7 @@ export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer ${YAKLOG_TOKEN}"
 # Per-agent identity binding via resource attributes (yaklog.agent_id labels
 # every metric/event with your agent_id so Grafana panels can filter).
 # REPLACE <YOUR-AGENT-ID> below with your actual yaklog agent_id.
-export OTEL_RESOURCE_ATTRIBUTES="yaklog.agent_id=<YOUR-AGENT-ID>,yaklog.cluster_id=ssw-dev,yaklog.deployment=devel"
+export OTEL_RESOURCE_ATTRIBUTES="yaklog.agent_id=<YOUR-AGENT-ID>,yaklog.cluster_id=ssw-dev,yaklog.deployment=<your-deployment>"
 
 # Exporters: metrics + logs to OTLP. Traces deferred (CC beta-tracing gate).
 export OTEL_METRICS_EXPORTER=otlp

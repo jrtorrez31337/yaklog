@@ -2,7 +2,7 @@
 # build-bundle.sh — produce a portable Yaklog install bundle.
 #
 # Per Task #284 / PLAN-YAKLOG-INSTALL-BUNDLE.md. Run on the build-host
-# (devel) to produce dist/yaklog-install-bundle-<sha>-<timestamp>/ which
+# (yaklog-host) to produce dist/yaklog-install-bundle-<sha>-<timestamp>/ which
 # contains all OCI images + installer + templates. Tarball + scp the
 # dist dir to the target install host.
 #

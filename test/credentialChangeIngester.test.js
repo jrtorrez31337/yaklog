@@ -198,7 +198,7 @@ test('Phase B e2e: envDiffBootDetector emits mint+revoke+bind on diff vs snapsho
   assert.equal(r.first_boot, false);
   assert.equal(r.mints, 1);
   assert.equal(r.revokes, 1);
-  assert.equal(r.binds, 2); // bob + devel-host
+  assert.equal(r.binds, 2); // bob + yaklog-host
   assert.equal(r.unbinds, 0);
   assert.equal(r.total_emitted, 4);
 
@@ -222,12 +222,12 @@ test('Phase B e2e: envDiffBootDetector idempotent (re-run with stable env emits 
 });
 
 test('Phase B e2e: envDiffBootDetector emits unbind when binding removed', () => {
-  // Drop bob + devel-host bindings; nothing else changes.
+  // Drop bob + yaklog-host bindings; nothing else changes.
   const before = listAuditCredentialChanges({}).length;
   const r = envDiffBootDetector({
     apiKeysString: 'tok-a,tok-c,tok-NEW',
     tokenBindingsString: 'alice:tok-1', // bob removed
-    hostIngesterBindingsString: '',     // devel-host removed
+    hostIngesterBindingsString: '',     // yaklog-host removed
   });
   assert.equal(r.unbinds, 2);
   assert.equal(r.mints, 0);

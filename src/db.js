@@ -289,7 +289,7 @@ function initializeDb() {
   db.prepare(`CREATE INDEX IF NOT EXISTS idx_transitions_agent_time ON presence_transitions(agent_id, occurred_at DESC)`).run();
 
   // Agent /register endpoint state machine per ADR-0025 (committed
-  // 2026-05-19 at parch@devel:~/adr/0025-yaklog-register-endpoint-agent-
+  // 2026-05-19 at parch@yaklog-host:~/adr/0025-yaklog-register-endpoint-agent-
   // registration-state-machine.md) + ferry-canon (agent-specs.git@1c6cd00).
   // State machine: NEW → SUBMITTED → PARCH_REVIEW → JON_RATIFY →
   // APPROVED_PENDING_FERRY → FERRIED → PENDING_ACTIVATION → ACTIVE; or

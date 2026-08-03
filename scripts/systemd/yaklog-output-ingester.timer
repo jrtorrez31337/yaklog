@@ -11,7 +11,7 @@ Requires=yaklog-output-ingester.service
 # top-of-hour clear for higher-cadence jobs (presence sweeps + cost rollups).
 OnCalendar=hourly
 RandomizedDelaySec=300
-# Catch up on missed firings after devel restart/network outage
+# Catch up on missed firings after yaklog-host restart/network outage
 Persistent=true
 Unit=yaklog-output-ingester.service
 

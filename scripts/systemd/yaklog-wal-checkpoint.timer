@@ -22,7 +22,7 @@ Requires=yaklog-wal-checkpoint.service
 # per secops Gate (1) finding #10115.
 OnCalendar=*-*-* *:37:00
 RandomizedDelaySec=300
-# Catch up on missed firings after devel restart/network outage
+# Catch up on missed firings after yaklog-host restart/network outage
 Persistent=true
 Unit=yaklog-wal-checkpoint.service
 

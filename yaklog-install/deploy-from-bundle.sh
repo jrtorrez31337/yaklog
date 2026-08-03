@@ -16,7 +16,7 @@
 # Targets:
 #   local     — local yaklog (this host, ./docker-compose.yml)
 #   demo      — remote demo VM (SSH: yaklog-admin@$DEMO_HOST)
-#   both      — local then demo (fail-fast: demo skipped if devel fails)
+#   both      — local then demo (fail-fast: demo skipped if local fails)
 #
 # Env overrides:
 #   DEMO_HOST         — default <demo-vm-ip>
@@ -183,7 +183,7 @@ REMOTE
 # ── 4. Dispatch ─────────────────────────────────────────────────────────
 
 case "$TARGET" in
-  devel) deploy_local ;;
+
   demo)  deploy_demo ;;
   both)
     deploy_local || { err "local deploy failed; skipping demo (fail-fast)"; exit 4; }

@@ -70,7 +70,7 @@ services:
       - --web.enable-lifecycle
     volumes:
       # Demo-specific prometheus.yml — external_labels reflect yaklog-demo
-      # (production prometheus.yml has deployment: devel label; demo overrides)
+      # (production prometheus.yml has deployment: local label; demo overrides)
       - ./otel/prometheus.demo.yml:/etc/prometheus/prometheus.yml:ro
       - yaklog_prom_data:/prometheus
     ports:

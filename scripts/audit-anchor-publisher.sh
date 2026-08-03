@@ -16,7 +16,7 @@
 #   ./scripts/audit-anchor-publisher.sh \
 #     --yaklog-url http://localhost:3100 \
 #     --ops-key-file /etc/yaklog/ops-key \
-#     --s3-bucket yaklog-audit-anchor-devel \
+#     --s3-bucket yaklog-audit-anchor-local \
 #     [--dry-run]
 
 set -euo pipefail
@@ -28,7 +28,7 @@ DRY_RUN=0
 ANCHOR_DAY="${ANCHOR_DAY:-$(date -u +%Y-%m-%d)}"
 ANCHOR_SUBSTRATE="s3-object-lock"
 # CP12.21.1 (2026-06-09): --endpoint-url support for local-S3-equivalent
-# (MinIO on devel per Jon-direct brand-narrative pivot). Defaults to
+# (MinIO on the yaklog host). Defaults to
 # AWS_ENDPOINT_URL env var (which aws cli v2.13+ honors natively); script
 # flag is explicit override. Empty = AWS-default-cloud-S3 endpoint.
 S3_ENDPOINT_URL="${AWS_ENDPOINT_URL:-}"

@@ -48,7 +48,7 @@
 #   bash install-yaklog-otel.sh --uninstall <agent-id> [--workspace=<path>]
 #
 # Pre-conditions:
-#   - On devel LAN (collector reachable at <yaklog-host>:4328)
+#   - On yaklog LAN (collector reachable at <yaklog-host>:4328)
 #   - YAKLOG_TOKEN exported OR readable at ~/.config/yaklog/token
 #   - CC >= 2.1.144
 #   - python3 available (used for safe JSON merge)
@@ -201,7 +201,7 @@ declare -A OTEL_VALS=(
   [OTEL_EXPORTER_OTLP_PROTOCOL]="http/protobuf"
   [OTEL_EXPORTER_OTLP_ENDPOINT]="http://<yaklog-host>:4328"
   [OTEL_EXPORTER_OTLP_HEADERS]="$OTLP_BEARER"
-  [OTEL_RESOURCE_ATTRIBUTES]="yaklog.agent_id=${AGENT_ID},yaklog.cluster_id=ssw-dev,yaklog.deployment=devel"
+  [OTEL_RESOURCE_ATTRIBUTES]="yaklog.agent_id=${AGENT_ID},yaklog.cluster_id=ssw-dev,yaklog.deployment=<your-deployment>"
   [OTEL_METRICS_EXPORTER]="otlp"
   [OTEL_LOGS_EXPORTER]="otlp"
   [OTEL_TRACES_EXPORTER]="none"
