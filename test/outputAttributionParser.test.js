@@ -243,7 +243,7 @@ test('agentIdByEmail: canonical identity pattern resolves prefix as agent_id', (
 });
 
 test('agentIdByEmail: case-insensitive on canonical pattern', () => {
-  assert.equal(agentIdByEmail('Yaklog-Dev-Agent@Internal.Subnet345.com'), 'yaklog-dev-agent');
+  assert.equal(agentIdByEmail('Yaklog-Dev-Agent@internal.example.com'), 'yaklog-dev-agent');
 });
 
 test('agentIdByEmail: invalid prefix chars in canonical pattern → null', () => {

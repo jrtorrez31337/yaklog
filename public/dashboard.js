@@ -1267,10 +1267,10 @@
       // hexagonal weave (common geometric primitive)
       svg: '<g stroke-width="2" stroke-linejoin="round" fill="none"><polygon points="12,2 21,7 21,17 12,22 3,17 3,7" stroke="currentColor"/><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/></g>',
     },
-    // Ptah — Subnet345-owned runtime (Phase 0-Ptah sister-cycle). Per
+    // Ptah — operator-owned runtime (Phase 0-Ptah sister-cycle). Per
     // cluster brand-spine convergence cycle 2026-06-19/20:
     //  - label per writer #9667 ratify
-    //  - color per s345 #9673 FINAL RATIFY (Subnet345-owned palette tier;
+    //  - color per s345 #9673 FINAL RATIFY (operator palette tier;
     //    brand-purple distinct from vendor-adjacent CC/Gemini/Codex hues)
     //  - svg per gfxartist #9670 (djed-pillar; Egyptian creator-deity
     //    evoke; geometric primitive distinct from existing 3 glyphs)
