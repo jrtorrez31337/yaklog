@@ -426,7 +426,7 @@ router.get('/query_range', queryRangeHandler);
 // /api/v1/presence/public pattern. The allowlist + cache + Prom proxy
 // behaviour is IDENTICAL; only auth differs.
 //
-// Security posture: on devel single-tenant, the data exposed here is
+// Security posture: on single-tenant deployments, the data exposed here is
 // the same Jon's-own-data already visible via /presence/public. The
 // allowlist guarantees no arbitrary PromQL can be executed via this
 // surface. For production multi-tenant deployments, the dashboard

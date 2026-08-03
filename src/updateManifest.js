@@ -4,7 +4,7 @@
 // operators + agents:
 //   - what the canonical artifact is
 //   - which version is current
-//   - where to pull from (bare-git path on devel)
+//   - where to pull from (bare-git path on host)
 //   - how to install / upgrade
 //   - what changed in the most recent canonical release
 //
@@ -37,7 +37,7 @@ const MANIFEST = {
       changed_in:
         'CP6.13 (rate/lookback labels) + CP6.10 (Runtime card split) + ' +
         'CP6.8 (env schema). Cumulative since last v-bump.',
-      audience: 'devel operator (docker host)',
+      audience: 'local operator (docker host)',
     },
 
     {

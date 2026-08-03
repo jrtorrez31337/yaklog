@@ -14,7 +14,7 @@ The demo VM uses `yaklog-admin` as its canonical user (not `jon` — the demo is
 ## Prerequisites (on the demo VM)
 
 - Docker + docker compose plugin (`docker compose version` prints ≥ v2.20)
-- Network reachability from `ptah-win11` (10.71.1.187) + s345 seat to VM
+- Network reachability from `ptah-win11` (<demo-vm-ip>) + s345 seat to VM
   on TCP 3100
 - ~200 MB disk for the container image + a couple hundred KB for the
   demo SQLite
@@ -52,14 +52,14 @@ YAKLOG_BIND_IP=0.0.0.0
 # specifically to the interface ptah-win11 + s345 reach — rather than
 # 0.0.0.0 which exposes /ops on ALL interfaces. Single-homed VMs can
 # leave this unset.
-# YAKLOG_BIND_IP=10.71.1.184
+# YAKLOG_BIND_IP=<demo-vm-ip>
 ```
 
 **Token minting rule**: `YAKLOG_API_KEYS` is a comma-separated list of
 `bearer:agent-id` pairs. Each of Jon's real-fleet agents needs one
 entry — the agent will present `Authorization: Bearer <bearer>` and
 the server maps to `agent-id` for attribution. Mint fresh values; do
-NOT reuse devel-cluster tokens.
+NOT reuse production-cluster tokens.
 
 Ferry `.env.demo` to demo-VM via a secure channel — never via the yaklog
 bus (per `feedback_secrets_no_yaklog`).
@@ -97,7 +97,7 @@ Each of Jon's real-fleet agents needs:
 - `YAKLOG_TOKEN=<demo-bearer-for-this-agent>` env override
 
 Restart their yaklog-sub with these env vars; they'll register/post to
-demo, NOT devel. Idempotent — no data crosses.
+demo, NOT production. Idempotent — no data crosses.
 
 Registration flow (if agent needs to /register on demo instance for the
 first time):
@@ -127,9 +127,9 @@ rm -rf ./data   # nukes the demo SQLite; fresh state next run
 
 ## Isolation checklist (for secops verify)
 
-- [ ] `.env.demo` YAKLOG_API_KEYS distinct from devel's YAKLOG_API_KEYS
+- [ ] `.env.demo` YAKLOG_API_KEYS distinct from production YAKLOG_API_KEYS
 - [ ] SQLite path is `./data/yaklog.db` local to VM, not shared
-- [ ] No OTEL_EXPORTER_OTLP_ENDPOINT pointing at devel collector
+- [ ] No OTEL_EXPORTER_OTLP_ENDPOINT pointing at production collector
 - [ ] No cross-mount to /srv/git or shared paths
 - [ ] Real-fleet yaklog-sub restart uses demo YAKLOG_URL, not the real one
 - [ ] Container name is `yaklog-demo` (customer-facing brand + visual distinguisher from production `yaklog`)

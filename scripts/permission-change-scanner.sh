@@ -15,7 +15,7 @@
 #   4. authorized_keys         — per-user ssh access
 #   5. gh hosts.yml            — per-user gh CLI auth state
 #
-# Per-agent attribution heuristic (devel + traptop10k cluster canon):
+# Per-agent attribution heuristic (devel + operator-host cluster canon):
 #   - /home/<user>/agents/<agent>/.claude/...  → agent_id = <agent>-agent
 #   - /home/<user>/.ssh/...                    → agent_id = <user> (uid-mapped)
 #   - /home/<user>/.config/...                 → agent_id = <user> (uid-mapped)
@@ -26,7 +26,7 @@
 # Usage:
 #   ./scripts/permission-change-scanner.sh \
 #     --yaklog-url http://localhost:3100 \
-#     --ops-key-file /home/jon/.config/yaklog/ops-key
+#     --ops-key-file /etc/yaklog/ops-key
 #
 # Or via systemd timer (Phase 2b forward-track; not in this ship).
 

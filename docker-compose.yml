@@ -1,6 +1,6 @@
 services:
   yaklog:
-    # Task #285 tag-alignment: bundle produces yaklog:latest; devel compose
+    # Task #285 tag-alignment: bundle produces yaklog:latest; local compose
     # must consume the same tag so `docker load` from bundle + `docker
     # compose up -d --force-recreate` picks up the newly-loaded image
     # without needing a separate re-tag step. build: . still works for
@@ -133,8 +133,8 @@ services:
   # Yaklog MinIO (CP12.21 Phase 3 (A) external integrity anchor hosting).
   # Per Jon-direct 2026-06-09 (#8236): substrate-choice α S3 Object Lock
   # canonical (parch #7984 OQ-3 ratify) + hosting flips AWS S3 → local
-  # MinIO on devel (brand-narrative alignment: cluster-self-substrate canon).
-  # 127.0.0.1-bound (devel-internal; no internet exposure).
+  # MinIO on host (brand-narrative alignment: cluster-self-substrate canon).
+  # 127.0.0.1-bound (host-internal; no internet exposure).
   # ──────────────────────────────────────────────────────────────────────
 
   yaklog-minio:

@@ -98,6 +98,6 @@ ls -lh "$BACKUP_DIR"/yaklog-*.tar.gz 2>/dev/null | tail -10 || echo "(none)"
 # 4. Restart the consumer:
 #      docker compose start yaklog-prometheus
 # 5. Verify:
-#      curl -sS http://192.168.122.76:9090/api/v1/query?query=up
+#      curl -sS http://<yaklog-host>:9090/api/v1/query?query=up
 #      Visit Grafana, confirm dashboards intact + historical metrics present.
 # ---------------------------------------------------------------------------

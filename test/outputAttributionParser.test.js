@@ -153,7 +153,7 @@ test('parseAuthorEmail: Codex direct-author email → aieng3-agent + runtime=cod
 });
 
 test('parseAuthorEmail: Gemini direct-author email → gemini-agent + runtime=gemini', () => {
-  const r = parseAuthorEmail('gemini-agent@devel');
+  const r = parseAuthorEmail('gemini-agent@yaklog-host');
   assert.equal(r.agent_attribution, 'gemini-agent');
   assert.equal(r.attribution_method, 'author_email_direct');
   assert.equal(r.runtime_class, 'gemini');
@@ -253,9 +253,9 @@ test('agentIdByEmail: invalid prefix chars in canonical pattern → null', () =>
 });
 
 test('agentIdByEmail: EMAIL_TO_AGENT_ID exact-lookup precedence preserved (historical hostname variant)', () => {
-  // yaklog-dev-agent@devel is in EMAIL_TO_AGENT_ID — exact takes precedence
-  // over the new pattern (which doesn't match @devel anyway)
-  assert.equal(agentIdByEmail('yaklog-dev-agent@devel'), 'yaklog-dev-agent');
+  // yaklog-dev-agent@yaklog-host is in EMAIL_TO_AGENT_ID — exact takes precedence
+  // over the new pattern (which doesn't match @yaklog-host anyway)
+  assert.equal(agentIdByEmail('yaklog-dev-agent@yaklog-host'), 'yaklog-dev-agent');
 });
 
 test('agentIdByEmail: non-canonical domain → null (no over-match)', () => {

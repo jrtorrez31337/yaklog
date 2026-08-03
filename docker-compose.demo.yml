@@ -39,7 +39,7 @@ services:
 
   # ────────────────────────────────────────────────────────────────────
   # Demo OTel collector — receives OTLP from Jon's real-fleet agents
-  # (agents' OTEL_EXPORTER_OTLP_ENDPOINT points at 10.71.1.184:4328). Sister-
+  # (agents' OTEL_EXPORTER_OTLP_ENDPOINT points at <demo-vm-ip>:4328). Sister-
   # shape production ports 4327/4328 so agent config port-swaps cleanly.
   # Stage 1 auth: accepts any Bearer header; VM-level network isolation
   # is the security boundary — do NOT expose :4327/:4328 outside demo VM's
@@ -92,7 +92,7 @@ services:
     container_name: yaklog-grafana
     restart: unless-stopped
     # Demo credentials live in a VM-local env file (fresh mint; NOT
-    # shared with production yaklog-grafana.env at /home/jon/.config/yaklog/).
+    # shared with production yaklog-grafana.env at /etc/yaklog/).
     env_file:
       - ./yaklog-grafana.demo.env
     environment:

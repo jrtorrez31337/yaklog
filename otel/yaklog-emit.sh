@@ -23,7 +23,7 @@
 #   YAKLOG_CLUSTER_ID     default ssw-dev
 #   YAKLOG_DEPLOYMENT     default devel
 #   YAKLOG_SERVICE_NAME   e.g. gemini-cli   (free-form; analogous to CC's "claude-code")
-#   YAKLOG_OTLP_ENDPOINT  default http://192.168.122.76:4328
+#   YAKLOG_OTLP_ENDPOINT  default http://<yaklog-host>:4328
 #   YAKLOG_TOKEN          reused as OTLP Bearer (no separate credential)
 #
 # Examples:
@@ -45,7 +45,7 @@
 
 set -euo pipefail
 
-YAKLOG_OTLP_ENDPOINT="${YAKLOG_OTLP_ENDPOINT:-http://192.168.122.76:4328}"
+YAKLOG_OTLP_ENDPOINT="${YAKLOG_OTLP_ENDPOINT:-http://<yaklog-host>:4328}"
 YAKLOG_CLUSTER_ID="${YAKLOG_CLUSTER_ID:-ssw-dev}"
 YAKLOG_DEPLOYMENT="${YAKLOG_DEPLOYMENT:-devel}"
 YAKLOG_SERVICE_NAME="${YAKLOG_SERVICE_NAME:-unknown}"

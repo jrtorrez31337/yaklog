@@ -7,7 +7,7 @@
 # tracing requires org allowlist; not Stage 1).
 #
 # Stage 1 auth model: collector accepts any Bearer header. Network isolation
-# (devel LAN; container on yaklog_default docker network) is the security
+# (local LAN; container on yaklog_default docker network) is the security
 # boundary. Stage 2 adds yaklog-token validation. PRODUCTION must add
 # proper auth — flagged in PLAN-C-STAGE-1-BUILD-PLAN.md §7 risks.
 

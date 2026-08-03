@@ -14,12 +14,12 @@
 # Per-user attribution heuristic:
 #   /home/<user>/.config/yaklog/channels → agent_id = <user>
 #
-# Future: traptop10k bridge support for cross-host scanning (Phase 2b).
+# Future: operator-host bridge support for cross-host scanning (Phase 2b).
 #
 # Usage:
 #   ./scripts/channel-subscription-scanner.sh \
 #     --yaklog-url http://localhost:3100 \
-#     --ops-key-file /home/jon/.config/yaklog/ops-key
+#     --ops-key-file /etc/yaklog/ops-key
 
 set -euo pipefail
 

@@ -70,7 +70,7 @@ module.exports = {
   // v1.1 Phase 1.5 + secops #7810 OQ#5 SIGNED OFF. One binding per host
   // (NOT per agent — file-access is host-scope). Reuses same `host:token`
   // CSV shape as YAKLOG_DAEMON_BINDINGS. Host identifier is the hostname
-  // string the per-host ingester reports in events (e.g. 'devel',
+  // string the per-host ingester reports in events (e.g. 'yaklog-host',
   // 'operator-host'). Token lives in EnvironmentFile per yaklog-audit-ingester
   // service-account. Never reuse an agent's token — confuses substrate
   // attribution with message-bus identity per secops #7810.

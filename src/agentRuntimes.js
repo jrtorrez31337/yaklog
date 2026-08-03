@@ -38,64 +38,64 @@ const VALID_RUNTIMES = new Set(['claude_code', 'gemini', 'codex', 'ptah']);
 //
 // Map<email, agent_id> — explicit; do not auto-derive from REGISTRY
 // because canonical commit emails vary by host (e.g., aieng3-agent@swarm.local
-// vs aieng3-agent@devel for the same agent). When a new agent's commit email
+// vs aieng3-agent@yaklog-host for the same agent). When a new agent's commit email
 // appears in output-strand, add an entry here.
 const EMAIL_TO_AGENT_ID = new Map([
   // Codex (aieng3-agent)
   ['aieng3-agent@swarm.local', 'aieng3-agent'],
-  ['aieng3-agent@devel',       'aieng3-agent'],
+  ['aieng3-agent@yaklog-host',       'aieng3-agent'],
   ['aieng3@swarm.local',       'aieng3-agent'],
   // Gemini
-  ['gemini-agent@devel',       'gemini-agent'],
+  ['gemini-agent@yaklog-host',       'gemini-agent'],
   // Ptah
-  ['ptah-agent@devel',         'ptah-agent'],
+  ['ptah-agent@yaklog-host',         'ptah-agent'],
   ['ptah-agent@ptah-win11',    'ptah-agent'],
   // ── CC agents (Jon-direct empirical-expansion 2026-06-20) ─────────────
   // yaklog-dev (this agent)
-  ['yaklog-dev-agent@devel',   'yaklog-dev-agent'],
-  ['yaklog-dev@devel.local',   'yaklog-dev-agent'],
+  ['yaklog-dev-agent@yaklog-host',   'yaklog-dev-agent'],
+  ['yaklog-dev@yaklog-host.local',   'yaklog-dev-agent'],
   ['yaklog-dev@example.com', 'yaklog-dev-agent'],
-  ['yaklog-dev@devel',         'yaklog-dev-agent'],
+  ['yaklog-dev@yaklog-host',         'yaklog-dev-agent'],
   // s345-aieng (Anthropic Ptah primary; in-place rename from `aieng-agent` per
   // Jon-direct #7894 dispatch 2026-06-06; historical aieng-* author-emails
   // are substantively the SAME entity, now canonically s345-aieng-agent.
   // YAKLOG_ALIASES at ~/agents/<agent>/.config/yaklog/...env
   // preserves `aieng-renamed` audit-trail per migration canon.)
   ['s345-aieng-agent@example.com', 's345-aieng-agent'],
-  ['s345-aieng@devel',         's345-aieng-agent'],
+  ['s345-aieng@yaklog-host',         's345-aieng-agent'],
   ['aieng-agent@example.com',     's345-aieng-agent'],  // historical-alias post-rename
   ['aieng-agent@operator-host.local',  's345-aieng-agent'],  // historical-alias post-rename
-  ['aieng@devel',                   's345-aieng-agent'],  // historical-alias post-rename
+  ['aieng@yaklog-host',                   's345-aieng-agent'],  // historical-alias post-rename
   // ssw-devops
-  ['ssw-devops@devel',         'ssw-devops-agent'],
-  ['ssw-devops-agent@devel',   'ssw-devops-agent'],
+  ['ssw-devops@yaklog-host',         'ssw-devops-agent'],
+  ['ssw-devops-agent@yaklog-host',   'ssw-devops-agent'],
   // s345 (brand-spine + scope-strand)
   ['s345-agent@operator-host.local', 's345-agent'],
-  ['s345-agent@devel',           's345-agent'],
+  ['s345-agent@yaklog-host',           's345-agent'],
   // gfxartist
   ['gfxartist-agent@ssw-cluster',  'gfxartist-agent'],
   ['gfxartist-agent@ssw.cluster',  'gfxartist-agent'],
   ['gfxartist-agent@ssw.internal', 'gfxartist-agent'],
-  ['gfxartist@devel',              'gfxartist-agent'],
+  ['gfxartist@yaklog-host',              'gfxartist-agent'],
   // parch (governance)
-  ['parch@devel',              'parch-agent'],
-  ['parch-agent@devel',        'parch-agent'],
+  ['parch@yaklog-host',              'parch-agent'],
+  ['parch-agent@yaklog-host',        'parch-agent'],
   ['parch-agent@operator-host',   'parch-agent'],
   // writer-agent
   ['writer-agent@example.com', 'writer-agent'],
-  ['writer-agent@devel',         'writer-agent'],
+  ['writer-agent@yaklog-host',         'writer-agent'],
   // secops
-  ['secops-agent@devel',       'secops-agent'],
+  ['secops-agent@yaklog-host',       'secops-agent'],
   // auth-agent
-  ['auth-agent@devel',         'auth-agent'],
+  ['auth-agent@yaklog-host',         'auth-agent'],
   // ── Second-pass empirical 2026-06-20 (post first walker fire) ──────────
   // pveadmin (Ptah host substrate provisioning)
-  ['pveadmin-agent@devel',     'pveadmin-agent'],
+  ['pveadmin-agent@yaklog-host',     'pveadmin-agent'],
   // smm-agent
-  ['smm-agent@devel',          'smm-agent'],
+  ['smm-agent@yaklog-host',          'smm-agent'],
   // maker-agent (rotated tokens; multi-host)
   ['maker-agent@operator-host',   'maker-agent'],
-  ['maker-agent@devel',        'maker-agent'],
+  ['maker-agent@yaklog-host',        'maker-agent'],
   // additional ssw-devops + secops hostname variants
   ['ssw-devops@example.com', 'ssw-devops-agent'],
   ['secops-agent@swarm.internal', 'secops-agent'],

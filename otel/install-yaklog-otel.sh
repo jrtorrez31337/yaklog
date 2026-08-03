@@ -10,7 +10,7 @@
 # V2 mechanism: writes to <workspace>/.claude/settings.local.json `env` key.
 # CC reads this at session start; it's per-workspace so multi-agents under
 # the same unix UID (e.g. admin + maker + aieng all under jon-uid on
-# traptop10k) don't collide on yaklog.agent_id.
+# operator-host) don't collide on yaklog.agent_id.
 #
 # What this does:
 #   1. Locates the agent's CC workspace (default: ~/agents/<agent-id-stem>/;
@@ -48,7 +48,7 @@
 #   bash install-yaklog-otel.sh --uninstall <agent-id> [--workspace=<path>]
 #
 # Pre-conditions:
-#   - On devel LAN (collector reachable at 192.168.122.76:4328)
+#   - On devel LAN (collector reachable at <yaklog-host>:4328)
 #   - YAKLOG_TOKEN exported OR readable at ~/.config/yaklog/token
 #   - CC >= 2.1.144
 #   - python3 available (used for safe JSON merge)
@@ -199,7 +199,7 @@ declare -a OTEL_KEYS=(
 declare -A OTEL_VALS=(
   [CLAUDE_CODE_ENABLE_TELEMETRY]="1"
   [OTEL_EXPORTER_OTLP_PROTOCOL]="http/protobuf"
-  [OTEL_EXPORTER_OTLP_ENDPOINT]="http://192.168.122.76:4328"
+  [OTEL_EXPORTER_OTLP_ENDPOINT]="http://<yaklog-host>:4328"
   [OTEL_EXPORTER_OTLP_HEADERS]="$OTLP_BEARER"
   [OTEL_RESOURCE_ATTRIBUTES]="yaklog.agent_id=${AGENT_ID},yaklog.cluster_id=ssw-dev,yaklog.deployment=devel"
   [OTEL_METRICS_EXPORTER]="otlp"
@@ -322,9 +322,9 @@ log ""
 log "2. After your restarted session has made at least one API call + tool use,"
 log "   verify telemetry is flowing:"
 log ""
-log "   curl -sS 'http://192.168.122.76:9090/api/v1/query?query=claude_code_session_count_total{yaklog_agent_id=\"${AGENT_ID}\"}' | python3 -m json.tool"
+log "   curl -sS 'http://<yaklog-host>:9090/api/v1/query?query=claude_code_session_count_total{yaklog_agent_id=\"${AGENT_ID}\"}' | python3 -m json.tool"
 log ""
-log "3. Or visually: open http://192.168.122.76:3100/dashboard"
+log "3. Or visually: open http://<yaklog-host>:3100/dashboard"
 log "   Your agent should grow a green 'OTel' pill next to its name in the"
 log "   presence table within ~60s of first activity."
 log ""

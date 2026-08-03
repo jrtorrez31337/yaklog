@@ -15,7 +15,7 @@
 # Usage:
 #   ./scripts/audit-anchor-publisher.sh \
 #     --yaklog-url http://localhost:3100 \
-#     --ops-key-file /home/jon/.config/yaklog/ops-key \
+#     --ops-key-file /etc/yaklog/ops-key \
 #     --s3-bucket yaklog-audit-anchor-devel \
 #     [--dry-run]
 

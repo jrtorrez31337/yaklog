@@ -147,12 +147,12 @@ Every push to `/srv/git/yaklog.git` main triggers an automatic bundle rebuild vi
 **One-command deploy from bundle:**
 
 ```bash
-# On devel — update internal Yaklog + demo VM to the latest bundle
-/home/jon/yaklog/yaklog-install/deploy-from-bundle.sh --target both
+# On your host — update local Yaklog + demo VM to the latest bundle
+<install-dir>/yaklog-install/deploy-from-bundle.sh --target both
 
 # Or one at a time
-deploy-from-bundle.sh --target devel   # local devel yaklog only
-deploy-from-bundle.sh --target demo    # remote demo VM only (SSH: yaklog-admin@10.71.1.184)
+deploy-from-bundle.sh --target local   # local yaklog only
+deploy-from-bundle.sh --target demo    # remote demo VM only (SSH: yaklog-admin@<demo-vm-ip>)
 ```
 
 The script:
@@ -162,7 +162,7 @@ The script:
 4. `docker compose up -d --force-recreate --no-build yaklog`
 5. Health-checks the new container
 
-Both devel `docker-compose.yml` and `docker-compose.demo.yml` declare `image: yaklog:latest`, so the freshly-loaded image is picked up automatically.
+Both local `docker-compose.yml` and `docker-compose.demo.yml` declare `image: yaklog:latest`, so the freshly-loaded image is picked up automatically.
 
 **Auto-deploy is deliberately not enabled.** The post-receive hook only rebuilds the bundle. Operator manually invokes `deploy-from-bundle.sh` after inspecting the build. Full auto-deploy is a forward-track once discipline is trusted.
 
@@ -171,7 +171,7 @@ Both devel `docker-compose.yml` and `docker-compose.demo.yml` declare `image: ya
 ### Install the post-receive hook
 
 ```bash
-sudo install -m 0755 /home/jon/yaklog/yaklog-install/hooks/post-receive \
+sudo install -m 0755 <install-dir>/yaklog-install/hooks/post-receive \
   /srv/git/yaklog.git/hooks/post-receive
 ```
 

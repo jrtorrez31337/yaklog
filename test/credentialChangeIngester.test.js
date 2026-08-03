@@ -110,7 +110,7 @@ test('Phase B pure: computeCredentialFingerprintSet produces sha256[:16]', () =>
   const set = computeCredentialFingerprintSet({
     apiKeysString: 'token-aaa,token-bbb',
     tokenBindingsString: 'alice:tok-1,bob:tok-2',
-    hostIngesterBindingsString: 'devel:tok-h1',
+    hostIngesterBindingsString: 'yaklog-host:tok-h1',
   });
   assert.equal(set.api_keys.length, 2);
   assert.equal(set.token_bindings.length, 2);
@@ -140,7 +140,7 @@ test('Phase B pure: diffCredentialFingerprintSets identifies mints + revokes', (
   const current = {
     api_keys: ['aaaaaaaaaaaaaaaa', 'dddddddddddddddd'],  // bbb→ddd
     token_bindings: ['alice:cccccccccccccccc', 'eve:eeeeeeeeeeeeeeee'],
-    host_bindings: ['devel:ffffffffffffffff'],
+    host_bindings: ['yaklog-host:ffffffffffffffff'],
   };
   const diff = diffCredentialFingerprintSets(prior, current);
   assert.deepEqual(diff.mints, ['dddddddddddddddd']);
@@ -193,7 +193,7 @@ test('Phase B e2e: envDiffBootDetector emits mint+revoke+bind on diff vs snapsho
   const r = envDiffBootDetector({
     apiKeysString: 'tok-a,tok-c,tok-NEW',         // tok-b removed, tok-NEW added
     tokenBindingsString: 'alice:tok-1,bob:tok-2', // bob added
-    hostIngesterBindingsString: 'devel:tok-h1',   // new host binding
+    hostIngesterBindingsString: 'yaklog-host:tok-h1',   // new host binding
   });
   assert.equal(r.first_boot, false);
   assert.equal(r.mints, 1);
@@ -213,7 +213,7 @@ test('Phase B e2e: envDiffBootDetector idempotent (re-run with stable env emits 
   const r = envDiffBootDetector({
     apiKeysString: 'tok-a,tok-c,tok-NEW',
     tokenBindingsString: 'alice:tok-1,bob:tok-2',
-    hostIngesterBindingsString: 'devel:tok-h1',
+    hostIngesterBindingsString: 'yaklog-host:tok-h1',
   });
   assert.equal(r.first_boot, false);
   assert.equal(r.total_emitted, 0);

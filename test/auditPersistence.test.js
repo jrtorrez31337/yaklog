@@ -61,7 +61,7 @@ test('computeAuditEventId: payload_ref EXCLUDED from chain (admin R2)', () => {
 
 test('subjectHash: deterministic, lowercased + trimmed, full 64 chars', () => {
   const a = subjectHash('Jon@Example.com');
-  const b = subjectHash('  jon@example.com  ');
+  const b = subjectHash('  operator@example.com  ');
   assert.equal(a, b);
   assert.equal(a.length, 64);
   assert.match(a, /^[0-9a-f]{64}$/);

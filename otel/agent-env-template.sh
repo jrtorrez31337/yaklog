@@ -30,7 +30,7 @@ export CLAUDE_CODE_ENABLE_TELEMETRY=1
 # network-isolation (devel LAN). If you're not on devel LAN, OTel push will
 # fail silently — that's fine, your CC session still works.
 export OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
-export OTEL_EXPORTER_OTLP_ENDPOINT=http://192.168.122.76:4328
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://<yaklog-host>:4328
 
 # Reuse your yaklog API token as the OTel Bearer (Plan C Q3 ratify;
 # acceptable trade-off because Yaklog collector is in the API trust
@@ -69,7 +69,7 @@ export OTEL_LOGS_EXPORT_INTERVAL=5000      # 5s
 
 # Verification commands once your CC session has run for ~5min:
 #   Yaklog Prom query:
-#     curl -s 'http://192.168.122.76:9090/api/v1/query?query=claude_code_token_usage_total' | jq .
+#     curl -s 'http://<yaklog-host>:9090/api/v1/query?query=claude_code_token_usage_total' | jq .
 #   Yaklog Grafana dashboard:
-#     open http://192.168.122.76:3001/d/yaklog-hello-world
+#     open http://<yaklog-host>:3001/d/yaklog-hello-world
 #     (login admin/yaklog-stage-1; change in CP4 hardening)

@@ -20,7 +20,7 @@
 #                                                                  # JSON deep-merge; preserves
 #                                                                  # all keys outside `telemetry`.
 #   bash install-yaklog-otel-runtime.sh --runtime codex --home /home/aieng3
-#   bash install-yaklog-otel-runtime.sh --runtime gemini --collector-endpoint http://192.168.122.76:4327
+#   bash install-yaklog-otel-runtime.sh --runtime gemini --collector-endpoint http://<yaklog-host>:4327
 #   bash install-yaklog-otel-runtime.sh --runtime codex --dry-run
 #
 # Pre-conditions:
@@ -40,7 +40,7 @@ HOME_DIR="${HOME}"
 ENDPOINT="http://localhost:4327"
 DRY_RUN=false
 MERGE_PRESERVE=false
-TEMPLATE_DIR="/home/jon/yaklog/otel"
+TEMPLATE_DIR="<install-dir>/otel"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in

@@ -13,10 +13,10 @@
 #      /var/log/yaklog-hook/build-<sha>.log (or /tmp/yaklog-hook/ if
 #      /var/log unwritable)
 #   3. Rotates dist/ — keeps last 5 bundles
-#   4. Emits notification via /home/jon/.local/bin/yaklog-notify if present
+#   4. Emits notification via <operator-bin>/yaklog-notify if present
 #
 # Deploy from bundle is NOT automated (safety). Operator manually runs:
-#   /home/jon/yaklog/yaklog-install/deploy-from-bundle.sh --target both
+#   <install-dir>/yaklog-install/deploy-from-bundle.sh --target both
 #
 # once they trust the freshly-built bundle. Auto-deploy is forward-track.
 #
@@ -91,7 +91,7 @@ while read -r old_sha new_sha ref; do
 
     # Point dist at the canonical location so post-hook `deploy-from-bundle.sh`
     # sees the fresh bundle without needing --bundle-dir.
-    export DIST_DIR="/home/jon/yaklog/dist"
+    export DIST_DIR="<install-dir>/dist"
     mkdir -p "$DIST_DIR"
 
     # Build
@@ -99,8 +99,8 @@ while read -r old_sha new_sha ref; do
     if ! "$WORK/yaklog/yaklog-install/build-bundle.sh" >"$BUILD_LOG" 2>&1; then
       log "  ERROR: build-bundle.sh failed. Log: $BUILD_LOG"
       # Best-effort bus notify (optional; noop if binary missing)
-      if [[ -x /home/jon/.local/bin/yaklog-notify ]]; then
-        /home/jon/.local/bin/yaklog-notify \
+      if [[ -x <operator-bin>/yaklog-notify ]]; then
+        <operator-bin>/yaklog-notify \
           "bundle rebuild FAILED on push $new_sha — see $BUILD_LOG" >/dev/null 2>&1 || true
       fi
       exit 1
@@ -119,8 +119,8 @@ while read -r old_sha new_sha ref; do
 
     # ── Bus notification (best-effort) ───────────────────────────────
     LATEST_TAR=$(ls -t "$DIST_DIR"/yaklog-install-bundle-*.tar.gz 2>/dev/null | head -1)
-    if [[ -x /home/jon/.local/bin/yaklog-notify ]]; then
-      /home/jon/.local/bin/yaklog-notify \
+    if [[ -x <operator-bin>/yaklog-notify ]]; then
+      <operator-bin>/yaklog-notify \
         "bundle rebuilt for main $new_sha → $LATEST_TAR — deploy via yaklog-install/deploy-from-bundle.sh --target both" \
         >/dev/null 2>&1 || true
     fi

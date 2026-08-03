@@ -3,10 +3,10 @@
 # or more targets. Task #285.
 #
 # Usage:
-#   deploy-from-bundle.sh --target devel
+#   deploy-from-bundle.sh --target local
 #   deploy-from-bundle.sh --target demo
 #   deploy-from-bundle.sh --target both
-#   deploy-from-bundle.sh --target devel --bundle-dir <path>
+#   deploy-from-bundle.sh --target local --bundle-dir <path>
 #
 # Loads the freshest bundle from dist/ (or a specific dir via --bundle-dir),
 # `docker load`s the yaklog.tar image, then force-recreates the target's
@@ -14,15 +14,15 @@
 # --force-recreate keeps volumes; sqlite is untouched).
 #
 # Targets:
-#   devel     — local devel yaklog (this host, ./docker-compose.yml)
+#   local     — local yaklog (this host, ./docker-compose.yml)
 #   demo      — remote demo VM (SSH: yaklog-admin@$DEMO_HOST)
-#   both      — devel then demo (fail-fast: demo skipped if devel fails)
+#   both      — local then demo (fail-fast: demo skipped if devel fails)
 #
 # Env overrides:
-#   DEMO_HOST         — default 10.71.1.184
+#   DEMO_HOST         — default <demo-vm-ip>
 #   DEMO_INSTALL_DIR  — default /opt/yaklog-demo
 #   DEMO_USER         — default yaklog-admin
-#   DEVEL_YAKLOG_DIR  — default /home/jon/yaklog
+#   LOCAL_YAKLOG_DIR  — default <install-dir>
 
 set -euo pipefail
 
@@ -31,10 +31,10 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 TARGET=""
 BUNDLE_DIR=""
-DEMO_HOST="${DEMO_HOST:-10.71.1.184}"
+DEMO_HOST="${DEMO_HOST:-<demo-vm-ip>}"
 DEMO_USER="${DEMO_USER:-yaklog-admin}"
 DEMO_INSTALL_DIR="${DEMO_INSTALL_DIR:-/opt/yaklog-demo}"
-DEVEL_YAKLOG_DIR="${DEVEL_YAKLOG_DIR:-/home/jon/yaklog}"
+LOCAL_YAKLOG_DIR="${LOCAL_YAKLOG_DIR:-<install-dir>}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -53,7 +53,7 @@ err() { printf '\033[31m[deploy]\033[0m %s\n' "$*" >&2; }
 ok()  { printf '\033[32m[deploy]\033[0m %s\n' "$*"; }
 
 if [[ -z "$TARGET" ]]; then
-  err "--target required (devel|demo|both)"
+  err "--target required (local|demo|both)"
   exit 2
 fi
 
@@ -78,9 +78,9 @@ BUNDLE_NAME="$(basename "$BUNDLE_DIR")"
 
 log "Bundle: $BUNDLE_NAME"
 
-# ── 2. Deploy to devel ──────────────────────────────────────────────────
+# ── 2. Deploy locally ──────────────────────────────────────────────────
 
-deploy_devel() {
+deploy_local() {
   log "Deploying to DEVEL (local host)…"
 
   # Backup running db per feedback_db_rebuild_safety
@@ -113,17 +113,17 @@ deploy_devel() {
   # Force-recreate. Compose file now specifies image: yaklog:latest per
   # Task #285 tag-alignment, so this consumes the freshly-loaded image.
   log "  docker compose up -d --force-recreate --no-build yaklog"
-  (cd "$DEVEL_YAKLOG_DIR" && docker compose up -d --force-recreate --no-build yaklog >/dev/null 2>&1)
+  (cd "$LOCAL_YAKLOG_DIR" && docker compose up -d --force-recreate --no-build yaklog >/dev/null 2>&1)
 
   # Health-check
   for i in $(seq 1 30); do
     if curl -sf --max-time 2 http://127.0.0.1:3100/api/v1/health >/dev/null 2>&1; then
-      ok "  devel yaklog healthy after ${i}s"
+      ok "  local yaklog healthy after ${i}s"
       return 0
     fi
     sleep 1
   done
-  err "  devel yaklog did NOT become healthy within 30s"
+  err "  local yaklog did NOT become healthy within 30s"
   return 1
 }
 
@@ -183,14 +183,14 @@ REMOTE
 # ── 4. Dispatch ─────────────────────────────────────────────────────────
 
 case "$TARGET" in
-  devel) deploy_devel ;;
+  devel) deploy_local ;;
   demo)  deploy_demo ;;
   both)
-    deploy_devel || { err "devel failed; skipping demo (fail-fast)"; exit 4; }
+    deploy_local || { err "local deploy failed; skipping demo (fail-fast)"; exit 4; }
     deploy_demo
     ;;
   *)
-    err "unknown target: $TARGET (want devel|demo|both)"
+    err "unknown target: $TARGET (want local|demo|both)"
     exit 2
     ;;
 esac
