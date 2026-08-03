@@ -14,7 +14,7 @@ The demo VM uses `yaklog-admin` as its canonical user (not `jon` — the demo is
 ## Prerequisites (on the demo VM)
 
 - Docker + docker compose plugin (`docker compose version` prints ≥ v2.20)
-- Network reachability from `ptah-win11` (<demo-vm-ip>) + s345 seat to VM
+- Network reachability from `demo-client` (<demo-vm-ip>) + s345 seat to VM
   on TCP 3100
 - ~200 MB disk for the container image + a couple hundred KB for the
   demo SQLite
@@ -49,7 +49,7 @@ YAKLOG_BIND_IP=0.0.0.0
 
 # Optional (per secops #12140 tightening): if the demo VM is multi-homed
 # (an interface on our cluster net + one on the capture net), bind
-# specifically to the interface ptah-win11 + s345 reach — rather than
+# specifically to the interface demo-client + s345 reach — rather than
 # 0.0.0.0 which exposes /ops on ALL interfaces. Single-homed VMs can
 # leave this unset.
 # YAKLOG_BIND_IP=<demo-vm-ip>
@@ -114,7 +114,7 @@ curl -s -X POST http://<demo-vm-ip>:3100/api/v1/register \
 Once real-fleet is emitting to demo:
 1. Wait for enough activity for the dashboard to look populated (a few
    minutes of coord + a couple of PRs + audit rows)
-2. ptah-agent at ptah-win11 hits `http://<demo-vm-ip>:3100/dashboard?audience=buyer`
+2. ptah-agent at demo-client hits `http://<demo-vm-ip>:3100/dashboard?audience=buyer`
 3. Captures the 6 views per s345 #12022 spec
 4. Route captures via s345 → parch/secops gates → page
 

@@ -16,7 +16,7 @@ const REGISTRY = new Map([
   ['aieng3-agent', 'codex'],   // Codex; currently paused (funding) per Jon-direct 2026-05-27 — will return
   // Ptah — custom Rust(Tauri)+TS BDI agent per ADR-0032 Phase 0-Ptah sister-cycle
   // (Jon-direct ratify 2026-06-19 #9640 routing; parch CONCUR sister-cycle (b) +
-  // 'ptah' enum value #9643). Runs on Win11 VM 110 (ptah-win11; host dude).
+  // 'ptah' enum value #9643). Runs on a Windows host.
   // Cross-runtime cohort-coverage validation per Ptah PRIMARY pivot #9560.
   ['ptah-agent', 'ptah'],
 ]);
@@ -49,7 +49,7 @@ const EMAIL_TO_AGENT_ID = new Map([
   ['gemini-agent@yaklog-host',       'gemini-agent'],
   // Ptah
   ['ptah-agent@yaklog-host',         'ptah-agent'],
-  ['ptah-agent@ptah-win11',    'ptah-agent'],
+  ['ptah-agent@demo-client',    'ptah-agent'],
   // ── CC agents (Jon-direct empirical-expansion 2026-06-20) ─────────────
   // yaklog-dev (this agent)
   ['yaklog-dev-agent@yaklog-host',   'yaklog-dev-agent'],

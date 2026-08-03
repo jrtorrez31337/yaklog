@@ -384,7 +384,7 @@ app.get('/api/v1/presence/public', (req, res) => {
   // 2026-06-19 (Jon-direct urgent): pre-emission AgentCards. Cluster has
   // token-bound agents (per YAKLOG_TOKEN_BINDINGS) that may not yet have
   // emitted a /presence/event heartbeat (e.g., ptah-agent — provisioned at
-  // .env + REGISTRY but daemon not yet wired on the Win11 VM). Dashboard
+  // .env + REGISTRY but daemon not yet wired on the ptah host). Dashboard
   // renders cards from this endpoint's `presence` array, so these agents
   // were invisible. Substrate-honest fix: append synthetic placeholder
   // rows for token-bound agents missing from `presence`, marked
