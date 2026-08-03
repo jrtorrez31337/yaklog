@@ -66,7 +66,7 @@ function parseCoAuthoredBy(commitMessage) {
   // Jon-direct empirical-expansion 2026-06-20: resolve SPECIFIC agent_id
   // from email/name BEFORE collapsing to runtime class. Order:
   //   1. EMAIL_TO_AGENT_ID reverse-index (most specific; e.g.,
-  //      'writer-agent@subnet345.com' → 'writer-agent' agent_id)
+  //      'writer-agent@example.com' → 'writer-agent' agent_id)
   //   2. Name-pattern resolver (handles `<name>-agent` shape; covers the
   //      case where trailer is `Co-Authored-By: writer-agent <noreply@anthropic.com>`
   //      — email is generic CC but name carries agent_id)

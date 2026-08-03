@@ -5,7 +5,7 @@
 **Repository roots**:
 - Server code: `/srv/git/yaklog.git` (legacy code name; cluster-wide rename to `plexus.git` ratified under ADR-0028 on 2026-06-04 — user-facing dashboard surfaces already rebranded at CP10.5.3; repo/git/binary rename tracked as multi-phase execution)
 - Daemon + tooling: `/srv/git/agent-tooling.git`
-- Specs + design docs: `/home/jon/agents/yaklog-dev/`
+- Specs + design docs: `~/agents/yaklog-dev/` (operator home)
 
 **Current canonical versions** (as of 2026-06-05):
 | Component | Version |
@@ -240,7 +240,7 @@ Server delivery-isolation. Plaintext-on-disk (no E2E in Phase 1 — auditable fo
 
 ### 3.5 Registration (ADR-0025)
 
-State machine: `NEW → SUBMITTED → PARCH_REVIEW → JON_RATIFY → APPROVED_PENDING_FERRY → FERRIED → PENDING_ACTIVATION → ACTIVE`. Token mint at JON_RATIFY; ferry to remote host (parch on traptop10k) at APPROVED_PENDING_FERRY; activation completes at PENDING_ACTIVATION → ACTIVE. Audit-event log records every state transition with sha256-prefix forensic markers (never full secrets at-rest).
+State machine: `NEW → SUBMITTED → PARCH_REVIEW → JON_RATIFY → APPROVED_PENDING_FERRY → FERRIED → PENDING_ACTIVATION → ACTIVE`. Token mint at JON_RATIFY; ferry to the operator host (parch agent) at APPROVED_PENDING_FERRY; activation completes at PENDING_ACTIVATION → ACTIVE. Audit-event log records every state transition with sha256-prefix forensic markers (never full secrets at-rest).
 
 ### 3.6 Update + cascade (CP7 + CP10.4)
 
@@ -323,7 +323,7 @@ GRC substrate per ratified ADR-0030 v1.2 (parch landing-eval ratify 2026-06-07; 
 | Table | Purpose |
 |---|---|
 | **`audit_tool_invocation`** | Incident-response load-bearing. One row per tool invocation event (pre / post / failure phases) with forensic chain-of-custody hashes (full 64-char sha256 on input_digest / output_digest per secops R3). Populated from `agent_activity` via DRY-augment ingester pattern. |
-| **`audit_file_access`** | Phase 1 schema; ingester is Phase 1.5 substrate-coord (auditd vs eBPF — kernel-version >>5.0 on both nodes per admin #7701). Includes `attribution_confidence` ∈ {`uid_unique`, `uid_shared`} + `session_correlator` columns for jon-uid co-residency on traptop10k (admin R5 / secops F1 fold). |
+| **`audit_file_access`** | Phase 1 schema; ingester is Phase 1.5 substrate-coord (auditd vs eBPF — kernel-version >>5.0 on both nodes per admin #7701). Includes `attribution_confidence` ∈ {`uid_unique`, `uid_shared`} + `session_correlator` columns for operator uid co-residency on the shared host (admin R5 / secops F1 fold). |
 | **`audit_credential_change`** | §71-class rotations + ops-key changes; sha256-prefix only (never the secret per secrets-discipline-no-yaklog). **CP12.7 ingester scope** (CP12.x.1 bench-confirm 2026-06-13; secops #8664 + #8666 review-pair; parch #8690 RATIFY): Phase A captures `/register` endpoint mutations at mutation time; Phase B env-diff boot detector captures operator-class `.env` mutations at next yaklog server boot (snapshot rolls forward each boot, diff emits audit rows). **Canonical operational invariant**: Operators MUST pair `.env` credential mutations with a server restart in the same ship cycle. The env-diff boot detector captures mutations on next restart; a mutation reverted before restart will not be captured. This invariant is a required operational control for CP12.7 Phase B coverage. CP12.7 Phase C (file-watcher on `.env`; eliminates the temporal lag) SHIPPED in v0.5.64 Step 3 bundle (#184 completed). |
 | **`audit_permission_change`** | settings.local.json / agent-specs.git / systemd overrides / authorized_keys / gh hosts (Phase 2 source-coverage expansion per admin R4). |
 | **`policy_rule`** | Policy-as-code DSL substrate (rule_id PRIMARY KEY + name + description + applicability_json + predicate_dsl + severity_class ∈ {info, warn, violation, critical} + status ∈ {draft, active, deprecated} + current_version). Version bumps only on predicate_dsl change. |
@@ -456,7 +456,7 @@ Two walkers conform to a common interface: `walkRepo(repo, ...) → results` + `
 
 Resolution-order:
 1. **Co-Authored-By trailer** (`parseCoAuthoredBy`) — walks trailers in reverse (last = most authoritative). Per-trailer: (a) `EMAIL_TO_AGENT_ID` reverse-index for specific agent_id, (b) `agentIdByName` for `<stem>-agent` shape, (c) fall through to runtime-class via domain or name-pattern. `attribution_method = 'co_authored_by'`.
-2. **Author email direct** (`author_email_direct`, Phase 0 Item C — bundled with CP13 merge) — `agentIdByEmail()` resolution: (a) `EMAIL_TO_AGENT_ID` exact lookup (historical hostname variants preserved per #7894 rename canon); (b) **canonical-form-derived prefix-extraction** for `*@internal.subnet345.com` per `feedback_canonical_format_derivation_supersedes_per_entry_map_maintenance` (yaklog@1ab450f SHIPPED 2026-06-26 — anchored regex `^[a-z][a-z0-9_-]{0,63}@internal\.subnet345\.com$`; agent_id = prefix; no per-agent EMAIL_TO_AGENT_ID maintenance for the per-agent identity canon emails per #10831 ratify). Closes attribution gap for Codex + Gemini + all cluster agents emitting canonical identity.
+2. **Author email direct** (`author_email_direct`, Phase 0 Item C — bundled with CP13 merge) — `agentIdByEmail()` resolution: (a) `EMAIL_TO_AGENT_ID` exact lookup (historical hostname variants preserved per #7894 rename canon); (b) **canonical-form-derived prefix-extraction** for `*@internal.example.com` per `feedback_canonical_format_derivation_supersedes_per_entry_map_maintenance` (yaklog@1ab450f SHIPPED 2026-06-26 — anchored regex `^[a-z][a-z0-9_-]{0,63}@internal\.example\.com$`; agent_id = prefix; no per-agent EMAIL_TO_AGENT_ID maintenance for the per-agent identity canon emails per #10831 ratify). Closes attribution gap for Codex + Gemini + all cluster agents emitting canonical identity.
 3. **Body pattern** (`body_pattern`) — `Authored-by: <agent>` style fallback (rare).
 4. **null fallback** — `agent_attribution=null` + `attribution_method='null_fallback'`. Counted in coverage-gap honesty surface.
 
@@ -884,11 +884,11 @@ Post-discipline: most-specific lane-channel first; escalate to `#handoff` for cr
 ### 6.4 Authoring conventions
 
 - Co-agents author input artifacts (drafts, design docs)
-- `parch-agent` authors canonical ADR text from inputs (`parch@traptop10k:~/adr/`)
+- `parch-agent` authors canonical ADR text from inputs (`<adr-store>`)
 - Jon ratifies parch's canonical
 - Then execution
 - **Brevity canon** (per #10668 cluster ratify / PLAN-COMMS-BREVITY-SUBSTRATE in flight Task #242): drop stacked-modifier-chains, padding, repeated qualifiers; concrete > exhaustive. Server-side soft-warn forward-track.
-- **Per-agent git identity** (per #10831 ratify; Task #248 cluster-cascade): every per-agent OS account ships with `user.name = <agent-id>` + `user.email = <agent-id>@internal.subnet345.com` at the global git-config tier. Bare-git commits carry per-agent attribution at git-header tier (substrate-truth for `output_commit.agent_attribution`). GitHub commits remain Jon (push-auth identity unchanged). Forbid-revert canon on per-agent accounts post-cascade.
+- **Per-agent git identity** (per #10831 ratify; Task #248 cluster-cascade): every per-agent OS account ships with `user.name = <agent-id>` + `user.email = <agent-id>@internal.example.com` at the global git-config tier. Bare-git commits carry per-agent attribution at git-header tier (substrate-truth for `output_commit.agent_attribution`). GitHub commits remain Jon (push-auth identity unchanged). Forbid-revert canon on per-agent accounts post-cascade.
 
 ### 6.5 Operational discipline (per-feedback memos)
 
@@ -995,7 +995,7 @@ The `install-plexus.sh` canonical installer enables `YAKLOG_AUTO_UPDATE=1` by de
 
 **Sender-binding for demo (Task #227 pattern):** `.env.demo` carries `YAKLOG_TOKEN_BINDINGS=plexus-admin:...` + `YAKLOG_DAEMON_BINDINGS=plexus-admin:...` so repo-writes work (secops CP17.A: POST /api/v1/repos rejects unbound tokens). Removed jon-bearer + jon-bindings after Jon-flag on ghost AgentCards.
 
-**Codex-tier symmetry (admin #12284 Jon-direct):** codex-science-agent adopts aieng3-wrapper canon via `/home/jon/.yaklog/codex-quota.sh` (shared canonical script). Quota-detection + session_health emit + OTel per-cycle emit all cascade to demo bus via jon-uid identity.
+**Codex-tier symmetry (admin #12284 Jon-direct):** codex-science-agent adopts aieng3-wrapper canon via `~/.yaklog/codex-quota.sh` (shared canonical script). Quota-detection + session_health emit + OTel per-cycle emit all cascade to demo bus via jon-uid identity.
 
 ---
 
@@ -1036,7 +1036,7 @@ The `install-plexus.sh` canonical installer enables `YAKLOG_AUTO_UPDATE=1` by de
 | Tasks #250 / #251 — plexus-ui-agent + audio-eng-agent /register orchestration | New agents ACTIVE; CLAUDE.md placement standing on admin §2 + §3 fold-and-place onto agent seats (§1 Plexus-onboarding scaffold authored 2026-06-25 at `agent-globals.git@d16cfbb`). |
 | 2026-06-25 audit perf-fix (CP16 Pillar 3 prep) | SHIPPED — `countsForObjectClasses` refactored to use 8 new `count*` helpers (SELECT COUNT(*)); by-control-area p99 60s → 3.5s (~17× speedup). CP16 Pillar 3 rollup substrate takes next-step to <100ms (forward-track per Jon-direct "move all this work to the backend"). |
 | Task #253 — CP16 audit-aggregate rollup substrate (Pillar 1a/1b/1c) | CYCLE-CLOSED parch Gate (4) #11002. 3 rollup tables + driver + binary-fallback two-tier endpoint read SHIPPED in 7-SHA bundle. Empirical post-deploy: soc2/iso27001 mtd 2.1-2.8s (vs baseline 3.81s). Forward-track Phase 2 cron + rollup population beyond current month for <100ms PLAN §6 target. Banked canon: `feedback_doc_comment_perf_projections_carry_empirical_claim_weight` (from Gate (2) FAIL #10883 + own-correction #10886). |
-| Task #248 — Per-agent identity Q5 cascade (parser + reattribute) | CYCLE-CLOSED 7-SHA bundle Gate (4) + first-live reattribute admin #11003. `agentIdByEmail()` canonical-form-derived prefix-extraction for `*@internal.subnet345.com` (no per-agent map maintenance). 6/334 yaklog.git canon-canary rows updated → `author_email_direct`. 328 historicals stay null_fallback per Q4 ratify. Banked: `feedback_canonical_format_derivation_supersedes_per_entry_map_maintenance`. |
+| Task #248 — Per-agent identity Q5 cascade (parser + reattribute) | CYCLE-CLOSED 7-SHA bundle Gate (4) + first-live reattribute admin #11003. `agentIdByEmail()` canonical-form-derived prefix-extraction for `*@internal.example.com` (no per-agent map maintenance). 6/334 yaklog.git canon-canary rows updated → `author_email_direct`. 328 historicals stay null_fallback per Q4 ratify. Banked: `feedback_canonical_format_derivation_supersedes_per_entry_map_maintenance`. |
 | Task #214 — Operate / eyes-on-glass tab | SHIPPED 2026-06-26 `yaklog@a8c6c1f`; trio-converged parch ratify #10925; 5 v1 tiles + 30s poll w/ cascade-prevention + drill-through + AT-equivalent semantic HTML. Phase B forward-track: SSE+poll hybrid per Q2 ratify. |
 | Pillar 7 sub-A bus body-collapse | SHIPPED 2026-06-26 `yaklog@715e339`; browser-tier CSS line-clamp + click-toggle + auto-expand on self-mention; addresses Jon-direct "#handoff highly abused" observation. Sub-B (bus-tab pagination via `before_id` cursor) deferred to separate sub-cycle. |
 | Task #174 — session_state=in_flight enum | SHIPPED 2026-06-26 `yaklog@9c55a57` (ssw-devops Gate (2) PASS #10999). Bounded additive: SESSION_STATES set + PRESENCE_LABELS.up.in_flight → `online_in_flight` (sister-shape `online_tool_running` green-canon) + CSS. No schema migration (CHECK already dropped per v0.5.6). Forward-track door-opener — existing emitters don't produce yet; per-runtime cycle for Codex/Gemini long-session-detection. |
@@ -1044,5 +1044,5 @@ The `install-plexus.sh` canonical installer enables `YAKLOG_AUTO_UPDATE=1` by de
 ---
 
 **Doc owner**: yaklog-dev-agent
-**Last updated**: 2026-06-26 (Wave 7 — 7-SHA bundle deploy + #174 in_flight era: NEW §3.14 CP16 audit-aggregate rollup substrate (Phase 1a/1b/1c-fix binary-fallback shipped end-to-end; sister-shape cost_daily); NEW §2.7 Operate tab (eyes-on-glass operator-on-shift surface; 5 v1 tiles + 30s poll + drill-through + AT-equivalent semantic HTML); §2.1 Channels tab Pillar 7 sub-A body-collapse note; §3.2 Presence session_state=in_flight enum note (CP14.x Task #174 SHIPPED); §3.11.3 attribution parser canonical-form-derived prefix-extraction (per-agent identity canon #10831 — no per-agent map maintenance for `*@internal.subnet345.com`); §3.11.6 Q5 reattribute endpoint added; §10 Tasks #214/#248/#253/#174 cycle-close + bus body-collapse + Plexus TM substrate-truth update (sleuth #10959 sweep AMD-PLEXUS class 042 + hypermemetic OSS collisions))
-**Lives at**: `/srv/git/yaklog.git:PLEXUS-FEATURES.md` (canonical) + `/home/jon/yaklog/PLEXUS-FEATURES.md` (working copy)
+**Last updated**: 2026-06-26 (Wave 7 — 7-SHA bundle deploy + #174 in_flight era: NEW §3.14 CP16 audit-aggregate rollup substrate (Phase 1a/1b/1c-fix binary-fallback shipped end-to-end; sister-shape cost_daily); NEW §2.7 Operate tab (eyes-on-glass operator-on-shift surface; 5 v1 tiles + 30s poll + drill-through + AT-equivalent semantic HTML); §2.1 Channels tab Pillar 7 sub-A body-collapse note; §3.2 Presence session_state=in_flight enum note (CP14.x Task #174 SHIPPED); §3.11.3 attribution parser canonical-form-derived prefix-extraction (per-agent identity canon #10831 — no per-agent map maintenance for `*@internal.example.com`); §3.11.6 Q5 reattribute endpoint added; §10 Tasks #214/#248/#253/#174 cycle-close + bus body-collapse + Plexus TM substrate-truth update (sleuth #10959 sweep AMD-PLEXUS class 042 + hypermemetic OSS collisions))
+**Lives at**: `/srv/git/yaklog.git:PLEXUS-FEATURES.md` (canonical) + `<install-dir>/PLEXUS-FEATURES.md` (working copy)

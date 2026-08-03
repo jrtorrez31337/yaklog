@@ -146,7 +146,7 @@ function computeRatios(db, opts = {}) {
   //
   // Per Jon-direct 2026-06-25: agents-per-PR is the intended metric (operator-
   // interpretation); cluster-aggregate was wrong by design. Forward-track:
-  // attribution-canon ${agent-id}@internal.subnet345.com will dramatically
+  // attribution-canon ${agent-id}@internal.example.com will dramatically
   // reduce the null-attribution merge cohort.
   let agentsEngagedPerMergedPr = null;
   try {

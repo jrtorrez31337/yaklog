@@ -24,7 +24,7 @@ const Ajv = require('ajv/dist/2020');
 
 const DEFAULT_DB_PATH = process.env.YAKLOG_PLEXUS_SECURE_DB_PATH || '/data/plexus-secure.db';
 // ORP schema location per parch #10175 Q5 ratify: bind-mount path via
-// existing /data/canonical mount (sister-shape /home/jon/agents/global:/data/canonical:ro
+// existing /data/canonical mount (sister-shape <canonical-dir>:/data/canonical:ro
 // in docker-compose.yml). ssw-devops Gate (2) install ensures schema file
 // is present at this path (ferried into the canonical tree from agent-specs.git).
 const DEFAULT_SCHEMA_PATH = process.env.YAKLOG_ORP_SCHEMA_PATH ||

@@ -53,7 +53,7 @@ test('operator contains (string + array)', () => {
 
 test('operator startsWith', () => {
   assert.equal(evaluate('path startsWith "/etc/"', { path: '/etc/passwd' }).matched, true);
-  assert.equal(evaluate('path startsWith "/etc/"', { path: '/home/jon' }).matched, false);
+  assert.equal(evaluate('path startsWith "/etc/"', { path: '/home/operator' }).matched, false);
 });
 
 test('operator endsWith', () => {

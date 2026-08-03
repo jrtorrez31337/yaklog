@@ -18,7 +18,7 @@ services:
     volumes:
       - yaklog_data:/data
       - ${YAKLOG_SPEC_FILE:-./spec.md}:/data/spec.md:ro
-      - ${YAKLOG_SPEC_DIR_HOST:-/home/jon/agents/global}:/data/canonical:ro
+      - ${YAKLOG_SPEC_DIR_HOST:-/opt/yaklog/canonical}:/data/canonical:ro
       - ${YAKLOG_BARE_GIT_HOST:-/srv/git}:/srv/git:ro
       - ${YAKLOG_FERRY_AUDIT_HOST:-/var/log/yaklog}:/var/log/yaklog:rw
       # CP13.6 Phase 2.2 GitHub PAT for GitHubWalker per parch #9866 ratify.
@@ -103,7 +103,7 @@ services:
     # devel we accept the env_file lookup will error out the container
     # which is fail-safe enough.
     env_file:
-      - ${PLEXUS_GRAFANA_ENV_FILE:-/home/jon/.config/yaklog/plexus-grafana.env}
+      - ${PLEXUS_GRAFANA_ENV_FILE:-./plexus-grafana.env}
     environment:
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_AUTH_ANONYMOUS_ENABLED: "false"

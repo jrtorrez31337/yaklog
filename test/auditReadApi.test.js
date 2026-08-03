@@ -67,7 +67,7 @@ test('seed: insert audit fixture rows', () => {
     occurred_at: iso(-5000), status: 'ok' });
 
   // File access events
-  insertAuditFileAccess({ agent_id: 'agent-a', uid: 1001, path: '/home/jon/yaklog/src/app.js',
+  insertAuditFileAccess({ agent_id: 'agent-a', uid: 1001, path: '/home/operator/yaklog/src/app.js',
     access_mode: 'read', occurred_at: iso(-6000) });
   insertAuditFileAccess({ agent_id: 'agent-b', uid: 1002, path: '/etc/passwd',
     access_mode: 'read', occurred_at: iso(-7000) });
@@ -185,11 +185,11 @@ test('GET /audit/tool-invocations?status=error → status filter', async () => {
 
 // ── 3. /audit/file-access ─────────────────────────────────────────────────
 
-test('GET /audit/file-access?path_prefix=/home/jon → prefix filter', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/audit/file-access?path_prefix=/home/jon');
+test('GET /audit/file-access?path_prefix=/home/operator → prefix filter', async () => {
+  const r = await request(app).get('/api/v1/plexus/public/audit/file-access?path_prefix=/home/operator');
   assert.equal(r.statusCode, 200);
   for (const row of r.body.rows) {
-    assert.ok(row.path.startsWith('/home/jon'));
+    assert.ok(row.path.startsWith('/home/operator'));
   }
 });
 

@@ -9,14 +9,14 @@
 
 Daily cryptographic hash digest of the cluster's audit chain, published to an external append-only store (S3-compatible Object Lock Compliance mode + 7-year retention per ADR-0030 v1.2). Closes the *"audit-log integrity self-attestation by Plexus alone"* circular-trust gap — auditors verify integrity from external evidence, not from Plexus's own database.
 
-**Substrate hosting** (CP12.21.1 Jon-direct flip 2026-06-09 "we are not a cloud consumer in our biz narrative"): **local MinIO on devel** (cluster-self-substrate-canon-aligned; zero cloud dependency by default). AWS S3 remains a fully-supported deployment target — the publisher script accepts `--endpoint-url` for any S3-compatible substrate. The substrate-canon stays "S3-compatible Object Lock" regardless of hosting target.
+**Substrate hosting** (CP12.21.1 Jon-direct flip 2026-06-09 "we are not a cloud consumer in our biz narrative"): **local MinIO on the host** (cluster-self-substrate-canon-aligned; zero cloud dependency by default). AWS S3 remains a fully-supported deployment target — the publisher script accepts `--endpoint-url` for any S3-compatible substrate. The substrate-canon stays "S3-compatible Object Lock" regardless of hosting target.
 
 ## Substrate components
 
 | Component | Location | Purpose |
 |---|---|---|
 | `audit_anchor` table | SQLite (`/data/yaklog.db`) | One row per published anchor; UNIQUE(anchor_day, anchor_substrate); 7y retention |
-| `audit-anchor-publisher.sh` | `/home/jon/yaklog/scripts/` | Cron-driver: snapshot → S3 PUT → record |
+| `audit-anchor-publisher.sh` | `<install-dir>/scripts/` | Cron-driver: snapshot → S3 PUT → record |
 | `audit-anchor-publisher.timer` | `/etc/systemd/system/` (admin-deployed) | Daily 01:00 UTC trigger |
 | `audit-anchor-publisher.service` | `/etc/systemd/system/` | One-shot unit; runs the publisher script |
 | `/api/v1/ops/audit/anchor-snapshot` | yaklog server | Ops-gated; returns current chain-high-water + digest |
@@ -65,16 +65,16 @@ curl -s 'http://localhost:3100/api/v1/plexus/public/audit/anchor-verify?day=2026
 sudo systemctl stop audit-anchor-publisher.timer
 
 # AWS S3 hosting (legacy / cloud-deployment):
-ANCHOR_DAY=2026-06-05 sudo -u devel /home/jon/yaklog/scripts/audit-anchor-publisher.sh \
+ANCHOR_DAY=2026-06-05 sudo -u yaklog-svc <install-dir>/scripts/audit-anchor-publisher.sh \
   --yaklog-url http://localhost:3100 \
-  --ops-key-file /home/devel/.config/yaklog/ops-key \
-  --s3-bucket plexus-audit-anchor-devel
+  --ops-key-file /etc/yaklog/ops-key \
+  --s3-bucket plexus-audit-anchor
 
 # Local MinIO hosting (CP12.21.1 default cluster posture):
-ANCHOR_DAY=2026-06-05 sudo -u devel /home/jon/yaklog/scripts/audit-anchor-publisher.sh \
+ANCHOR_DAY=2026-06-05 sudo -u yaklog-svc <install-dir>/scripts/audit-anchor-publisher.sh \
   --yaklog-url http://localhost:3100 \
-  --ops-key-file /home/devel/.config/yaklog/ops-key \
-  --s3-bucket plexus-audit-anchor-devel \
+  --ops-key-file /etc/yaklog/ops-key \
+  --s3-bucket plexus-audit-anchor \
   --endpoint-url http://localhost:9000
 
 sudo systemctl start audit-anchor-publisher.timer
@@ -85,9 +85,9 @@ The `--endpoint-url` flag accepts any S3-compatible substrate endpoint. Substrat
 ### Dry-run mode (no S3 publish)
 
 ```bash
-/home/jon/yaklog/scripts/audit-anchor-publisher.sh \
+<install-dir>/scripts/audit-anchor-publisher.sh \
   --yaklog-url http://localhost:3100 \
-  --ops-key-file /home/devel/.config/yaklog/ops-key \
+  --ops-key-file /etc/yaklog/ops-key \
   --dry-run
 ```
 
@@ -111,7 +111,7 @@ The `--endpoint-url` flag accepts any S3-compatible substrate endpoint. Substrat
    ```
 4. **Cross-check against S3**: fetch the stored digest from S3 and confirm it matches the `audit_anchor` row:
    ```bash
-   aws s3 cp s3://plexus-audit-anchor-devel/2026/06/XX/digest.txt - | head -c 64
+   aws s3 cp s3://plexus-audit-anchor/2026/06/XX/digest.txt - | head -c 64
    ```
 5. **Dispatch to secops + admin** with `severity:critical` and the forensic snapshot path. Per `feedback_jon_input_routes_through_parch` for security-incident-class self-flag — surface to parch routing.
 6. **Do NOT publish a new anchor** until tamper-detection cycle closes — publishing again would mask the divergence.
@@ -123,7 +123,7 @@ Acceptable disposition: **leave gap as-is + investigate root cause**. The gap is
 Root-cause checks:
 - `systemctl status audit-anchor-publisher.timer audit-anchor-publisher.service`
 - `journalctl -u audit-anchor-publisher.service --since=yesterday`
-- S3-compatible credential validity: `aws s3 ls s3://plexus-audit-anchor-devel/ ${AWS_ENDPOINT_URL:+--endpoint-url $AWS_ENDPOINT_URL} | head`
+- S3-compatible credential validity: `aws s3 ls s3://plexus-audit-anchor/ ${AWS_ENDPOINT_URL:+--endpoint-url $AWS_ENDPOINT_URL} | head`
 
 ### S3 bucket compromise suspected
 
@@ -141,9 +141,9 @@ Root-cause checks:
 |---|---|---|
 | `/etc/systemd/system/audit-anchor-publisher.timer` | Daily trigger | admin |
 | `/etc/systemd/system/audit-anchor-publisher.service` | One-shot unit | admin |
-| `/home/devel/.config/yaklog/ops-key` | Ops-key for yaklog endpoints | secops |
-| `/home/devel/.config/yaklog/s3-credentials` | S3-compatible credentials for substrate PUT (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY env vars; works for AWS S3 + MinIO + any S3-compatible substrate) | ssw-devops |
-| `s3://plexus-audit-anchor-devel/` | Anchor storage bucket | ssw-devops (Object Lock policy) |
+| `/etc/yaklog/ops-key` | Ops-key for yaklog endpoints | secops |
+| `/etc/yaklog/s3-credentials` | S3-compatible credentials for substrate PUT (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY env vars; works for AWS S3 + MinIO + any S3-compatible substrate) | ssw-devops |
+| `s3://plexus-audit-anchor/` | Anchor storage bucket | ssw-devops (Object Lock policy) |
 
 **Environment variables** (CP12.21.1 — pass via systemd unit `Environment=` or shell export):
 
@@ -165,7 +165,7 @@ Root-cause checks:
 | `plexus_audit_anchor_publish_status` | `substrate`, `anchor_day` | 1 = success, 0 = failure | `== 0` → investigate last cron run |
 | `plexus_audit_anchor_publish_http_code` | `substrate` | last anchor-record endpoint HTTP code | `!= 200` → server-side record failure |
 
-**Scrape config required** (admin / ssw-devops coord-ask): node_exporter must scan `/var/lib/yaklog/textfile/*.prom` via the textfile-collector flag. Sample systemd unit drop-in: `--collector.textfile.directory=/var/lib/yaklog/textfile`. Once node_exporter scrapes, Plexus Prometheus picks up via the existing devel scrape config; Grafana dashboard alerts wire from there.
+**Scrape config required** (admin / ssw-devops coord-ask): node_exporter must scan `/var/lib/yaklog/textfile/*.prom` via the textfile-collector flag. Sample systemd unit drop-in: `--collector.textfile.directory=/var/lib/yaklog/textfile`. Once node_exporter scrapes, Plexus Prometheus picks up via the existing scrape config; Grafana dashboard alerts wire from there.
 
 **Forward-track (post-Phase-3-A operational close-gate)**: a CP12.21.x cycle can replace the textfile pattern with direct OTLP emission to `plexus-otel-collector:4318` once an OTLP HTTP client is staged in the publisher script. Either pattern delivers the same scrape result; textfile is the simpler dependency-free path for first ship.
 

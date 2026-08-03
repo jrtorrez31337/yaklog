@@ -10,7 +10,7 @@ const path = require('path');
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'yaklog-ingester-test-'));
 process.env.YAKLOG_DB_PATH = path.join(tempDir, 'yaklog.db');
 process.env.YAKLOG_API_KEYS = 'test-key,unbound-key';
-process.env.YAKLOG_HOST_INGESTER_BINDINGS = 'devel:test-key,traptop10k:test-key';
+process.env.YAKLOG_HOST_INGESTER_BINDINGS = 'yaklog-host:test-key,operator-host:test-key';
 process.env.NODE_ENV = 'test';
 process.env.YAKLOG_COST_ROLLUP_DISABLED = '1';
 process.env.YAKLOG_AUDIT_INGESTER_DISABLED = '1';
@@ -31,7 +31,7 @@ const sha256_64 = (s) => require('crypto').createHash('sha256').update(s).digest
 test('intake: missing Bearer → 401', async () => {
   const r = await request(app)
     .post('/api/v1/ingester/file-access')
-    .send({ host: 'devel', events: [] });
+    .send({ host: 'yaklog-host', events: [] });
   assert.equal(r.status, 401);
 });
 
@@ -39,11 +39,11 @@ test('intake: valid Bearer + valid host-binding → 200', async () => {
   const r = await request(app)
     .post('/api/v1/ingester/file-access')
     .set('Authorization', 'Bearer test-key')
-    .send({ host: 'devel', events: [] });
+    .send({ host: 'yaklog-host', events: [] });
   assert.equal(r.status, 200);
   assert.equal(r.body.ok, true);
   assert.equal(r.body.ingested, 0);
-  assert.equal(r.body.host, 'devel');
+  assert.equal(r.body.host, 'yaklog-host');
 });
 
 test('intake: valid Bearer but NOT bound to the claimed host → 403', async () => {
@@ -59,7 +59,7 @@ test('intake: valid Bearer but unbound (no host bindings at all) → 403', async
   const r = await request(app)
     .post('/api/v1/ingester/file-access')
     .set('Authorization', 'Bearer unbound-key')
-    .send({ host: 'devel', events: [] });
+    .send({ host: 'yaklog-host', events: [] });
   assert.equal(r.status, 403);
 });
 
@@ -78,7 +78,7 @@ test('intake: missing events array → 400', async () => {
   const r = await request(app)
     .post('/api/v1/ingester/file-access')
     .set('Authorization', 'Bearer test-key')
-    .send({ host: 'devel' });
+    .send({ host: 'yaklog-host' });
   assert.equal(r.status, 400);
   assert.match(r.body.message, /events/);
 });
@@ -90,7 +90,7 @@ test('intake: batch exceeds MAX_BATCH → 400', async () => {
   const r = await request(app)
     .post('/api/v1/ingester/file-access')
     .set('Authorization', 'Bearer test-key')
-    .send({ host: 'devel', events: big });
+    .send({ host: 'yaklog-host', events: big });
   assert.equal(r.status, 400);
   assert.match(r.body.message, /MAX_BATCH|split/);
 });
@@ -101,7 +101,7 @@ test('intake: event missing uid → 400', async () => {
   const r = await request(app)
     .post('/api/v1/ingester/file-access')
     .set('Authorization', 'Bearer test-key')
-    .send({ host: 'devel', events: [{ path: '/tmp/x', access_mode: 'read' }] });
+    .send({ host: 'yaklog-host', events: [{ path: '/tmp/x', access_mode: 'read' }] });
   assert.equal(r.status, 400);
   assert.match(r.body.message, /uid/);
 });
@@ -110,7 +110,7 @@ test('intake: event missing path → 400', async () => {
   const r = await request(app)
     .post('/api/v1/ingester/file-access')
     .set('Authorization', 'Bearer test-key')
-    .send({ host: 'devel', events: [{ uid: 1001, access_mode: 'read' }] });
+    .send({ host: 'yaklog-host', events: [{ uid: 1001, access_mode: 'read' }] });
   assert.equal(r.status, 400);
   assert.match(r.body.message, /path/);
 });
@@ -119,7 +119,7 @@ test('intake: event invalid access_mode → 400', async () => {
   const r = await request(app)
     .post('/api/v1/ingester/file-access')
     .set('Authorization', 'Bearer test-key')
-    .send({ host: 'devel', events: [{ uid: 1001, path: '/tmp/x', access_mode: 'bogus' }] });
+    .send({ host: 'yaklog-host', events: [{ uid: 1001, path: '/tmp/x', access_mode: 'bogus' }] });
   assert.equal(r.status, 400);
   assert.match(r.body.message, /access_mode/);
 });
@@ -128,7 +128,7 @@ test('intake: event invalid attribution_confidence → 400', async () => {
   const r = await request(app)
     .post('/api/v1/ingester/file-access')
     .set('Authorization', 'Bearer test-key')
-    .send({ host: 'devel', events: [{ uid: 1001, path: '/tmp/x', access_mode: 'read', attribution_confidence: 'wat' }] });
+    .send({ host: 'yaklog-host', events: [{ uid: 1001, path: '/tmp/x', access_mode: 'read', attribution_confidence: 'wat' }] });
   assert.equal(r.status, 400);
   assert.match(r.body.message, /attribution_confidence/);
 });
@@ -138,7 +138,7 @@ test('intake: content_digest must be 64-char hex (secops OQ#6 — no partial has
     .post('/api/v1/ingester/file-access')
     .set('Authorization', 'Bearer test-key')
     .send({
-      host: 'devel',
+      host: 'yaklog-host',
       events: [{ uid: 1001, path: '/tmp/x', access_mode: 'read', content_digest: 'abcd' }]
     });
   assert.equal(r.status, 400);
@@ -151,7 +151,7 @@ test('intake: content_digest valid 64-char hex → 200', async () => {
     .post('/api/v1/ingester/file-access')
     .set('Authorization', 'Bearer test-key')
     .send({
-      host: 'devel',
+      host: 'yaklog-host',
       events: [{ uid: 1001, path: '/tmp/x', access_mode: 'read', content_digest: digest }]
     });
   assert.equal(r.status, 200);
@@ -168,7 +168,7 @@ test('intake: validation rejects WHOLE batch on first bad row (atomic-batch sema
   const r = await request(app)
     .post('/api/v1/ingester/file-access')
     .set('Authorization', 'Bearer test-key')
-    .send({ host: 'devel', events });
+    .send({ host: 'yaklog-host', events });
   assert.equal(r.status, 400);
   const after = listAuditFileAccess({ agent_id: 'atomic-batch-test' }).length;
   assert.equal(after, before, 'no rows should have been inserted on validation-fail');
@@ -176,20 +176,20 @@ test('intake: validation rejects WHOLE batch on first bad row (atomic-batch sema
 
 // ─── happy paths ───────────────────────────────────────────────────────────
 
-test('intake: uid_unique host (devel) — agent_id preserved', async () => {
+test('intake: uid_unique host (yaklog-host) — agent_id preserved', async () => {
   const events = [
     {
-      uid: 1001, path: '/home/jon/yaklog/src/db.js', access_mode: 'read',
+      uid: 1001, path: '/home/operator/yaklog/src/db.js', access_mode: 'read',
       agent_id: 'yaklog-dev-agent', attribution_confidence: 'uid_unique',
     },
   ];
   const r = await request(app)
     .post('/api/v1/ingester/file-access')
     .set('Authorization', 'Bearer test-key')
-    .send({ host: 'devel', events, ingester_version: 'phase-1.5d-v0.1.0' });
+    .send({ host: 'yaklog-host', events, ingester_version: 'phase-1.5d-v0.1.0' });
   assert.equal(r.status, 200);
   assert.equal(r.body.ingested, 1);
-  assert.equal(r.body.host, 'devel');
+  assert.equal(r.body.host, 'yaklog-host');
   assert.equal(r.body.ingester_version, 'phase-1.5d-v0.1.0');
   assert.equal(r.body.inserted_event_ids.length, 1);
   assert.match(r.body.inserted_event_ids[0], /^[0-9a-f]{16}$/);
@@ -200,16 +200,16 @@ test('intake: uid_unique host (devel) — agent_id preserved', async () => {
   assert.equal(row.attribution_confidence, 'uid_unique');
 });
 
-test('intake: uid_shared host (traptop10k) — process_class correlator prefix preserved (secops OQ#2)', async () => {
+test('intake: uid_shared host (operator-host) — process_class correlator prefix preserved (secops OQ#2)', async () => {
   const events = [
     {
-      uid: 1000, path: '/home/jon/agent-workspace/file.md', access_mode: 'write',
+      uid: 1000, path: '/home/operator/agent-workspace/file.md', access_mode: 'write',
       attribution_confidence: 'uid_shared',
       session_correlator: 'cc-agent:session-abc-123',
       // NOTE: agent_id NULL per admin R5 — don't fabricate attribution from uid alone
     },
     {
-      uid: 1000, path: '/home/jon/other/file.txt', access_mode: 'read',
+      uid: 1000, path: '/home/operator/other/file.txt', access_mode: 'read',
       attribution_confidence: 'uid_shared',
       session_correlator: 'cron:nightly-backup',  // non-CC process-class
     },
@@ -222,7 +222,7 @@ test('intake: uid_shared host (traptop10k) — process_class correlator prefix p
   const r = await request(app)
     .post('/api/v1/ingester/file-access')
     .set('Authorization', 'Bearer test-key')
-    .send({ host: 'traptop10k', events });
+    .send({ host: 'operator-host', events });
   assert.equal(r.status, 200);
   assert.equal(r.body.ingested, 3);
 
@@ -251,7 +251,7 @@ test('intake: full sha256 content_digest is stored exactly as supplied', async (
   const r = await request(app)
     .post('/api/v1/ingester/file-access')
     .set('Authorization', 'Bearer test-key')
-    .send({ host: 'devel', events });
+    .send({ host: 'yaklog-host', events });
   assert.equal(r.status, 200);
   const rows = listAuditFileAccess({ agent_id: 'digest-test-agent' });
   const row = rows.find(x => x.event_id === r.body.inserted_event_ids[0]);
@@ -263,7 +263,7 @@ test('intake: empty events batch returns ok=true ingested=0 (no-op friendly)', a
   const r = await request(app)
     .post('/api/v1/ingester/file-access')
     .set('Authorization', 'Bearer test-key')
-    .send({ host: 'devel', events: [] });
+    .send({ host: 'yaklog-host', events: [] });
   assert.equal(r.status, 200);
   assert.equal(r.body.ingested, 0);
 });

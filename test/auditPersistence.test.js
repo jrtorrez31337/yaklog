@@ -132,7 +132,7 @@ test('audit_tool_invocation: time-range filter', () => {
 
 test('audit_file_access: insert with attribution_confidence default uid_unique', () => {
   const r = insertAuditFileAccess({
-    uid: 1001, path: '/home/jon/yaklog/src/db.js', access_mode: 'read', agent_id: 'agent-a',
+    uid: 1001, path: '/home/operator/yaklog/src/db.js', access_mode: 'read', agent_id: 'agent-a',
   });
   assert.ok(r.id);
   const rows = listAuditFileAccess({ agent_id: 'agent-a' });
@@ -144,11 +144,11 @@ test('audit_file_access: jon-uid shared attribution per admin R5/secops F1 fold'
   // Per ADR-0030 fold: uid_shared on jon-uid hosts; agent_id may be NULL;
   // post-hoc L2 hook-stream correlation via session_correlator.
   const r = insertAuditFileAccess({
-    uid: 1000, path: '/home/jon/something', access_mode: 'write',
+    uid: 1000, path: '/home/operator/something', access_mode: 'write',
     attribution_confidence: 'uid_shared', agent_id: null,
     session_correlator: 'cc-session-abc-123',
   });
-  const rows = listAuditFileAccess({ path_prefix: '/home/jon/' });
+  const rows = listAuditFileAccess({ path_prefix: '/home/operator/' });
   const row = rows.find(x => x.id === r.id);
   assert.equal(row.attribution_confidence, 'uid_shared');
   assert.equal(row.agent_id, null);

@@ -93,8 +93,8 @@ test('processPermissionScan: first-scan silent (no audit_permission_change rows)
   const before = listAuditPermissionChanges({}).length;
   const r = processPermissionScan({
     sources: [
-      src('settings.local.json', '/home/jon/x', 'yaklog-dev-agent', '1111111111111111'),
-      src('authorized_keys', '/home/jon/.ssh/authorized_keys', 'jon', '2222222222222222'),
+      src('settings.local.json', '/home/operator/workspace', 'code-agent', '1111111111111111'),
+      src('authorized_keys', '/home/operator/.ssh/authorized_keys', 'operator', '2222222222222222'),
     ],
     actor: 'cp128-test',
   });
@@ -109,11 +109,11 @@ test('processPermissionScan: second-scan with diff emits add+modify+remove', () 
   const r = processPermissionScan({
     sources: [
       // settings unchanged
-      src('settings.local.json', '/home/jon/x', 'yaklog-dev-agent', '1111111111111111'),
+      src('settings.local.json', '/home/operator/workspace', 'code-agent', '1111111111111111'),
       // authorized_keys modified (different fingerprint)
-      src('authorized_keys', '/home/jon/.ssh/authorized_keys', 'jon', 'cccccccccccccccc'),
+      src('authorized_keys', '/home/operator/.ssh/authorized_keys', 'operator', 'cccccccccccccccc'),
       // new gh hosts.yml (add)
-      src('gh-hosts.yml', '/home/jon/.config/gh/hosts.yml', 'jon', 'dddddddddddddddd'),
+      src('gh-hosts.yml', '/home/operator/.config/gh/hosts.yml', 'operator', 'dddddddddddddddd'),
     ],
     actor: 'cp128-test',
   });
@@ -128,17 +128,17 @@ test('processPermissionScan: second-scan with diff emits add+modify+remove', () 
   const mods = after.filter(r => r.change_type === 'modify');
   assert.equal(adds.length, 1);
   assert.equal(mods.length, 1);
-  assert.equal(adds[0].source_path, '/home/jon/.config/gh/hosts.yml');
-  assert.equal(mods[0].source_path, '/home/jon/.ssh/authorized_keys');
+  assert.equal(adds[0].source_path, '/home/operator/.config/gh/hosts.yml');
+  assert.equal(mods[0].source_path, '/home/operator/.ssh/authorized_keys');
 });
 
 test('processPermissionScan: third-scan idempotent (no diff → zero emit)', () => {
   const before = listAuditPermissionChanges({}).length;
   const r = processPermissionScan({
     sources: [
-      src('settings.local.json', '/home/jon/x', 'yaklog-dev-agent', '1111111111111111'),
-      src('authorized_keys', '/home/jon/.ssh/authorized_keys', 'jon', 'cccccccccccccccc'),
-      src('gh-hosts.yml', '/home/jon/.config/gh/hosts.yml', 'jon', 'dddddddddddddddd'),
+      src('settings.local.json', '/home/operator/workspace', 'code-agent', '1111111111111111'),
+      src('authorized_keys', '/home/operator/.ssh/authorized_keys', 'operator', 'cccccccccccccccc'),
+      src('gh-hosts.yml', '/home/operator/.config/gh/hosts.yml', 'operator', 'dddddddddddddddd'),
     ],
     actor: 'cp128-test',
   });
@@ -151,7 +151,7 @@ test('processPermissionScan: removed source emits remove event', () => {
   const before = listAuditPermissionChanges({}).length;
   const r = processPermissionScan({
     sources: [
-      src('settings.local.json', '/home/jon/x', 'yaklog-dev-agent', '1111111111111111'),
+      src('settings.local.json', '/home/operator/workspace', 'code-agent', '1111111111111111'),
       // dropped: authorized_keys + gh-hosts.yml
     ],
     actor: 'cp128-test',
@@ -170,7 +170,7 @@ test('processPermissionScan: rejects malformed source rows (silently drops)', ()
   const r = processPermissionScan({
     sources: [
       // valid
-      src('settings.local.json', '/home/jon/x', 'yaklog-dev-agent', '1111111111111111'),
+      src('settings.local.json', '/home/operator/workspace', 'code-agent', '1111111111111111'),
       // invalid: bad source_class
       { source_class: 'unknown-class', source_path: '/x', agent_id: 'a', fingerprint: '1111111111111111' },
       // invalid: bad fingerprint shape

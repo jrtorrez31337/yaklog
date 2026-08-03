@@ -71,7 +71,7 @@ module.exports = {
   // (NOT per agent — file-access is host-scope). Reuses same `host:token`
   // CSV shape as YAKLOG_DAEMON_BINDINGS. Host identifier is the hostname
   // string the per-host ingester reports in events (e.g. 'devel',
-  // 'traptop10k'). Token lives in EnvironmentFile per plexus-audit-ingester
+  // 'operator-host'). Token lives in EnvironmentFile per plexus-audit-ingester
   // service-account. Never reuse an agent's token — confuses substrate
   // attribution with message-bus identity per secops #7810.
   hostIngesterBindings: parseTokenBindings(process.env.YAKLOG_HOST_INGESTER_BINDINGS),

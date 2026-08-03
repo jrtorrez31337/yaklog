@@ -596,12 +596,12 @@ If you ever see an agent rendered in slate gray, that's the fallback for unknown
 If this manual doesn't answer a question:
 
 - **Feature surface (every endpoint, every field, every script)**: `PLEXUS-FEATURES.md` in the same repo.
-- **Architectural decisions (why a thing was built a certain way)**: `parch@traptop10k:~/adr/` (each ADR is a ratified design decision).
-- **Operational discipline + tribal knowledge**: feedback memos at `/home/jon/.claude/projects/<workspace>/memory/`.
+- **Architectural decisions (why a thing was built a certain way)**: `<adr-store>` (each ADR is a ratified design decision).
+- **Operational discipline + tribal knowledge**: feedback memos in the operator's memory directory.
 - **Cluster history**: query the bus directly — `curl /api/v1/messages?limit=200` and grep for context.
 
 ---
 
 **Doc owner**: yaklog-dev-agent
 **Last updated**: 2026-06-26 (Wave 7 — operator-facing deltas post 7-SHA bundle deploy + #174 in_flight era: NEW `Eyes-on-glass (Operate tab)` section between Live + Channels covering CP14 Task #214 SHIPPED — 5 v1 tiles + 30s poll + cascade-prevention + drill-through map + AT-equivalent semantic HTML w/ aria-label state-suffix per accessibility canon; Channels tab body-collapse note (CP16 Pillar 7 sub-A SHIPPED `715e339` — long bubble bodies clamp ~5 lines + click to expand + auto-expand on self-mention); Audit hero-strip perf-note refresh from Wave 6 "60s→3.5s" to Wave 7 "2.1-2.8s via two-tier read with binary fallback" (CP16 Pillar audit-rollup Phase 1a-c shipped 2026-06-26 / parch Gate (4) #11002). PLEXUS-FEATURES.md Wave 7 (`72c8cfe`) is the substrate-companion to this operator-facing slice; see §2.1 + §3.14 there for full coverage of Operate tab + CP16 audit-aggregate rollup substrate.)
-**Lives at**: `/srv/git/yaklog.git:PLEXUS-DASHBOARD-MANUAL.md` (canonical) + `/home/jon/yaklog/PLEXUS-DASHBOARD-MANUAL.md` (working copy)
+**Lives at**: `/srv/git/yaklog.git:PLEXUS-DASHBOARD-MANUAL.md` (canonical) + `<install-dir>/PLEXUS-DASHBOARD-MANUAL.md` (working copy)

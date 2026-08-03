@@ -54,23 +54,23 @@ const EMAIL_TO_AGENT_ID = new Map([
   // yaklog-dev (this agent)
   ['yaklog-dev-agent@devel',   'yaklog-dev-agent'],
   ['yaklog-dev@devel.local',   'yaklog-dev-agent'],
-  ['yaklog-dev@subnet345.com', 'yaklog-dev-agent'],
+  ['yaklog-dev@example.com', 'yaklog-dev-agent'],
   ['yaklog-dev@devel',         'yaklog-dev-agent'],
   // s345-aieng (Anthropic Ptah primary; in-place rename from `aieng-agent` per
   // Jon-direct #7894 dispatch 2026-06-06; historical aieng-* author-emails
   // are substantively the SAME entity, now canonically s345-aieng-agent.
-  // YAKLOG_ALIASES at /home/jon/agents/s345-aieng/.config/yaklog/...env
+  // YAKLOG_ALIASES at ~/agents/<agent>/.config/yaklog/...env
   // preserves `aieng-renamed` audit-trail per migration canon.)
-  ['s345-aieng-agent@subnet345.com', 's345-aieng-agent'],
+  ['s345-aieng-agent@example.com', 's345-aieng-agent'],
   ['s345-aieng@devel',         's345-aieng-agent'],
-  ['aieng-agent@subnet345.com',     's345-aieng-agent'],  // historical-alias post-rename
-  ['aieng-agent@traptop10k.local',  's345-aieng-agent'],  // historical-alias post-rename
+  ['aieng-agent@example.com',     's345-aieng-agent'],  // historical-alias post-rename
+  ['aieng-agent@operator-host.local',  's345-aieng-agent'],  // historical-alias post-rename
   ['aieng@devel',                   's345-aieng-agent'],  // historical-alias post-rename
   // ssw-devops
   ['ssw-devops@devel',         'ssw-devops-agent'],
   ['ssw-devops-agent@devel',   'ssw-devops-agent'],
   // s345 (brand-spine + scope-strand)
-  ['s345-agent@traptop10k.local', 's345-agent'],
+  ['s345-agent@operator-host.local', 's345-agent'],
   ['s345-agent@devel',           's345-agent'],
   // gfxartist
   ['gfxartist-agent@ssw-cluster',  'gfxartist-agent'],
@@ -80,9 +80,9 @@ const EMAIL_TO_AGENT_ID = new Map([
   // parch (governance)
   ['parch@devel',              'parch-agent'],
   ['parch-agent@devel',        'parch-agent'],
-  ['parch-agent@traptop10k',   'parch-agent'],
+  ['parch-agent@operator-host',   'parch-agent'],
   // writer-agent
-  ['writer-agent@subnet345.com', 'writer-agent'],
+  ['writer-agent@example.com', 'writer-agent'],
   ['writer-agent@devel',         'writer-agent'],
   // secops
   ['secops-agent@devel',       'secops-agent'],
@@ -94,14 +94,14 @@ const EMAIL_TO_AGENT_ID = new Map([
   // smm-agent
   ['smm-agent@devel',          'smm-agent'],
   // maker-agent (rotated tokens; multi-host)
-  ['maker-agent@traptop10k',   'maker-agent'],
+  ['maker-agent@operator-host',   'maker-agent'],
   ['maker-agent@devel',        'maker-agent'],
   // additional ssw-devops + secops hostname variants
-  ['ssw-devops@subnet345.com', 'ssw-devops-agent'],
+  ['ssw-devops@example.com', 'ssw-devops-agent'],
   ['secops-agent@swarm.internal', 'secops-agent'],
   // aieng without -agent suffix (legacy short-stem author identity; post-rename
   // per Jon-direct #7894 2026-06-06 redirects to current canonical identity).
-  ['aieng@subnet345.com',      's345-aieng-agent'],
+  ['aieng@example.com',      's345-aieng-agent'],
   // Jon-direct (intentional non-attribution — author=Jon but no agent context)
   // Mapped to NULL pseudo-agent NOT included here; null_fallback is honest.
 ]);
@@ -111,15 +111,15 @@ function runtimeOf(agentId) {
 }
 
 // Per-agent identity canon (#10831 ratify) — canonical commit email format
-// is `<agent-id>@internal.subnet345.com` for every agent on the cluster.
-// The `internal.subnet345.com` domain is a sentinel (no DNS; no mail);
+// is `<agent-id>@internal.example.com` for every agent on the cluster.
+// The `internal.example.com` domain is a sentinel (no DNS; no mail);
 // the prefix IS the agent_id. Resolved here by prefix-extraction so
 // agentIdByEmail can match without per-agent EMAIL_TO_AGENT_ID entries.
 //
 // Cluster agent_id naming convention (matches /register validation):
 // lowercase letters / digits / hyphens / underscores; first char must be
 // a letter. Anchored regex enforces this.
-const CANONICAL_IDENTITY_EMAIL_RE = /^([a-z][a-z0-9_-]{0,63})@internal\.subnet345\.com$/;
+const CANONICAL_IDENTITY_EMAIL_RE = /^([a-z][a-z0-9_-]{0,63})@internal\.example\.com$/;
 
 // Phase 0 Item C: reverse-index lookup. Returns null when email is not
 // a known runtime-canonical-author email (parser falls through to next
@@ -129,7 +129,7 @@ const CANONICAL_IDENTITY_EMAIL_RE = /^([a-z][a-z0-9_-]{0,63})@internal\.subnet34
 //   1. EMAIL_TO_AGENT_ID exact lookup (host-specific variants;
 //      historical-alias preservation per #7894 rename)
 //   2. Canonical per-agent identity pattern (#10831 ratify):
-//      `<agent-id>@internal.subnet345.com` → prefix as agent_id
+//      `<agent-id>@internal.example.com` → prefix as agent_id
 function agentIdByEmail(email) {
   if (!email || typeof email !== 'string') return null;
   const lower = email.toLowerCase();

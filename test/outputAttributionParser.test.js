@@ -191,8 +191,8 @@ test('parseAttribution: backward-compat — calling without authorEmail still wo
 // from Co-Authored-By trailer (replaces collapse-to-runtime behavior). ──────
 
 test('parseCoAuthoredBy: agent-explicit email resolves to specific agent_id (not runtime-class collapse)', () => {
-  // writer-agent@subnet345.com is in EMAIL_TO_AGENT_ID per cluster registry
-  const msg = `Subject\n\nCo-Authored-By: writer-agent <writer-agent@subnet345.com>`;
+  // writer-agent@example.com is in EMAIL_TO_AGENT_ID per cluster registry
+  const msg = `Subject\n\nCo-Authored-By: writer-agent <writer-agent@example.com>`;
   const r = parseCoAuthoredBy(msg);
   assert.equal(r.agent_attribution, 'writer-agent', 'should resolve to specific agent_id not "claude-code"');
   assert.equal(r.attribution_method, 'co_authored_by');
@@ -225,7 +225,7 @@ test('parseCoAuthoredBy: codex direct-author email resolves to aieng3-agent (not
 });
 
 // ── Per-agent identity canon (#10831 ratify) — pattern-resolution path ─────
-// Cluster-canon commit email format: `<agent-id>@internal.subnet345.com`.
+// Cluster-canon commit email format: `<agent-id>@internal.example.com`.
 // agentIdByEmail resolves by prefix-extraction so each new agent doesn't
 // need an EMAIL_TO_AGENT_ID entry. Empirical anchor: yaklog-dev-agent's
 // recent commits (Wave 6 docs + Phase 1a-c audit-rollup ships) carry this
@@ -235,11 +235,11 @@ test('parseCoAuthoredBy: codex direct-author email resolves to aieng3-agent (not
 const { agentIdByEmail, runtimeOf } = require('../src/agentRuntimes');
 
 test('agentIdByEmail: canonical identity pattern resolves prefix as agent_id', () => {
-  assert.equal(agentIdByEmail('yaklog-dev-agent@internal.subnet345.com'), 'yaklog-dev-agent');
-  assert.equal(agentIdByEmail('admin-agent@internal.subnet345.com'), 'admin-agent');
-  assert.equal(agentIdByEmail('ssw-devops@internal.subnet345.com'), 'ssw-devops');
-  assert.equal(agentIdByEmail('parch-agent@internal.subnet345.com'), 'parch-agent');
-  assert.equal(agentIdByEmail('aieng3-agent@internal.subnet345.com'), 'aieng3-agent');
+  assert.equal(agentIdByEmail('yaklog-dev-agent@internal.example.com'), 'yaklog-dev-agent');
+  assert.equal(agentIdByEmail('admin-agent@internal.example.com'), 'admin-agent');
+  assert.equal(agentIdByEmail('ssw-devops@internal.example.com'), 'ssw-devops');
+  assert.equal(agentIdByEmail('parch-agent@internal.example.com'), 'parch-agent');
+  assert.equal(agentIdByEmail('aieng3-agent@internal.example.com'), 'aieng3-agent');
 });
 
 test('agentIdByEmail: case-insensitive on canonical pattern', () => {
@@ -247,9 +247,9 @@ test('agentIdByEmail: case-insensitive on canonical pattern', () => {
 });
 
 test('agentIdByEmail: invalid prefix chars in canonical pattern → null', () => {
-  assert.equal(agentIdByEmail('Spaces Here@internal.subnet345.com'), null);
-  assert.equal(agentIdByEmail('@internal.subnet345.com'), null);
-  assert.equal(agentIdByEmail('1starts-with-digit@internal.subnet345.com'), null);
+  assert.equal(agentIdByEmail('Spaces Here@internal.example.com'), null);
+  assert.equal(agentIdByEmail('@internal.example.com'), null);
+  assert.equal(agentIdByEmail('1starts-with-digit@internal.example.com'), null);
 });
 
 test('agentIdByEmail: EMAIL_TO_AGENT_ID exact-lookup precedence preserved (historical hostname variant)', () => {
@@ -264,10 +264,10 @@ test('agentIdByEmail: non-canonical domain → null (no over-match)', () => {
 });
 
 test('parseAttribution: canonical-identity author_email resolves to author_email_direct', () => {
-  // Empirical: yaklog-dev-agent's own commits — author=`yaklog-dev-agent@internal.subnet345.com`
+  // Empirical: yaklog-dev-agent's own commits — author=`yaklog-dev-agent@internal.example.com`
   // with NO Co-Authored-By trailer. Pre-fix: null_fallback. Post-fix: author_email_direct.
   const msg = `feat(audit-rollup): Phase 1a — schema + helpers\n\nPer PLAN-CP16...`;
-  const r = parseAttribution(msg, null, 'yaklog-dev-agent@internal.subnet345.com');
+  const r = parseAttribution(msg, null, 'yaklog-dev-agent@internal.example.com');
   assert.equal(r.attribution_method, 'author_email_direct');
   assert.equal(r.agent_attribution, 'yaklog-dev-agent');
 });

@@ -41,7 +41,7 @@ test.before(() => {
   const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'yaklog-bare-src-'));
   gitBare(['init', '-q', '-b', 'main'], workDir);
   gitBare(['config', 'user.name', 'canon-test-agent'], workDir);
-  gitBare(['config', 'user.email', 'canon-test-agent@internal.subnet345.com'], workDir);
+  gitBare(['config', 'user.email', 'canon-test-agent@internal.example.com'], workDir);
   fs.writeFileSync(path.join(workDir, 'a.txt'), 'A');
   gitBare(['add', 'a.txt'], workDir);
   gitBare(['commit', '-q', '-m', 'canon commit'], workDir);
