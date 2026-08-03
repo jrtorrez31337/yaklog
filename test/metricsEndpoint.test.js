@@ -88,15 +88,15 @@ test('emit.walCheckpoint updates gauges visible at GET /metrics (per-db labeled 
   assert.match(r.text, /yaklog_wal_checkpoint_success\{db="yaklog"\} 1/);
 });
 
-test('emit.walCheckpoint per-db labels: plexus-secure call does NOT overwrite yaklog gauge (task #221 fix verify)', async () => {
-  // Sister-shape to ssw-devops cron loop: fire yaklog first, then plexus-secure
+test('emit.walCheckpoint per-db labels: yaklog-secure call does NOT overwrite yaklog gauge (task #221 fix verify)', async () => {
+  // Sister-shape to ssw-devops cron loop: fire yaklog first, then yaklog-secure
   emit.walCheckpoint({ mode: 'TRUNCATE', db: 'yaklog',        elapsed_ms: 111, log: 0, checkpointed: 0, busy: 0, success: true });
-  emit.walCheckpoint({ mode: 'TRUNCATE', db: 'plexus-secure', elapsed_ms: 222, log: 0, checkpointed: 0, busy: 0, success: true });
+  emit.walCheckpoint({ mode: 'TRUNCATE', db: 'yaklog-secure', elapsed_ms: 222, log: 0, checkpointed: 0, busy: 0, success: true });
   const r = await request(app).get('/api/v1/metrics').set(validAuth);
   assert.equal(r.statusCode, 200);
   // Both per-db gauge values present + distinguishable; neither overwrites the other
   assert.match(r.text, /yaklog_wal_checkpoint_elapsed_ms\{db="yaklog"\} 111/);
-  assert.match(r.text, /yaklog_wal_checkpoint_elapsed_ms\{db="plexus-secure"\} 222/);
+  assert.match(r.text, /yaklog_wal_checkpoint_elapsed_ms\{db="yaklog-secure"\} 222/);
 });
 
 test('emit.walCheckpoint default db label (backward-compat: omitted db → "yaklog")', async () => {

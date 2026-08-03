@@ -36,7 +36,7 @@ const auditRoutes = require('../src/auditRoutes');
 
 // Minimal Express app — mirrors how src/app.js mounts publicRouter.
 const app = express();
-app.use('/api/v1/plexus/public', auditRoutes);
+app.use('/api/v1/yaklog/public', auditRoutes);
 
 test.after(() => {
   closeDb();
@@ -128,7 +128,7 @@ test('seed: insert audit fixture rows', () => {
 // ── 1. /audit/summary ─────────────────────────────────────────────────────
 
 test('GET /audit/summary?period=mtd → returns counts struct', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/audit/summary?period=mtd');
+  const r = await request(app).get('/api/v1/yaklog/public/audit/summary?period=mtd');
   assert.equal(r.statusCode, 200);
   assert.equal(r.body.period, 'mtd');
   assert.ok(r.body.counts.tool_invocations >= 5);
@@ -141,14 +141,14 @@ test('GET /audit/summary?period=mtd → returns counts struct', async () => {
 });
 
 test('GET /audit/summary?period=invalid → 400 BadRequest', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/audit/summary?period=bogus');
+  const r = await request(app).get('/api/v1/yaklog/public/audit/summary?period=bogus');
   assert.equal(r.statusCode, 400);
   assert.equal(r.body.error, 'BadRequest');
 });
 
 test('GET /audit/summary period vocabulary: 7d / 30d / today all parse', async () => {
   for (const period of ['7d', '30d', 'today', 'ytd']) {
-    const r = await request(app).get(`/api/v1/plexus/public/audit/summary?period=${period}`);
+    const r = await request(app).get(`/api/v1/yaklog/public/audit/summary?period=${period}`);
     assert.equal(r.statusCode, 200, `${period} failed`);
     assert.equal(r.body.period, period);
   }
@@ -157,7 +157,7 @@ test('GET /audit/summary period vocabulary: 7d / 30d / today all parse', async (
 // ── 2. /audit/tool-invocations ────────────────────────────────────────────
 
 test('GET /audit/tool-invocations → returns rows DESC by occurred_at', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/audit/tool-invocations');
+  const r = await request(app).get('/api/v1/yaklog/public/audit/tool-invocations');
   assert.equal(r.statusCode, 200);
   assert.ok(r.body.count >= 5);
   // verify DESC
@@ -167,7 +167,7 @@ test('GET /audit/tool-invocations → returns rows DESC by occurred_at', async (
 });
 
 test('GET /audit/tool-invocations?agent=agent-a&tool=Bash → filter combo', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/audit/tool-invocations?agent=agent-a&tool=Bash');
+  const r = await request(app).get('/api/v1/yaklog/public/audit/tool-invocations?agent=agent-a&tool=Bash');
   assert.equal(r.statusCode, 200);
   for (const row of r.body.rows) {
     assert.equal(row.agent_id, 'agent-a');
@@ -176,7 +176,7 @@ test('GET /audit/tool-invocations?agent=agent-a&tool=Bash → filter combo', asy
 });
 
 test('GET /audit/tool-invocations?status=error → status filter', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/audit/tool-invocations?status=error');
+  const r = await request(app).get('/api/v1/yaklog/public/audit/tool-invocations?status=error');
   assert.equal(r.statusCode, 200);
   for (const row of r.body.rows) {
     assert.equal(row.status, 'error');
@@ -186,7 +186,7 @@ test('GET /audit/tool-invocations?status=error → status filter', async () => {
 // ── 3. /audit/file-access ─────────────────────────────────────────────────
 
 test('GET /audit/file-access?path_prefix=/home/operator → prefix filter', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/audit/file-access?path_prefix=/home/operator');
+  const r = await request(app).get('/api/v1/yaklog/public/audit/file-access?path_prefix=/home/operator');
   assert.equal(r.statusCode, 200);
   for (const row of r.body.rows) {
     assert.ok(row.path.startsWith('/home/operator'));
@@ -196,7 +196,7 @@ test('GET /audit/file-access?path_prefix=/home/operator → prefix filter', asyn
 // ── 4. /audit/credential-changes ──────────────────────────────────────────
 
 test('GET /audit/credential-changes?credential_class=ops_key → class filter', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/audit/credential-changes?credential_class=ops_key');
+  const r = await request(app).get('/api/v1/yaklog/public/audit/credential-changes?credential_class=ops_key');
   assert.equal(r.statusCode, 200);
   for (const row of r.body.rows) {
     assert.equal(row.credential_class, 'ops_key');
@@ -206,7 +206,7 @@ test('GET /audit/credential-changes?credential_class=ops_key → class filter', 
 // ── 5. /audit/permission-changes ──────────────────────────────────────────
 
 test('GET /audit/permission-changes?agent=agent-a → agent filter', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/audit/permission-changes?agent=agent-a');
+  const r = await request(app).get('/api/v1/yaklog/public/audit/permission-changes?agent=agent-a');
   assert.equal(r.statusCode, 200);
   for (const row of r.body.rows) {
     assert.equal(row.agent_id, 'agent-a');
@@ -217,16 +217,16 @@ test('GET /audit/permission-changes?agent=agent-a → agent filter', async () =>
 
 test('GET /audit/event/:event_id → 200 when present', async () => {
   // Insert one with known data; reuse its event_id from list
-  const list = await request(app).get('/api/v1/plexus/public/audit/tool-invocations?limit=1');
+  const list = await request(app).get('/api/v1/yaklog/public/audit/tool-invocations?limit=1');
   const eid = list.body.rows[0].event_id;
-  const r = await request(app).get(`/api/v1/plexus/public/audit/event/${eid}`);
+  const r = await request(app).get(`/api/v1/yaklog/public/audit/event/${eid}`);
   assert.equal(r.statusCode, 200);
   assert.equal(r.body.event_id, eid);
   assert.ok(r.body.source_event_id === null || typeof r.body.source_event_id === 'number');
 });
 
 test('GET /audit/event/:event_id → 404 when missing', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/audit/event/deadbeefcafebabe');
+  const r = await request(app).get('/api/v1/yaklog/public/audit/event/deadbeefcafebabe');
   assert.equal(r.statusCode, 404);
   assert.equal(r.body.error, 'NotFound');
 });
@@ -234,7 +234,7 @@ test('GET /audit/event/:event_id → 404 when missing', async () => {
 // ── 7. /audit/agent-timeline ──────────────────────────────────────────────
 
 test('GET /audit/agent-timeline?agent=agent-a → merges 4 classes, DESC', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/audit/agent-timeline?agent=agent-a');
+  const r = await request(app).get('/api/v1/yaklog/public/audit/agent-timeline?agent=agent-a');
   assert.equal(r.statusCode, 200);
   // agent-a has 3 tool_invocations + 1 file_access + 1 cred_change + 1 perm_change = 6
   assert.ok(r.body.count >= 6);
@@ -250,14 +250,14 @@ test('GET /audit/agent-timeline?agent=agent-a → merges 4 classes, DESC', async
 });
 
 test('GET /audit/agent-timeline missing agent param → 400', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/audit/agent-timeline');
+  const r = await request(app).get('/api/v1/yaklog/public/audit/agent-timeline');
   assert.equal(r.statusCode, 400);
 });
 
 // ── 8. /audit/by-control-area ─────────────────────────────────────────────
 
 test('GET /audit/by-control-area?control_framework=soc2 → SOC2 control areas', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/audit/by-control-area?control_framework=soc2&period=mtd');
+  const r = await request(app).get('/api/v1/yaklog/public/audit/by-control-area?control_framework=soc2&period=mtd');
   assert.equal(r.statusCode, 200);
   assert.equal(r.body.control_framework, 'soc2');
   const ids = r.body.control_areas.map(a => a.id);
@@ -270,7 +270,7 @@ test('GET /audit/by-control-area?control_framework=soc2 → SOC2 control areas',
 });
 
 test('GET /audit/by-control-area?control_framework=iso27001 → ISO control areas', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/audit/by-control-area?control_framework=iso27001&period=mtd');
+  const r = await request(app).get('/api/v1/yaklog/public/audit/by-control-area?control_framework=iso27001&period=mtd');
   assert.equal(r.statusCode, 200);
   const ids = r.body.control_areas.map(a => a.id);
   for (const want of ['A.5', 'A.8', 'A.9', 'A.12', 'A.13', 'A.16', 'A.18']) {
@@ -279,7 +279,7 @@ test('GET /audit/by-control-area?control_framework=iso27001 → ISO control area
 });
 
 test('GET /audit/by-control-area?control_framework=gdpr → GDPR articles', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/audit/by-control-area?control_framework=gdpr&period=mtd');
+  const r = await request(app).get('/api/v1/yaklog/public/audit/by-control-area?control_framework=gdpr&period=mtd');
   assert.equal(r.statusCode, 200);
   const ids = r.body.control_areas.map(a => a.id);
   for (const want of ['Art.6', 'Art.15', 'Art.17', 'Art.30']) {
@@ -288,14 +288,14 @@ test('GET /audit/by-control-area?control_framework=gdpr → GDPR articles', asyn
 });
 
 test('GET /audit/by-control-area?control_framework=invalid → 400', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/audit/by-control-area?control_framework=hipaa');
+  const r = await request(app).get('/api/v1/yaklog/public/audit/by-control-area?control_framework=hipaa');
   assert.equal(r.statusCode, 400);
 });
 
 // ── 9. /audit/anomaly-detail ──────────────────────────────────────────────
 
 test('GET /audit/anomaly-detail → sorted DESC by policy_violation_count', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/audit/anomaly-detail?period=mtd');
+  const r = await request(app).get('/api/v1/yaklog/public/audit/anomaly-detail?period=mtd');
   assert.equal(r.statusCode, 200);
   assert.ok(Array.isArray(r.body.anomalies));
   for (let i = 1; i < r.body.anomalies.length; i++) {
@@ -310,13 +310,13 @@ test('GET /audit/anomaly-detail → sorted DESC by policy_violation_count', asyn
 // ── 10. /policy/rules ─────────────────────────────────────────────────────
 
 test('GET /policy/rules → all rules', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/policy/rules');
+  const r = await request(app).get('/api/v1/yaklog/public/policy/rules');
   assert.equal(r.statusCode, 200);
   assert.ok(r.body.count >= 4);
 });
 
 test('GET /policy/rules?status=active → active only', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/policy/rules?status=active');
+  const r = await request(app).get('/api/v1/yaklog/public/policy/rules?status=active');
   assert.equal(r.statusCode, 200);
   for (const rule of r.body.rules) {
     assert.equal(rule.status, 'active');
@@ -324,20 +324,20 @@ test('GET /policy/rules?status=active → active only', async () => {
 });
 
 test('GET /policy/rules?status=invalid → 400', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/policy/rules?status=bogus');
+  const r = await request(app).get('/api/v1/yaklog/public/policy/rules?status=bogus');
   assert.equal(r.statusCode, 400);
 });
 
 // ── 11. /policy/rules/:rule_id ────────────────────────────────────────────
 
 test('GET /policy/rules/:rule_id → 200', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/policy/rules/no-secrets-yaklog');
+  const r = await request(app).get('/api/v1/yaklog/public/policy/rules/no-secrets-yaklog');
   assert.equal(r.statusCode, 200);
   assert.equal(r.body.rule_id, 'no-secrets-yaklog');
 });
 
 test('GET /policy/rules/:unknown → 404', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/policy/rules/nope-not-a-rule');
+  const r = await request(app).get('/api/v1/yaklog/public/policy/rules/nope-not-a-rule');
   assert.equal(r.statusCode, 404);
   assert.equal(r.body.error, 'NotFound');
 });
@@ -345,7 +345,7 @@ test('GET /policy/rules/:unknown → 404', async () => {
 // ── 12. /policy/violations ────────────────────────────────────────────────
 
 test('GET /policy/violations → returns rows with bizmodel R-A2 sort', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/policy/violations');
+  const r = await request(app).get('/api/v1/yaklog/public/policy/violations');
   assert.equal(r.statusCode, 200);
   assert.ok(r.body.count >= 3);
   // pending first per helper sort
@@ -353,7 +353,7 @@ test('GET /policy/violations → returns rows with bizmodel R-A2 sort', async ()
 });
 
 test('GET /policy/violations?rule_id=pii-in-broadcast → rule filter', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/policy/violations?rule_id=pii-in-broadcast');
+  const r = await request(app).get('/api/v1/yaklog/public/policy/violations?rule_id=pii-in-broadcast');
   assert.equal(r.statusCode, 200);
   for (const row of r.body.rows) {
     assert.equal(row.rule_id, 'pii-in-broadcast');
@@ -363,7 +363,7 @@ test('GET /policy/violations?rule_id=pii-in-broadcast → rule filter', async ()
 // ── 13. /policy/divergence ────────────────────────────────────────────────
 
 test('GET /policy/divergence → counts struct', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/policy/divergence');
+  const r = await request(app).get('/api/v1/yaklog/public/policy/divergence');
   assert.equal(r.statusCode, 200);
   assert.ok(r.body.policies_codified >= 4);
   assert.ok(r.body.policies_active >= 2);  // no-secrets + pii
@@ -378,7 +378,7 @@ test('GET /policy/divergence → counts struct', async () => {
 // ── 14. /audit/coverage-gap ───────────────────────────────────────────────
 
 test('GET /audit/coverage-gap → finds presence-only agents (agent-d)', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/audit/coverage-gap');
+  const r = await request(app).get('/api/v1/yaklog/public/audit/coverage-gap');
   assert.equal(r.statusCode, 200);
   assert.ok(r.body.missing_agent_ids.includes('agent-d'));
   // agent-a + agent-b are wired up; should NOT be in missing list
@@ -390,7 +390,7 @@ test('GET /audit/coverage-gap → finds presence-only agents (agent-d)', async (
 // ── 15. /audit/export ─────────────────────────────────────────────────────
 
 test('GET /audit/export?format=csv&schema=generic → text/csv with attachment', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/audit/export?format=csv&schema=generic&period=mtd');
+  const r = await request(app).get('/api/v1/yaklog/public/audit/export?format=csv&schema=generic&period=mtd');
   assert.equal(r.statusCode, 200);
   assert.match(r.headers['content-type'], /text\/csv/);
   assert.match(r.headers['content-disposition'], /attachment.*audit-export-mtd\.csv/);
@@ -400,20 +400,20 @@ test('GET /audit/export?format=csv&schema=generic → text/csv with attachment',
 });
 
 test('GET /audit/export?schema=soc2-bundle → 501 NotImplemented', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/audit/export?schema=soc2-bundle');
+  const r = await request(app).get('/api/v1/yaklog/public/audit/export?schema=soc2-bundle');
   assert.equal(r.statusCode, 501);
   assert.equal(r.body.error, 'NotImplemented');
 });
 
 test('GET /audit/export?schema=iso27001-bundle / gdpr-dsar → 501', async () => {
   for (const schema of ['iso27001-bundle', 'gdpr-dsar']) {
-    const r = await request(app).get(`/api/v1/plexus/public/audit/export?schema=${schema}`);
+    const r = await request(app).get(`/api/v1/yaklog/public/audit/export?schema=${schema}`);
     assert.equal(r.statusCode, 501, `${schema} expected 501`);
   }
 });
 
 test('GET /audit/export?schema=unknown → 400', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/audit/export?schema=mystery');
+  const r = await request(app).get('/api/v1/yaklog/public/audit/export?schema=mystery');
   assert.equal(r.statusCode, 400);
 });
 
@@ -428,7 +428,7 @@ test('GET /audit/export → CSV escaping: comma + quote + newline preserved', as
     status_detail: 'oh,no "danger"\nline2',
     occurred_at: iso(-100),
   });
-  const r = await request(app).get('/api/v1/plexus/public/audit/export?format=csv&schema=generic&period=mtd');
+  const r = await request(app).get('/api/v1/yaklog/public/audit/export?format=csv&schema=generic&period=mtd');
   assert.equal(r.statusCode, 200);
   // The status_detail value must appear wrapped in quotes with doubled
   // quotes inside; tool_name similarly.
@@ -439,7 +439,7 @@ test('GET /audit/export → CSV escaping: comma + quote + newline preserved', as
 });
 
 test('GET /audit/export?format=json&schema=generic → JSON payload', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/audit/export?format=json&schema=generic&period=mtd');
+  const r = await request(app).get('/api/v1/yaklog/public/audit/export?format=json&schema=generic&period=mtd');
   assert.equal(r.statusCode, 200);
   assert.match(r.headers['content-type'], /application\/json/);
   assert.equal(r.body.schema, 'generic');
@@ -447,6 +447,6 @@ test('GET /audit/export?format=json&schema=generic → JSON payload', async () =
 });
 
 test('GET /audit/export?format=xml → 400 (unsupported format)', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/audit/export?format=xml');
+  const r = await request(app).get('/api/v1/yaklog/public/audit/export?format=xml');
   assert.equal(r.statusCode, 400);
 });

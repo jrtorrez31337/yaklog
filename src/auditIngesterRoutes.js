@@ -2,7 +2,7 @@
 // ratified ADR-0030 v1.1 Phase 1.5 + secops #7810 FULL CONCUR (all 7 OQs
 // signed off + 8 safety preconditions canonical).
 //
-// Accepts batched file-access events from per-host plexus-audit-ingester
+// Accepts batched file-access events from per-host yaklog-audit-ingester
 // daemons (Phase 1.5.D Rust + libbpf-rs eBPF substrate; not yet built).
 // Substrate-agnostic shape — this intake handler doesn't care whether the
 // daemon used eBPF, auditd, or any other source as long as the wire payload

@@ -11,7 +11,7 @@
 //
 // Sister-shape:
 //   outputRatios.detectAnomalies (CP13.3 / CP13.6 Phase 2.3) — same pattern (today vs prior-mean ratio + spike threshold)
-//   plexusRoutes /cost/anomaly-detail — same cost_daily substrate; this is the LIST view (per-dim across all dim_values); anomaly-detail is DETAIL view (single dim_value + top contributors)
+//   yaklogRoutes /cost/anomaly-detail — same cost_daily substrate; this is the LIST view (per-dim across all dim_values); anomaly-detail is DETAIL view (single dim_value + top contributors)
 //
 // Data semantics shift vs the browser code being replaced: the browser code
 // summed Prom rate samples per dim_value across a 7d window. This endpoint
@@ -27,7 +27,7 @@ const { getCostByPeriod } = require('./db');
 const router = express.Router();
 
 // dim allowlist — matches cost_daily column names. Sister-shape with
-// plexusRoutes /cost/anomaly-detail VALID_DIMS set.
+// yaklogRoutes /cost/anomaly-detail VALID_DIMS set.
 const VALID_DIMS = new Set([
   'agent_id',
   'user_email',

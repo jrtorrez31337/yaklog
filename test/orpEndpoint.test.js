@@ -1,4 +1,4 @@
-// CP14-X Plexus Secure Store endpoint tests per parch #10175 Q1-Q6 ratify.
+// CP14-X Yaklog Secure Store endpoint tests per parch #10175 Q1-Q6 ratify.
 // Tests cover:
 //   - GET /orp/<agent_id> auth boundary + 404 + 200 happy path
 //   - POST /ops/orp/<agent_id> auth boundary + ops-key gate + validation (Q2) + transactional version-bump (condition A)
@@ -14,7 +14,7 @@ const path = require('path');
 // MUST set env before requiring config-touching modules.
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'yaklog-orp-test-'));
 process.env.YAKLOG_DB_PATH = path.join(tempDir, 'yaklog.db');
-process.env.YAKLOG_PLEXUS_SECURE_DB_PATH = path.join(tempDir, 'plexus-secure.db');
+process.env.YAKLOG_YAKLOG_SECURE_DB_PATH = path.join(tempDir, 'yaklog-secure.db');
 process.env.YAKLOG_API_KEYS = 'test-key';
 process.env.YAKLOG_OPS_API_KEYS = 'ops-key-secret';
 process.env.NODE_ENV = 'test';
@@ -40,7 +40,7 @@ const orpRoute = require('../src/orpRoute');
 const auditOpsRoutes = require('../src/auditOpsRoutes');
 const metricsRoute = require('../src/metricsRoute');
 const { closeDb: closeMainDb } = require('../src/db');
-const plexusSecure = require('../src/plexusSecureDb');
+const yaklogSecure = require('../src/yaklogSecureDb');
 
 const app = express();
 app.use(express.json());
@@ -63,7 +63,7 @@ const VALID_ORP = {
 
 test.after(() => {
   closeMainDb();
-  plexusSecure.closeDb();
+  yaklogSecure.closeDb();
   try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {}
 });
 
@@ -157,7 +157,7 @@ test('POST /ops/orp: version increments on subsequent write (transactional per c
   const cur = await request(app).get('/api/v1/orp/test-agent-2').set(validAuth);
   assert.equal(cur.body.version, 3);
   // History preserved (verify via direct DB read since we don't expose history endpoint yet)
-  const versions = plexusSecure.listOrpVersions('test-agent-2');
+  const versions = yaklogSecure.listOrpVersions('test-agent-2');
   assert.equal(versions.length, 3);
   assert.deepEqual(versions.map(v => v.version), [3, 2, 1]);
 });
@@ -190,11 +190,11 @@ test('POST /ops/wal-checkpoint: default db=yaklog → 200', async () => {
   assert.equal(r.body.db, 'yaklog');
 });
 
-test('POST /ops/wal-checkpoint: explicit db=plexus-secure → 200', async () => {
+test('POST /ops/wal-checkpoint: explicit db=yaklog-secure → 200', async () => {
   const r = await request(app).post('/api/v1/ops/wal-checkpoint').set(opsAuth)
-    .send({ mode: 'TRUNCATE', db: 'plexus-secure' });
+    .send({ mode: 'TRUNCATE', db: 'yaklog-secure' });
   assert.equal(r.statusCode, 200);
-  assert.equal(r.body.db, 'plexus-secure');
+  assert.equal(r.body.db, 'yaklog-secure');
   assert.equal(typeof r.body.elapsed_ms, 'number');
 });
 

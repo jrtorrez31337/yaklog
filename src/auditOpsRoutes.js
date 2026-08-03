@@ -203,8 +203,8 @@ router.post('/audit/reconcile', (req, res) => {
   if (!b.period_start || !b.period_end || !b.external_system_label || !b.reconciler_agent_id) {
     return badRequest(res, 'period_start + period_end + external_system_label + reconciler_agent_id required');
   }
-  if (!Number.isInteger(b.plexus_count) || !Number.isInteger(b.external_count)) {
-    return badRequest(res, 'plexus_count + external_count must be integers');
+  if (!Number.isInteger(b.yaklog_count) || !Number.isInteger(b.external_count)) {
+    return badRequest(res, 'yaklog_count + external_count must be integers');
   }
   // CP12.16: reconcile_class optional (defaults 'other' in helper); validate
   // at handler for the 400 vs 500 boundary discipline.
@@ -218,7 +218,7 @@ router.post('/audit/reconcile', (req, res) => {
       period_end: b.period_end,
       external_system_label: b.external_system_label,
       reconcile_class: b.reconcile_class,
-      plexus_count: b.plexus_count,
+      yaklog_count: b.yaklog_count,
       external_count: b.external_count,
       concentration_json: b.concentration_json,
       notes: b.notes,
@@ -480,7 +480,7 @@ const VALID_CHECKPOINT_MODES = new Set(['PASSIVE', 'FULL', 'RESTART', 'TRUNCATE'
 // CP14-X Q3 ratify (parch #10175): `db` param on existing endpoint; per-db
 // elapsed_ms visibility preserved (each db's pressure is separate signal per
 // feedback_writer_lock_contention_visible_via_checkpoint_elapsed_ms).
-const VALID_CHECKPOINT_DBS = new Set(['yaklog', 'plexus-secure']);
+const VALID_CHECKPOINT_DBS = new Set(['yaklog', 'yaklog-secure']);
 
 router.post('/wal-checkpoint', (req, res) => {
   const b = req.body || {};
@@ -496,8 +496,8 @@ router.post('/wal-checkpoint', (req, res) => {
   const t0 = Date.now();
   try {
     // CP14-X Q3: resolve which db to checkpoint
-    const dbHandle = dbName === 'plexus-secure'
-      ? require('./plexusSecureDb').getDb()
+    const dbHandle = dbName === 'yaklog-secure'
+      ? require('./yaklogSecureDb').getDb()
       : getDb();
     // PRAGMA returns { busy: 0|1, log: <pages-in-WAL-at-start>, checkpointed: <pages-written-back> }
     const r = dbHandle.prepare(`PRAGMA wal_checkpoint(${mode})`).get();
@@ -585,7 +585,7 @@ router.post('/audit-rollup/backfill', (req, res) => {
   }
 });
 
-// ─── CP14-X Plexus Secure Store: POST /ops/orp/:agent_id ────────────────────
+// ─── CP14-X Yaklog Secure Store: POST /ops/orp/:agent_id ────────────────────
 //
 // Per parch #10175 ratify of Option C (Jon-direct #10171). Ops-key gated
 // write endpoint for ORP authority artifacts. Sister-shape to existing
@@ -595,7 +595,7 @@ router.post('/audit-rollup/backfill', (req, res) => {
 //   A — Transactional version-bump (db.transaction in upsertOrp)
 //   B — Schema validation BEFORE persist (returns 422, not 500, on mismatch)
 //   C — emit.orpWrite() on success + error paths (Prom observability)
-//   D — covered above (wal-checkpoint endpoint accepts plexus-secure db)
+//   D — covered above (wal-checkpoint endpoint accepts yaklog-secure db)
 
 const AGENT_ID_RE = /^[a-zA-Z0-9._:@/-]{1,64}$/;
 
@@ -613,10 +613,10 @@ router.post('/orp/:agent_id', (req, res) => {
   }
   const actor = computeActor(req);
   // Condition B: validate against ORP schema BEFORE persist.
-  const plexusSecure = require('./plexusSecureDb');
+  const yaklogSecure = require('./yaklogSecureDb');
   let validation;
   try {
-    validation = plexusSecure.validateOrpJson(b.orp_json);
+    validation = yaklogSecure.validateOrpJson(b.orp_json);
   } catch (e) {
     // Schema load error (e.g., file missing at deploy) — surface as 500 with
     // diagnostic message; do NOT treat as validation failure.
@@ -632,7 +632,7 @@ router.post('/orp/:agent_id', (req, res) => {
     });
   }
   try {
-    const result = plexusSecure.upsertOrp({
+    const result = yaklogSecure.upsertOrp({
       agentId,
       orpJson: b.orp_json,
       schemaVersion: b.schema_version,

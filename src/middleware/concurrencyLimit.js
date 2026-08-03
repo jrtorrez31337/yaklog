@@ -1,7 +1,7 @@
 // Per-route-family concurrency limit middleware per PLAN-DASHBOARD-OPERATOR-DM
 // banking #10535 + cascade-prevention substrate-design Option (b).
 //
-// Rationale: dashboard #audit poll-storm + plexus-streamer Prom queries
+// Rationale: dashboard #audit poll-storm + yaklog-streamer Prom queries
 // combined saturate the main event loop → writer-lock starvation →
 // cascade. Per-route in-flight cap eliminates this by-construction:
 // excess requests get 429 + Retry-After instead of queueing on the event

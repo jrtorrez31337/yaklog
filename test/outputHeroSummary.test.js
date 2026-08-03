@@ -1,5 +1,5 @@
 // ADR-0041 P1a — GET /api/v1/output/hero-summary endpoint tests.
-// Contract locked at plexus-ui #11975 + s345 #11973:
+// Contract locked at yaklog-ui #11975 + s345 #11973:
 //   - R1: repos_governed_total (all-time) + repo_count_active_window (window)
 //   - R2: pr_merged_count_cumulative (lifetime, picker-invariant)
 //   - Consolidation: attribution_integrity_pct (% attributed) + attribution_gap_count
@@ -91,7 +91,7 @@ test('GET /output/hero-summary — returns all 8 cross-tier-safe fields', async 
   const res = await request(app).get('/api/v1/output/hero-summary?from=2026-07-01&to=2026-07-03');
   assert.equal(res.statusCode, 200);
   const b = res.body;
-  // Contract fields per plexus-ui #11975
+  // Contract fields per yaklog-ui #11975
   assert.ok('repos_governed_total' in b);
   assert.ok('repo_count_active_window' in b);
   assert.ok('pr_merged_count_cumulative' in b);

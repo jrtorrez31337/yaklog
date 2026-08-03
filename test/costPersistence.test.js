@@ -112,12 +112,12 @@ test('cost_daily: missing required date → throws', () => {
 test('cost_dimension_tags: upsert + read back per agent', () => {
   upsertCostDimensionTags({
     agent_id: 'agent-a',
-    cost_center: 'eng-ops', project_tag: 'plexus', environment_tier: 'prod',
+    cost_center: 'eng-ops', project_tag: 'yaklog', environment_tier: 'prod',
     billable_flag: 0, updated_by: 'jon',
   });
   const t = getCostDimensionTags('agent-a');
   assert.equal(t.cost_center, 'eng-ops');
-  assert.equal(t.project_tag, 'plexus');
+  assert.equal(t.project_tag, 'yaklog');
   assert.equal(t.environment_tier, 'prod');
   assert.equal(t.billable_flag, 0);
 });
@@ -201,7 +201,7 @@ test('cost_reconciliation: insert + computed delta_usd + delta_pct', () => {
   const r = insertCostReconciliation({
     period_start: '2026-05-01', period_end: '2026-05-31',
     invoice_label: 'Anthropic May 2026',
-    invoice_total_usd: 1100.0, plexus_total_usd: 1000.0,
+    invoice_total_usd: 1100.0, yaklog_total_usd: 1000.0,
     reconciled_by: 'ops-key-abc',
   });
   assert.ok(r.id > 0);
@@ -212,7 +212,7 @@ test('cost_reconciliation: insert + computed delta_usd + delta_pct', () => {
 test('cost_reconciliation: list returns newest first', () => {
   insertCostReconciliation({
     period_start: '2026-04-01', period_end: '2026-04-30',
-    invoice_total_usd: 800, plexus_total_usd: 820,  // negative delta (invoice < plexus)
+    invoice_total_usd: 800, yaklog_total_usd: 820,  // negative delta (invoice < yaklog)
     reconciled_by: 'ops-key-xyz',
   });
   const rows = listCostReconciliations();
@@ -221,10 +221,10 @@ test('cost_reconciliation: list returns newest first', () => {
   assert.ok(rows[0].id > rows[1].id);
 });
 
-test('cost_reconciliation: division-by-zero handled (plexus_total=0)', () => {
+test('cost_reconciliation: division-by-zero handled (yaklog_total=0)', () => {
   const r = insertCostReconciliation({
     period_start: '2026-03-01', period_end: '2026-03-31',
-    invoice_total_usd: 100, plexus_total_usd: 0,
+    invoice_total_usd: 100, yaklog_total_usd: 0,
     reconciled_by: 'ops-key',
   });
   assert.equal(r.delta_pct, 100);  // fallback for div-by-zero with non-zero invoice
@@ -233,7 +233,7 @@ test('cost_reconciliation: division-by-zero handled (plexus_total=0)', () => {
 test('cost_reconciliation: both zero → delta_pct = 0', () => {
   const r = insertCostReconciliation({
     period_start: '2026-02-01', period_end: '2026-02-28',
-    invoice_total_usd: 0, plexus_total_usd: 0,
+    invoice_total_usd: 0, yaklog_total_usd: 0,
     reconciled_by: 'ops-key',
   });
   assert.equal(r.delta_pct, 0);
@@ -242,7 +242,7 @@ test('cost_reconciliation: both zero → delta_pct = 0', () => {
 test('cost_reconciliation: concentration_json accepts object or string', () => {
   insertCostReconciliation({
     period_start: '2026-01-01', period_end: '2026-01-31',
-    invoice_total_usd: 100, plexus_total_usd: 90,
+    invoice_total_usd: 100, yaklog_total_usd: 90,
     concentration_json: { top_dim: 'cost_center', top_value: 'eng-ops', divergence_usd: 8 },
     reconciled_by: 'ops-key',
   });
@@ -256,7 +256,7 @@ test('cost_reconciliation: missing reconciled_by → throws', () => {
   assert.throws(
     () => insertCostReconciliation({
       period_start: '2026-01-01', period_end: '2026-01-31',
-      invoice_total_usd: 100, plexus_total_usd: 90,
+      invoice_total_usd: 100, yaklog_total_usd: 90,
     }),
     /reconciled_by required/
   );

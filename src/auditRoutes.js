@@ -1,10 +1,10 @@
 // CP12.2 (2026-06-04): Phase 1 audit + governance read API surface.
 // Implements ratified ADR-0030 v1.1 §5.1 — 15 public read endpoints under
-// /api/v1/plexus/public/audit/* and /api/v1/plexus/public/policy/*.
+// /api/v1/yaklog/public/audit/* and /api/v1/yaklog/public/policy/*.
 //
 // Trust model: network-isolation only (no per-request auth). Mounted via
 // publicRouter pattern in src/app.js; mirrors /cost/* posture from
-// src/plexusRoutes.js publicRouter.
+// src/yaklogRoutes.js publicRouter.
 //
 // Period vocabulary: shared with src/costQuery.js periodToRange (single
 // source of truth — DRY enforced via import, NOT duplication). If costQuery

@@ -5,7 +5,7 @@
 // (hero counts) are substituted with stable demo labels at RENDER TIME —
 // so PTAH-captured screenshots of the real dashboard against live data
 // carry zero real-world identifiers or metric scale into the customer-
-// facing "What is Plexus" page.
+// facing "What is Yaklog" page.
 //
 // Design principles:
 //   1. Client-side render-time substitution. Server data untouched;

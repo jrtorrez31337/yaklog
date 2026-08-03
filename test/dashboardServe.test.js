@@ -17,13 +17,13 @@ process.env.NODE_ENV = 'test';
 const request = require('supertest');
 const app = require('../src/app');
 
-test('/dashboard returns HTML with Plexus tabs + Live + Cost', async () => {
+test('/dashboard returns HTML with Yaklog tabs + Live + Cost', async () => {
   const r = await request(app).get('/dashboard');
   assert.equal(r.statusCode, 200);
   assert.match(r.headers['content-type'], /text\/html/);
   assert.match(r.text, /data-tab="live"/);
   assert.match(r.text, /data-tab="cost"/);
-  assert.match(r.text, /Plexus dashboard/);
+  assert.match(r.text, /Yaklog dashboard/);
 });
 
 test('/dashboard has CP6.2 accounting card markup', async () => {

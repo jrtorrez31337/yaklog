@@ -75,40 +75,40 @@ test('seed: insert test cost_daily rows', () => {
 // ─── /cost/summary ─────────────────────────────────────────────────────
 
 test('GET /cost/summary?period=today → sums today only', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/cost/summary?period=today');
+  const r = await request(app).get('/api/v1/yaklog/public/cost/summary?period=today');
   assert.equal(r.statusCode, 200);
   assert.equal(r.body.value_usd, 10);
   assert.equal(r.body.period, 'today');
 });
 
 test('GET /cost/summary?period=7d → sums last 7 days', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/cost/summary?period=7d');
+  const r = await request(app).get('/api/v1/yaklog/public/cost/summary?period=7d');
   assert.equal(r.statusCode, 200);
   // today (10) + yesterday (20) + 3-days-ago (40) = 70
   assert.equal(r.body.value_usd, 70);
 });
 
 test('GET /cost/summary?period=30d → includes 10-days-ago row', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/cost/summary?period=30d');
+  const r = await request(app).get('/api/v1/yaklog/public/cost/summary?period=30d');
   assert.equal(r.statusCode, 200);
   assert.equal(r.body.value_usd, 170);  // 70 + 100
 });
 
 test('GET /cost/summary?period=invalid → 400', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/cost/summary?period=bogus');
+  const r = await request(app).get('/api/v1/yaklog/public/cost/summary?period=bogus');
   assert.equal(r.statusCode, 400);
 });
 
 // ─── /cost/daily ───────────────────────────────────────────────────────
 
 test('GET /cost/daily?from&to → returns raw rows', async () => {
-  const r = await request(app).get(`/api/v1/plexus/public/cost/daily?from=${T(1)}&to=${T(0)}`);
+  const r = await request(app).get(`/api/v1/yaklog/public/cost/daily?from=${T(1)}&to=${T(0)}`);
   assert.equal(r.statusCode, 200);
   assert.ok(r.body.rows.length >= 4);  // 2 agents × 2 days
 });
 
 test('GET /cost/daily?from&to&by=cost_center → groups by dim', async () => {
-  const r = await request(app).get(`/api/v1/plexus/public/cost/daily?from=${T(3)}&to=${T(0)}&by=cost_center`);
+  const r = await request(app).get(`/api/v1/yaklog/public/cost/daily?from=${T(3)}&to=${T(0)}&by=cost_center`);
   assert.equal(r.statusCode, 200);
   const eng = r.body.rows.find(g => g.cost_center === 'eng-ops');
   const game = r.body.rows.find(g => g.cost_center === 'gamedev');
@@ -119,7 +119,7 @@ test('GET /cost/daily?from&to&by=cost_center → groups by dim', async () => {
 // Task #264 Phase 2.7 (Jon-direct 2026-07-06): days_active field for
 // agent-account timeline view — count distinct dates the group had activity.
 test('GET /cost/daily?by=agent_id → grouped rows include days_active count', async () => {
-  const r = await request(app).get(`/api/v1/plexus/public/cost/daily?from=${T(3)}&to=${T(0)}&by=agent_id`);
+  const r = await request(app).get(`/api/v1/yaklog/public/cost/daily?from=${T(3)}&to=${T(0)}&by=agent_id`);
   assert.equal(r.statusCode, 200);
   for (const row of r.body.rows) {
     assert.ok(Number.isInteger(row.days_active), `days_active must be integer (got ${row.days_active})`);
@@ -131,19 +131,19 @@ test('GET /cost/daily?by=agent_id → grouped rows include days_active count', a
 });
 
 test('GET /cost/daily?by=invalid_dim → 400', async () => {
-  const r = await request(app).get(`/api/v1/plexus/public/cost/daily?from=${T(1)}&to=${T(0)}&by=nope`);
+  const r = await request(app).get(`/api/v1/yaklog/public/cost/daily?from=${T(1)}&to=${T(0)}&by=nope`);
   assert.equal(r.statusCode, 400);
 });
 
 test('GET /cost/daily?missing-from → 400', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/cost/daily?to=2026-06-04');
+  const r = await request(app).get('/api/v1/yaklog/public/cost/daily?to=2026-06-04');
   assert.equal(r.statusCode, 400);
 });
 
 // ─── /cost/projection ──────────────────────────────────────────────────
 
 test('GET /cost/projection?period=eom → linear extrapolation', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/cost/projection?period=eom');
+  const r = await request(app).get('/api/v1/yaklog/public/cost/projection?period=eom');
   assert.equal(r.statusCode, 200);
   assert.ok(r.body.projected_usd >= 0);
   assert.ok(r.body.current_usd >= 0);
@@ -151,14 +151,14 @@ test('GET /cost/projection?period=eom → linear extrapolation', async () => {
 });
 
 test('GET /cost/projection?period=invalid → 400', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/cost/projection?period=nope');
+  const r = await request(app).get('/api/v1/yaklog/public/cost/projection?period=nope');
   assert.equal(r.statusCode, 400);
 });
 
 // ─── /cost/compare ─────────────────────────────────────────────────────
 
 test('GET /cost/compare?period=mtd&compare_to=last_month_to_date → delta', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/cost/compare?period=mtd&compare_to=last_month_to_date');
+  const r = await request(app).get('/api/v1/yaklog/public/cost/compare?period=mtd&compare_to=last_month_to_date');
   assert.equal(r.statusCode, 200);
   assert.ok(typeof r.body.delta_usd === 'number');
   assert.ok(typeof r.body.delta_pct === 'number');
@@ -169,7 +169,7 @@ test('GET /cost/compare?period=mtd&compare_to=last_month_to_date → delta', asy
 // ─── /cost/burn-vs-budget ──────────────────────────────────────────────
 
 test('GET /cost/burn-vs-budget?cost_center=eng-ops → returns burn state', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/cost/burn-vs-budget?cost_center=eng-ops&period_kind=monthly');
+  const r = await request(app).get('/api/v1/yaklog/public/cost/burn-vs-budget?cost_center=eng-ops&period_kind=monthly');
   assert.equal(r.statusCode, 200);
   assert.equal(r.body.cost_center, 'eng-ops');
   assert.equal(r.body.budget_usd, 50);
@@ -179,21 +179,21 @@ test('GET /cost/burn-vs-budget?cost_center=eng-ops → returns burn state', asyn
 });
 
 test('GET /cost/burn-vs-budget?cost_center=no-budget → threshold_state=no-budget', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/cost/burn-vs-budget?cost_center=no-such-center');
+  const r = await request(app).get('/api/v1/yaklog/public/cost/burn-vs-budget?cost_center=no-such-center');
   assert.equal(r.statusCode, 200);
   assert.equal(r.body.threshold_state, 'no-budget');
   assert.equal(r.body.budget_usd, null);
 });
 
 test('GET /cost/burn-vs-budget?period_kind=weekly → 400', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/cost/burn-vs-budget?cost_center=x&period_kind=weekly');
+  const r = await request(app).get('/api/v1/yaklog/public/cost/burn-vs-budget?cost_center=x&period_kind=weekly');
   assert.equal(r.statusCode, 400);
 });
 
 // ─── /cost/by-cost-center ──────────────────────────────────────────────
 
 test('GET /cost/by-cost-center?period=mtd → CC breakdown with budgets', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/cost/by-cost-center?period=mtd');
+  const r = await request(app).get('/api/v1/yaklog/public/cost/by-cost-center?period=mtd');
   assert.equal(r.statusCode, 200);
   assert.ok(r.body.rows.length >= 2);
   const eng = r.body.rows.find(row => row.cost_center === 'eng-ops');
@@ -205,7 +205,7 @@ test('GET /cost/by-cost-center?period=mtd → CC breakdown with budgets', async 
 // ─── /cost/by-api-key ──────────────────────────────────────────────────
 
 test('GET /cost/by-api-key?period_start&period_end → per-API-key totals', async () => {
-  const r = await request(app).get(`/api/v1/plexus/public/cost/by-api-key?period_start=${T(3)}&period_end=${T(0)}`);
+  const r = await request(app).get(`/api/v1/yaklog/public/cost/by-api-key?period_start=${T(3)}&period_end=${T(0)}`);
   assert.equal(r.statusCode, 200);
   assert.ok(r.body.rows.length >= 2);
   assert.ok(r.body.rows.every(g => typeof g.total_usd === 'number'));
@@ -214,7 +214,7 @@ test('GET /cost/by-api-key?period_start&period_end → per-API-key totals', asyn
 // ─── /cost/anomaly-detail ──────────────────────────────────────────────
 
 test('GET /cost/anomaly-detail?date → day-vs-baseline analysis', async () => {
-  const r = await request(app).get(`/api/v1/plexus/public/cost/anomaly-detail?date=${T(0)}`);
+  const r = await request(app).get(`/api/v1/yaklog/public/cost/anomaly-detail?date=${T(0)}`);
   assert.equal(r.statusCode, 200);
   assert.equal(r.body.date, T(0));
   assert.ok(r.body.top_contributors.length >= 1);
@@ -222,27 +222,27 @@ test('GET /cost/anomaly-detail?date → day-vs-baseline analysis', async () => {
 });
 
 test('GET /cost/anomaly-detail?dim_key=invalid → 400', async () => {
-  const r = await request(app).get(`/api/v1/plexus/public/cost/anomaly-detail?date=${T(0)}&dim_key=garbage`);
+  const r = await request(app).get(`/api/v1/yaklog/public/cost/anomaly-detail?date=${T(0)}&dim_key=garbage`);
   assert.equal(r.statusCode, 400);
 });
 
 // ─── /cost/export ──────────────────────────────────────────────────────
 
 test('GET /cost/export?format=csv&period=mtd → CSV stream', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/cost/export?format=csv&period=mtd');
+  const r = await request(app).get('/api/v1/yaklog/public/cost/export?format=csv&period=mtd');
   assert.equal(r.statusCode, 200);
   assert.match(r.headers['content-type'], /text\/csv/);
   assert.match(r.text, /^date,/);  // default header begins with 'date'
 });
 
 test('GET /cost/export?schema=anthropic-invoice → invoice-shaped CSV', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/cost/export?format=csv&period=mtd&schema=anthropic-invoice');
+  const r = await request(app).get('/api/v1/yaklog/public/cost/export?format=csv&period=mtd&schema=anthropic-invoice');
   assert.equal(r.statusCode, 200);
   assert.match(r.text, /^period_start,period_end,api_key_label,model,input_tokens/);
 });
 
 test('GET /cost/export?format=json → 400 (only csv v1)', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/cost/export?format=json&period=mtd');
+  const r = await request(app).get('/api/v1/yaklog/public/cost/export?format=json&period=mtd');
   assert.equal(r.statusCode, 400);
 });
 
@@ -250,7 +250,7 @@ test('GET /cost/export?format=json → 400 (only csv v1)', async () => {
 
 test('PUT /ops/cost/dimension-tag (ops-key) → upsert', async () => {
   const r = await request(app).put('/api/v1/ops/cost/dimension-tag').set(opsAuth).send({
-    agent_id: 'agent-x', cost_center: 'platform', project_tag: 'plexus',
+    agent_id: 'agent-x', cost_center: 'platform', project_tag: 'yaklog',
     environment_tier: 'prod', billable_flag: true,
   });
   assert.equal(r.statusCode, 200);
@@ -293,8 +293,8 @@ test('POST /ops/cost/reconcile → insert + delta computed + concentration', asy
   });
   assert.equal(r.statusCode, 200);
   assert.ok(r.body.id > 0);
-  assert.equal(r.body.plexus_total_usd, 70);  // sum of T(0)+T(1)+T(3): 10+20+40
-  assert.equal(r.body.delta_usd, 10);  // 80 invoice - 70 plexus
+  assert.equal(r.body.yaklog_total_usd, 70);  // sum of T(0)+T(1)+T(3): 10+20+40
+  assert.equal(r.body.delta_usd, 10);  // 80 invoice - 70 yaklog
   assert.ok(Array.isArray(r.body.top_dims));
 });
 

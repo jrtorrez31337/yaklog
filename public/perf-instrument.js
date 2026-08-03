@@ -34,13 +34,13 @@
   })();
 
   // Read operator credentials from Dashboard-DM Phase A sessionStorage shape
-  // (per dashboard.js PlexusOperatorDM module). Same storage keys; same auth
+  // (per dashboard.js YaklogOperatorDM module). Same storage keys; same auth
   // model. Per secops #10719 flag: sendBeacon can't set Authorization header,
   // so without bearer read at flush time the auth-wrapped endpoint 401s
   // silently. Reading per-flush also picks up post-login session activation
   // without restart.
-  const STORAGE_KEY_BEARER = 'plexus_operator_bearer';
-  const STORAGE_KEY_OP = 'plexus_operator_id';
+  const STORAGE_KEY_BEARER = 'yaklog_operator_bearer';
+  const STORAGE_KEY_OP = 'yaklog_operator_id';
   function getBearer() {
     try { return sessionStorage.getItem(STORAGE_KEY_BEARER) || null; }
     catch { return null; }

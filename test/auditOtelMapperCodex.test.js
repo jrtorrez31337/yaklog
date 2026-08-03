@@ -56,7 +56,7 @@ test('codex.tool_result → audit_tool_invocation row with runtime_class=codex',
     .post('/api/v1/audit/ingest/otel')
     .set('Authorization', 'Bearer ops-key')
     .send(makeBatch([codexToolResult()], [
-      { key: 'plexus.agent_id', value: { stringValue: 'aieng3-agent' } },
+      { key: 'yaklog.agent_id', value: { stringValue: 'aieng3-agent' } },
     ]));
   assert.equal(r.statusCode, 200);
   assert.equal(r.body.ingested_count, 1, 'should ingest 1 row');
@@ -78,7 +78,7 @@ test('codex.tool_result with success=false → status=failure', async () => {
     .post('/api/v1/audit/ingest/otel')
     .set('Authorization', 'Bearer ops-key')
     .send(makeBatch([codexToolResult({ span_id: 'codex-span-2', success: false })], [
-      { key: 'plexus.agent_id', value: { stringValue: 'aieng3-agent' } },
+      { key: 'yaklog.agent_id', value: { stringValue: 'aieng3-agent' } },
     ]));
   const db = getDb();
   const row = db.prepare(`SELECT status FROM audit_tool_invocation WHERE span_id = ?`).get('codex-span-2');
@@ -90,14 +90,14 @@ test('codex.tool_result duplicate span_id → idempotent (single row)', async ()
     .post('/api/v1/audit/ingest/otel')
     .set('Authorization', 'Bearer ops-key')
     .send(makeBatch([codexToolResult({ span_id: 'codex-dedup-1' })], [
-      { key: 'plexus.agent_id', value: { stringValue: 'aieng3-agent' } },
+      { key: 'yaklog.agent_id', value: { stringValue: 'aieng3-agent' } },
     ]));
   // Re-post the same span
   const r2 = await request(app)
     .post('/api/v1/audit/ingest/otel')
     .set('Authorization', 'Bearer ops-key')
     .send(makeBatch([codexToolResult({ span_id: 'codex-dedup-1' })], [
-      { key: 'plexus.agent_id', value: { stringValue: 'aieng3-agent' } },
+      { key: 'yaklog.agent_id', value: { stringValue: 'aieng3-agent' } },
     ]));
   assert.equal(r2.body.ingested_count, 0, 'duplicate should not re-insert');
   assert.equal(r2.body.skipped_count, 1, 'duplicate should be counted as skipped');

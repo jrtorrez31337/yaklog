@@ -18,8 +18,8 @@ scripts/__pycache__/
 # belongs in the agent's home dir, not in the public repo.
 .claude/
 
-# Plexus OTel stack runtime data (Prom WAL + Grafana sqlite). Stage 1
-# uses docker named volumes (plexus_prom_data, plexus_grafana_data), so
+# Yaklog OTel stack runtime data (Prom WAL + Grafana sqlite). Stage 1
+# uses docker named volumes (yaklog_prom_data, yaklog_grafana_data), so
 # this is belt-and-suspenders in case the stack is ever reconfigured to
 # bind-mount.
 otel/data/
@@ -37,7 +37,7 @@ docs/plans/*-design.md
 # Docker compose safety captures (taken before infra changes).
 docker-compose.yml.bak*
 
-# Plexus secrets (CP4 rotation). Per-host env_files MUST stay out of repo.
-*plexus-grafana.env
-*plexus-*.env
+# Yaklog secrets (CP4 rotation). Per-host env_files MUST stay out of repo.
+*yaklog-grafana.env
+*yaklog-*.env
 dist/

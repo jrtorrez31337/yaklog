@@ -38,8 +38,8 @@ test('POST /user-prompt: accepts valid metadata + writes textfile', async () => 
   assert.equal(res.status, 201);
   assert.equal(res.body.ok, true);
   const tf = fs.readFileSync(path.join(textfileDir, 'user-prompts.prom'), 'utf-8');
-  assert.match(tf, /plexus_user_prompt_total\{agent_id="test-agent-1",session_id="sess-A",has_tool_calls="false"\} 1/);
-  assert.match(tf, /plexus_user_prompt_char_length_sum\{agent_id="test-agent-1",session_id="sess-A",has_tool_calls="false"\} 42/);
+  assert.match(tf, /yaklog_user_prompt_total\{agent_id="test-agent-1",session_id="sess-A",has_tool_calls="false"\} 1/);
+  assert.match(tf, /yaklog_user_prompt_char_length_sum\{agent_id="test-agent-1",session_id="sess-A",has_tool_calls="false"\} 42/);
 });
 
 test('POST /user-prompt: counter increments + char_sum aggregates', async () => {
@@ -50,8 +50,8 @@ test('POST /user-prompt: counter increments + char_sum aggregates', async () => 
   await request(app).post(URL).set('Authorization', AUTH)
     .send({ agent_id: 'a2', session_id: 's1', prompt_char_length: 60, has_tool_calls: false });
   const tf = fs.readFileSync(path.join(textfileDir, 'user-prompts.prom'), 'utf-8');
-  assert.match(tf, /plexus_user_prompt_total\{agent_id="a2",session_id="s1",has_tool_calls="false"\} 3/);
-  assert.match(tf, /plexus_user_prompt_char_length_sum\{agent_id="a2",session_id="s1",has_tool_calls="false"\} 100/);
+  assert.match(tf, /yaklog_user_prompt_total\{agent_id="a2",session_id="s1",has_tool_calls="false"\} 3/);
+  assert.match(tf, /yaklog_user_prompt_char_length_sum\{agent_id="a2",session_id="s1",has_tool_calls="false"\} 100/);
 });
 
 test('POST /user-prompt: has_tool_calls partitions counter', async () => {
@@ -60,8 +60,8 @@ test('POST /user-prompt: has_tool_calls partitions counter', async () => {
   await request(app).post(URL).set('Authorization', AUTH)
     .send({ agent_id: 'a3', session_id: 's1', prompt_char_length: 50, has_tool_calls: true });
   const tf = fs.readFileSync(path.join(textfileDir, 'user-prompts.prom'), 'utf-8');
-  assert.match(tf, /plexus_user_prompt_total\{agent_id="a3",session_id="s1",has_tool_calls="false"\} 1/);
-  assert.match(tf, /plexus_user_prompt_total\{agent_id="a3",session_id="s1",has_tool_calls="true"\} 1/);
+  assert.match(tf, /yaklog_user_prompt_total\{agent_id="a3",session_id="s1",has_tool_calls="false"\} 1/);
+  assert.match(tf, /yaklog_user_prompt_total\{agent_id="a3",session_id="s1",has_tool_calls="true"\} 1/);
 });
 
 test('POST /user-prompt: missing agent_id → 400', async () => {
@@ -94,7 +94,7 @@ test('POST /user-prompt: session_id optional (empty session works)', async () =>
     .send({ agent_id: 'no-session-agent', prompt_char_length: 5 });
   assert.equal(res.status, 201);
   const tf = fs.readFileSync(path.join(textfileDir, 'user-prompts.prom'), 'utf-8');
-  assert.match(tf, /plexus_user_prompt_total\{agent_id="no-session-agent",session_id="",has_tool_calls="false"\} 1/);
+  assert.match(tf, /yaklog_user_prompt_total\{agent_id="no-session-agent",session_id="",has_tool_calls="false"\} 1/);
 });
 
 test('POST /user-prompt: prom textfile is atomic (no .tmp left behind)', async () => {
@@ -210,8 +210,8 @@ test('writeBrowserPerfTextfile: emits Prom metric lines per callsite', async () 
   });
   instrumentRoutes.__writeBrowserPerfTextfile();
   const tf = fs.readFileSync(path.join(textfileDir, 'browser-perf.prom'), 'utf-8');
-  assert.match(tf, /plexus_browser_perf_p50_seconds\{callsite="tf\.test"\}/);
-  assert.match(tf, /plexus_browser_perf_p95_seconds\{callsite="tf\.test"\}/);
-  assert.match(tf, /plexus_browser_perf_p99_seconds\{callsite="tf\.test"\}/);
-  assert.match(tf, /plexus_browser_perf_count\{callsite="tf\.test"\} 2/);
+  assert.match(tf, /yaklog_browser_perf_p50_seconds\{callsite="tf\.test"\}/);
+  assert.match(tf, /yaklog_browser_perf_p95_seconds\{callsite="tf\.test"\}/);
+  assert.match(tf, /yaklog_browser_perf_p99_seconds\{callsite="tf\.test"\}/);
+  assert.match(tf, /yaklog_browser_perf_count\{callsite="tf\.test"\} 2/);
 });

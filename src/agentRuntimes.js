@@ -1,8 +1,8 @@
 // Per-agent runtime registry (hand-curated fallback).
 //
-// Frontend prefers OTel-derived runtime when an agent emits Plexus telemetry
+// Frontend prefers OTel-derived runtime when an agent emits Yaklog telemetry
 // (`service_name='claude-code'` → claude_code, `service_name='gemini-cli'` →
-// gemini). For agents that don't emit Plexus telemetry (Codex agents like
+// gemini). For agents that don't emit Yaklog telemetry (Codex agents like
 // techmark, or any agent pre-Path-A onboarding) we fall back to this map.
 //
 // Default: 'claude_code' (covers the whole CC cluster without explicit entry).

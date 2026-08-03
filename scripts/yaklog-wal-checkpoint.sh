@@ -45,13 +45,13 @@ fi
 mkdir -p "$TEXTFILE_DIR"
 
 # CP14-X (parch #10175 Q3 + secops #10172 condition D): checkpoint BOTH
-# yaklog.db AND plexus-secure.db so the new substrate-canon class doesn't
+# yaklog.db AND yaklog-secure.db so the new substrate-canon class doesn't
 # accumulate unmanaged WAL (per feedback_yaklog_load_cascade_recovery_requires_restart_plus_wal_checkpoint).
 # Both fires write to the same Prom textfile (each overwrites the last; the
 # metrics are point-in-time snapshots, sister-shape to existing pattern).
 # A future micro-cycle could split into per-db textfile if per-db retention
 # matters; for now operator-tier discipline reads both via separate cron firings.
-DBS_TO_CHECKPOINT="${DBS_TO_CHECKPOINT:-yaklog plexus-secure}"
+DBS_TO_CHECKPOINT="${DBS_TO_CHECKPOINT:-yaklog yaklog-secure}"
 
 # Aggregated metrics across all dbs
 TOTAL_ELAPSED_MS=0

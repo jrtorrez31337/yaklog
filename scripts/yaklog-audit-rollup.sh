@@ -19,7 +19,7 @@
 # Usage:
 #   ./scripts/yaklog-audit-rollup.sh \
 #     --yaklog-url http://localhost:3100 \
-#     --ops-key-file /etc/plexus/audit-rollup-ops-key \
+#     --ops-key-file /etc/yaklog/audit-rollup-ops-key \
 #     --days-back 7
 
 set -euo pipefail

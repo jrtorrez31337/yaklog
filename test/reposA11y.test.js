@@ -1,4 +1,4 @@
-// CP17.B Repos manage-form submit-button contrast (RF2) — plexus-ui-agent (parch #11812).
+// CP17.B Repos manage-form submit-button contrast (RF2) — yaklog-ui-agent (parch #11812).
 //
 // RF2-only subset: RF1 (heatmap cell a11y) is canonically yaklog-dev's role='button'
 // interactive fix at d77f5d2 (pairs with the CP17.C drill-in modal). This branch

@@ -1,0 +1,115 @@
+# yaklog-install docker-compose — portable Yaklog stack.
+#
+# Per Task #284 / PLAN-YAKLOG-INSTALL-BUNDLE.md. Sister-shape
+# docker-compose.demo.yml (Task #278) but fully env-driven for
+# multi-instance / arbitrary-port deployments.
+#
+# All ${VARS} come from the .env file produced by install.sh from
+# templates/env.tmpl. Defaults are demo-canonical.
+#
+# Isolation: fresh SQLite / fresh tokens / fresh OTel collector / fresh
+# Prom scrape / fresh MinIO buckets. VM-level network isolation is the
+# security boundary — do NOT expose OTLP receivers or MinIO off-host.
+
+services:
+  yaklog:
+    image: yaklog:latest
+    container_name: ${INSTANCE_NAME:-yaklog}
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "${YAKLOG_BIND_IP:-0.0.0.0}:${DASHBOARD_PORT:-3100}:3100"
+    volumes:
+      - yaklog_data:/data
+      # GitHub PAT mount (optional): operator places PAT at pat/github-pat
+      # mode 0600 root:root + sets GITHUB_PAT_FILE=/pat/github-pat in .env.
+      # :ro mount = never writable from inside.
+      - ./pat:/pat:ro
+
+  yaklog-otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.112.0
+    container_name: ${INSTANCE_NAME:-yaklog}-otel-collector
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./otel/collector-config.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      - "${YAKLOG_BIND_IP:-0.0.0.0}:${OTLP_GRPC_PORT:-4327}:4317"
+      - "${YAKLOG_BIND_IP:-0.0.0.0}:${OTLP_HTTP_PORT:-4328}:4318"
+      - "${YAKLOG_BIND_IP:-127.0.0.1}:${OTEL_HEALTH_PORT:-13134}:13133"
+
+  yaklog-prometheus:
+    image: prom/prometheus:v2.55.0
+    container_name: ${INSTANCE_NAME:-yaklog}-prometheus
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --web.console.libraries=/usr/share/prometheus/console_libraries
+      - --web.console.templates=/usr/share/prometheus/consoles
+      - --web.enable-lifecycle
+    volumes:
+      - ./otel/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - yaklog_prom_data:/prometheus
+    ports:
+      - "${YAKLOG_BIND_IP:-127.0.0.1}:${PROM_PORT:-9090}:9090"
+    depends_on:
+      yaklog-otel-collector:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+
+  yaklog-grafana:
+    image: grafana/grafana:11.6.0
+    container_name: ${INSTANCE_NAME:-yaklog}-grafana
+    restart: unless-stopped
+    env_file:
+      - ./yaklog-grafana.env
+    environment:
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_INSTALL_PLUGINS: ""
+    volumes:
+      - yaklog_grafana_data:/var/lib/grafana
+    ports:
+      - "${YAKLOG_BIND_IP:-127.0.0.1}:${GRAFANA_PORT:-3001}:3000"
+    depends_on:
+      yaklog-prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3000/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+
+  yaklog-minio:
+    image: minio/minio:latest
+    container_name: ${INSTANCE_NAME:-yaklog}-minio
+    restart: unless-stopped
+    command: server --console-address ":9001" /data
+    env_file:
+      - ./yaklog-minio.env
+    ports:
+      # 127.0.0.1-bound: MinIO not reachable off-host (isolation posture)
+      - "127.0.0.1:${MINIO_PORT:-9000}:9000"
+      - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - yaklog_minio_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9000/minio/health/live || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  yaklog_data:
+  yaklog_prom_data:
+  yaklog_grafana_data:
+  yaklog_minio_data:

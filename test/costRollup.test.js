@@ -64,7 +64,7 @@ test('rollupDay: single-agent cost + tokens UPSERTed correctly', async () => {
       match: /claude_code_cost_usage_USD_total/,
       response: promVector([
         promSeries({
-          plexus_agent_id: 'agent-a', user_email: 'a@example.com',
+          yaklog_agent_id: 'agent-a', user_email: 'a@example.com',
           organization_id: 'org-1', model: 'claude-opus-4-7',
         }, 1.25),
       ]),
@@ -72,13 +72,13 @@ test('rollupDay: single-agent cost + tokens UPSERTed correctly', async () => {
     {
       match: /claude_code_token_usage_tokens_total/,
       response: promVector([
-        promSeries({ plexus_agent_id: 'agent-a', user_email: 'a@example.com',
+        promSeries({ yaklog_agent_id: 'agent-a', user_email: 'a@example.com',
           organization_id: 'org-1', model: 'claude-opus-4-7', type: 'input' }, 10000),
-        promSeries({ plexus_agent_id: 'agent-a', user_email: 'a@example.com',
+        promSeries({ yaklog_agent_id: 'agent-a', user_email: 'a@example.com',
           organization_id: 'org-1', model: 'claude-opus-4-7', type: 'output' }, 5000),
-        promSeries({ plexus_agent_id: 'agent-a', user_email: 'a@example.com',
+        promSeries({ yaklog_agent_id: 'agent-a', user_email: 'a@example.com',
           organization_id: 'org-1', model: 'claude-opus-4-7', type: 'cacheRead' }, 80000),
-        promSeries({ plexus_agent_id: 'agent-a', user_email: 'a@example.com',
+        promSeries({ yaklog_agent_id: 'agent-a', user_email: 'a@example.com',
           organization_id: 'org-1', model: 'claude-opus-4-7', type: 'cacheCreation' }, 2000),
       ]),
     },
@@ -105,8 +105,8 @@ test('rollupDay: multiple agents → separate rows per dim-tuple', async () => {
     {
       match: /claude_code_cost_usage_USD_total/,
       response: promVector([
-        promSeries({ plexus_agent_id: 'agent-a', user_email: 'a@x.com', model: 'opus' }, 1.0),
-        promSeries({ plexus_agent_id: 'agent-b', user_email: 'b@x.com', model: 'sonnet' }, 0.5),
+        promSeries({ yaklog_agent_id: 'agent-a', user_email: 'a@x.com', model: 'opus' }, 1.0),
+        promSeries({ yaklog_agent_id: 'agent-b', user_email: 'b@x.com', model: 'sonnet' }, 0.5),
       ]),
     },
     { match: /claude_code_token_usage_tokens_total/, response: promVector([]) },
@@ -129,7 +129,7 @@ test('rollupDay: re-run for same date REPLACES (UPSERT idempotent)', async () =>
   _mockResponses = [
     {
       match: /claude_code_cost_usage_USD_total/,
-      response: promVector([promSeries({ plexus_agent_id: 'agent-c', model: 'opus' }, 2.0)]),
+      response: promVector([promSeries({ yaklog_agent_id: 'agent-c', model: 'opus' }, 2.0)]),
     },
     { match: /claude_code_token_usage_tokens_total/, response: promVector([]) },
   ];
@@ -141,7 +141,7 @@ test('rollupDay: re-run for same date REPLACES (UPSERT idempotent)', async () =>
   _mockResponses = [
     {
       match: /claude_code_cost_usage_USD_total/,
-      response: promVector([promSeries({ plexus_agent_id: 'agent-c', model: 'opus' }, 3.0)]),
+      response: promVector([promSeries({ yaklog_agent_id: 'agent-c', model: 'opus' }, 3.0)]),
     },
     { match: /claude_code_token_usage_tokens_total/, response: promVector([]) },
   ];
@@ -156,20 +156,20 @@ test('rollupDay: re-run for same date REPLACES (UPSERT idempotent)', async () =>
 test('rollupDay: operator tags from cost_dimension_tags table get applied', async () => {
   upsertCostDimensionTags({
     agent_id: 'agent-d',
-    cost_center: 'eng-ops', project_tag: 'plexus',
+    cost_center: 'eng-ops', project_tag: 'yaklog',
     environment_tier: 'prod', billable_flag: 1,
   });
   _mockResponses = [
     {
       match: /claude_code_cost_usage_USD_total/,
-      response: promVector([promSeries({ plexus_agent_id: 'agent-d', model: 'opus' }, 1.0)]),
+      response: promVector([promSeries({ yaklog_agent_id: 'agent-d', model: 'opus' }, 1.0)]),
     },
     { match: /claude_code_token_usage_tokens_total/, response: promVector([]) },
   ];
   await rollupDay('2026-06-07');
   const rows = getCostByPeriod({ from: '2026-06-07', to: '2026-06-07', agent_id: 'agent-d' });
   assert.equal(rows[0].cost_center, 'eng-ops');
-  assert.equal(rows[0].project_tag, 'plexus');
+  assert.equal(rows[0].project_tag, 'yaklog');
   assert.equal(rows[0].environment_tier, 'prod');
   assert.equal(rows[0].billable_flag, 1);
 });
@@ -178,7 +178,7 @@ test('rollupDay: untagged agent → empty operator-tag defaults', async () => {
   _mockResponses = [
     {
       match: /claude_code_cost_usage_USD_total/,
-      response: promVector([promSeries({ plexus_agent_id: 'agent-untagged', model: 'sonnet' }, 0.1)]),
+      response: promVector([promSeries({ yaklog_agent_id: 'agent-untagged', model: 'sonnet' }, 0.1)]),
     },
     { match: /claude_code_token_usage_tokens_total/, response: promVector([]) },
   ];
@@ -206,7 +206,7 @@ test('rollupDay: token-only series (cost=0 for dim) still UPSERTs token row', as
     {
       match: /claude_code_token_usage_tokens_total/,
       response: promVector([
-        promSeries({ plexus_agent_id: 'agent-tokens-only', model: 'haiku', type: 'input' }, 500),
+        promSeries({ yaklog_agent_id: 'agent-tokens-only', model: 'haiku', type: 'input' }, 500),
       ]),
     },
   ];
@@ -219,12 +219,12 @@ test('rollupDay: token-only series (cost=0 for dim) still UPSERTs token row', as
 
 test('rollupDay: unknown token type → dropped (default-deny)', async () => {
   _mockResponses = [
-    { match: /claude_code_cost_usage_USD_total/, response: promVector([promSeries({ plexus_agent_id: 'agent-x', model: 'opus' }, 1)]) },
+    { match: /claude_code_cost_usage_USD_total/, response: promVector([promSeries({ yaklog_agent_id: 'agent-x', model: 'opus' }, 1)]) },
     {
       match: /claude_code_token_usage_tokens_total/,
       response: promVector([
-        promSeries({ plexus_agent_id: 'agent-x', model: 'opus', type: 'input' }, 100),
-        promSeries({ plexus_agent_id: 'agent-x', model: 'opus', type: 'mystery-future-type' }, 99999),
+        promSeries({ yaklog_agent_id: 'agent-x', model: 'opus', type: 'input' }, 100),
+        promSeries({ yaklog_agent_id: 'agent-x', model: 'opus', type: 'mystery-future-type' }, 99999),
       ]),
     },
   ];
@@ -272,15 +272,15 @@ test('rollupDay CP11.x.1: codex-only tokens → row inserted with vendor=OpenAI'
     { match: /claude_code_cost_usage_USD_total/, response: promVector([]) },
     { match: /claude_code_token_usage_tokens_total/, response: promVector([]) },
     {
-      match: /plexus_tokens_input_total/,
+      match: /yaklog_tokens_input_total/,
       response: promVector([
-        promSeries({ plexus_agent_id: 'aieng3-agent', plexus_runtime_class: 'codex-cli' }, 12345),
+        promSeries({ yaklog_agent_id: 'aieng3-agent', yaklog_runtime_class: 'codex-cli' }, 12345),
       ]),
     },
     {
-      match: /plexus_tokens_output_total/,
+      match: /yaklog_tokens_output_total/,
       response: promVector([
-        promSeries({ plexus_agent_id: 'aieng3-agent', plexus_runtime_class: 'codex-cli' }, 6789),
+        promSeries({ yaklog_agent_id: 'aieng3-agent', yaklog_runtime_class: 'codex-cli' }, 6789),
       ]),
     },
   ];
@@ -300,15 +300,15 @@ test('rollupDay CP11.x.1: gemini-only tokens → row inserted with vendor=Google
     { match: /claude_code_cost_usage_USD_total/, response: promVector([]) },
     { match: /claude_code_token_usage_tokens_total/, response: promVector([]) },
     {
-      match: /plexus_tokens_input_total/,
+      match: /yaklog_tokens_input_total/,
       response: promVector([
-        promSeries({ plexus_agent_id: 'gemini-agent', plexus_runtime_class: 'gemini-cli' }, 5000),
+        promSeries({ yaklog_agent_id: 'gemini-agent', yaklog_runtime_class: 'gemini-cli' }, 5000),
       ]),
     },
     {
-      match: /plexus_tokens_output_total/,
+      match: /yaklog_tokens_output_total/,
       response: promVector([
-        promSeries({ plexus_agent_id: 'gemini-agent', plexus_runtime_class: 'gemini-cli' }, 2500),
+        promSeries({ yaklog_agent_id: 'gemini-agent', yaklog_runtime_class: 'gemini-cli' }, 2500),
       ]),
     },
   ];
@@ -327,26 +327,26 @@ test('rollupDay CP11.x.1: CC + codex mixed → both vendors land in distinct row
     {
       match: /claude_code_cost_usage_USD_total/,
       response: promVector([
-        promSeries({ plexus_agent_id: 'cc-agent', model: 'claude-opus-4-7' }, 2.5),
+        promSeries({ yaklog_agent_id: 'cc-agent', model: 'claude-opus-4-7' }, 2.5),
       ]),
     },
     {
       match: /claude_code_token_usage_tokens_total/,
       response: promVector([
-        promSeries({ plexus_agent_id: 'cc-agent', model: 'claude-opus-4-7', type: 'input' }, 10000),
-        promSeries({ plexus_agent_id: 'cc-agent', model: 'claude-opus-4-7', type: 'output' }, 4000),
+        promSeries({ yaklog_agent_id: 'cc-agent', model: 'claude-opus-4-7', type: 'input' }, 10000),
+        promSeries({ yaklog_agent_id: 'cc-agent', model: 'claude-opus-4-7', type: 'output' }, 4000),
       ]),
     },
     {
-      match: /plexus_tokens_input_total/,
+      match: /yaklog_tokens_input_total/,
       response: promVector([
-        promSeries({ plexus_agent_id: 'codex-agent', plexus_runtime_class: 'codex-cli' }, 8000),
+        promSeries({ yaklog_agent_id: 'codex-agent', yaklog_runtime_class: 'codex-cli' }, 8000),
       ]),
     },
     {
-      match: /plexus_tokens_output_total/,
+      match: /yaklog_tokens_output_total/,
       response: promVector([
-        promSeries({ plexus_agent_id: 'codex-agent', plexus_runtime_class: 'codex-cli' }, 3000),
+        promSeries({ yaklog_agent_id: 'codex-agent', yaklog_runtime_class: 'codex-cli' }, 3000),
       ]),
     },
   ];
@@ -362,39 +362,39 @@ test('rollupDay CP11.x.1: CC + codex mixed → both vendors land in distinct row
   assert.equal(cxRow.tokens_input, 8000);
 });
 
-test('rollupDay CP11.x.1: unknown plexus_runtime_class → row skipped (default-deny)', async () => {
+test('rollupDay CP11.x.1: unknown yaklog_runtime_class → row skipped (default-deny)', async () => {
   _mockResponses = [
     { match: /claude_code_cost_usage_USD_total/, response: promVector([]) },
     { match: /claude_code_token_usage_tokens_total/, response: promVector([]) },
     {
-      match: /plexus_tokens_input_total/,
+      match: /yaklog_tokens_input_total/,
       response: promVector([
-        promSeries({ plexus_agent_id: 'mystery-agent', plexus_runtime_class: 'future-runtime-9' }, 1000),
+        promSeries({ yaklog_agent_id: 'mystery-agent', yaklog_runtime_class: 'future-runtime-9' }, 1000),
       ]),
     },
-    { match: /plexus_tokens_output_total/, response: promVector([]) },
+    { match: /yaklog_tokens_output_total/, response: promVector([]) },
   ];
   const result = await rollupDay('2026-06-18');
   // Mystery runtime IS rolled up but with vendor='Other' (we don't drop;
   // RUNTIME_CLASS_TO_VENDOR falls back to 'Other' for unknown classes).
-  // The skip-rule is for EMPTY plexus_runtime_class (no value at all).
+  // The skip-rule is for EMPTY yaklog_runtime_class (no value at all).
   assert.equal(result.rows, 1);
   const rows = getCostByPeriod({ from: '2026-06-18', to: '2026-06-18', agent_id: 'mystery-agent' });
   assert.equal(rows[0].vendor, 'Other', 'unknown runtime_class falls through to Other vendor');
   assert.equal(rows[0].model, 'future-runtime-9');
 });
 
-test('rollupDay CP11.x.1: empty plexus_runtime_class → series skipped (hygiene)', async () => {
+test('rollupDay CP11.x.1: empty yaklog_runtime_class → series skipped (hygiene)', async () => {
   _mockResponses = [
     { match: /claude_code_cost_usage_USD_total/, response: promVector([]) },
     { match: /claude_code_token_usage_tokens_total/, response: promVector([]) },
     {
-      match: /plexus_tokens_input_total/,
+      match: /yaklog_tokens_input_total/,
       response: promVector([
-        promSeries({ plexus_agent_id: 'orphan-agent' /* no plexus_runtime_class */ }, 999),
+        promSeries({ yaklog_agent_id: 'orphan-agent' /* no yaklog_runtime_class */ }, 999),
       ]),
     },
-    { match: /plexus_tokens_output_total/, response: promVector([]) },
+    { match: /yaklog_tokens_output_total/, response: promVector([]) },
   ];
   const result = await rollupDay('2026-06-19');
   assert.equal(result.rows, 0, 'series with empty runtime_class is skipped');
@@ -405,15 +405,15 @@ test('rollupDay CP11.x.1: multi-runtime query failure → CC rollup NOT aborted 
     {
       match: /claude_code_cost_usage_USD_total/,
       response: promVector([
-        promSeries({ plexus_agent_id: 'survivor-agent', model: 'claude-opus-4-7' }, 1.0),
+        promSeries({ yaklog_agent_id: 'survivor-agent', model: 'claude-opus-4-7' }, 1.0),
       ]),
     },
     { match: /claude_code_token_usage_tokens_total/, response: promVector([]) },
     {
-      match: /plexus_tokens_input_total/,
+      match: /yaklog_tokens_input_total/,
       response: { status: 'error', error: 'simulated multi-runtime endpoint down' },
     },
-    { match: /plexus_tokens_output_total/, response: promVector([]) },
+    { match: /yaklog_tokens_output_total/, response: promVector([]) },
   ];
   const result = await rollupDay('2026-06-20');
   assert.equal(result.rows, 1, 'CC row still landed despite multi-runtime input failure');

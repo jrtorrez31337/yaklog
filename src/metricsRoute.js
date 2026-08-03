@@ -1,7 +1,7 @@
 // CP16-prep observability migration: GET /api/v1/metrics endpoint per parch #10166
 // ratify of Option 2c. Mounted via app.use('/api/v1/metrics', auth, ...) so the
 // global auth middleware applies (per secops #10164 corrected Q2: yaklog:3100 is
-// host-public; auth REQUIRED). Prometheus scrape config (in plexus-prometheus's
+// host-public; auth REQUIRED). Prometheus scrape config (in yaklog-prometheus's
 // prometheus.yml) provides a scoped bearer per ssw-devops Gate (2) install work.
 //
 // Returns Prom text-format from the custom Registry in ./metrics — NOT the

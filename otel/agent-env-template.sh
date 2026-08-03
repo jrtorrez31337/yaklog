@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Plexus per-agent OTel opt-in env template — Stage 1.
+# Yaklog per-agent OTel opt-in env template — Stage 1.
 #
 # Copy-paste the BLOCK below into the shell/env that launches `claude` for
 # your agent. Profile C minus TOOL_CONTENT (CC beta-tracing-gated; add later
@@ -14,8 +14,8 @@
 #   ✓ Full API response JSON (OTEL_LOG_RAW_API_BODIES=1)
 #   ✗ Tool input/output bodies in spans (OTEL_LOG_TOOL_CONTENT needs beta-tracing)
 #
-# Privacy posture: this is the FULL enterprise data capture per Plexus
-# positioning. Data lands in the Plexus collector + Prom + Grafana on devel
+# Privacy posture: this is the FULL enterprise data capture per Yaklog
+# positioning. Data lands in the Yaklog collector + Prom + Grafana on devel
 # (~/yaklog otel-stack). Customer data does NOT leave the devel boundary
 # under Stage 1 default config. Data-management mechanism (retention,
 # redaction, access-control) deferred to future workstream w/ s345-agent.
@@ -33,7 +33,7 @@ export OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
 export OTEL_EXPORTER_OTLP_ENDPOINT=http://192.168.122.76:4328
 
 # Reuse your yaklog API token as the OTel Bearer (Plan C Q3 ratify;
-# acceptable trade-off because Plexus collector is in the API trust
+# acceptable trade-off because Yaklog collector is in the API trust
 # boundary). Assumes you have $YAKLOG_TOKEN exported OR a token file
 # at ~/.config/yaklog/token.
 if [[ -z "${YAKLOG_TOKEN:-}" && -r ~/.config/yaklog/token ]]; then
@@ -41,10 +41,10 @@ if [[ -z "${YAKLOG_TOKEN:-}" && -r ~/.config/yaklog/token ]]; then
 fi
 export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer ${YAKLOG_TOKEN}"
 
-# Per-agent identity binding via resource attributes (plexus.agent_id labels
+# Per-agent identity binding via resource attributes (yaklog.agent_id labels
 # every metric/event with your agent_id so Grafana panels can filter).
 # REPLACE <YOUR-AGENT-ID> below with your actual yaklog agent_id.
-export OTEL_RESOURCE_ATTRIBUTES="plexus.agent_id=<YOUR-AGENT-ID>,plexus.cluster_id=ssw-dev,plexus.deployment=devel"
+export OTEL_RESOURCE_ATTRIBUTES="yaklog.agent_id=<YOUR-AGENT-ID>,yaklog.cluster_id=ssw-dev,yaklog.deployment=devel"
 
 # Exporters: metrics + logs to OTLP. Traces deferred (CC beta-tracing gate).
 export OTEL_METRICS_EXPORTER=otlp
@@ -68,8 +68,8 @@ export OTEL_LOGS_EXPORT_INTERVAL=5000      # 5s
 # === END COPY-PASTE BLOCK ==============================================
 
 # Verification commands once your CC session has run for ~5min:
-#   Plexus Prom query:
+#   Yaklog Prom query:
 #     curl -s 'http://192.168.122.76:9090/api/v1/query?query=claude_code_token_usage_total' | jq .
-#   Plexus Grafana dashboard:
-#     open http://192.168.122.76:3001/d/plexus-hello-world
-#     (login admin/plexus-stage-1; change in CP4 hardening)
+#   Yaklog Grafana dashboard:
+#     open http://192.168.122.76:3001/d/yaklog-hello-world
+#     (login admin/yaklog-stage-1; change in CP4 hardening)

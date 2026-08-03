@@ -126,8 +126,8 @@
       if (otel) {
         const cls = 'otel-pill ' + otel.kind;
         const tip = otel.kind === 'live'
-          ? `Plexus OTel data observed ${Math.floor(otel.ageS)}s ago — agent has restarted CC since Path A install`
-          : `Plexus OTel data observed but stale (${Math.floor(otel.ageS/60)}m ago) — was emitting but quiet now`;
+          ? `Yaklog OTel data observed ${Math.floor(otel.ageS)}s ago — agent has restarted CC since Path A install`
+          : `Yaklog OTel data observed but stale (${Math.floor(otel.ageS/60)}m ago) — was emitting but quiet now`;
         agentCell.appendChild(el('span', { class: cls, title: tip }, otel.kind === 'live' ? 'OTel' : 'OTel quiet'));
       }
       // v0.5.7.2: Monitor-dead pill. Shown when events_consumer_count===0
@@ -290,7 +290,7 @@
       backoff = POLL_MS;
     } catch (e) {
       setStatus('error', 'unreachable');
-      setBanner('Plexus server unreachable: ' + e.message + ' — retry in ' + (backoff / 1000) + 's');
+      setBanner('Yaklog server unreachable: ' + e.message + ' — retry in ' + (backoff / 1000) + 's');
       backoff = Math.min(backoff * 2, MAX_BACKOFF_MS);
     }
     pollTimer = setTimeout(poll, backoff);
@@ -804,12 +804,12 @@
   setTimeout(() => activateTab(location.hash.slice(1) || 'live'), 0);
 
   // ────────────────────────────────────────────────────────────────────
-  // CP2: PlexusChart — wraps uPlot with template-name + auto-refresh +
+  // CP2: YaklogChart — wraps uPlot with template-name + auto-refresh +
   // Prom-matrix → uPlot data conversion + multi-series legend.
   // ────────────────────────────────────────────────────────────────────
 
   // CP5: chart refresh cadence + lookback now owned server-side by
-  // plexusStreamer.js (which polls Prom + pushes to SSE subscribers).
+  // yaklogStreamer.js (which polls Prom + pushes to SSE subscribers).
   // No client-side polling constants needed anymore.
 
   // CP9.1 (2026-06-01): per-agent color attribution — deterministic + stable
@@ -871,13 +871,13 @@
   function seriesColor(i) { return AGENT_PALETTE[i % 10].hex; }
 
   // Build the human-readable legend label for a Prom series given its metric labels.
-  // 2026-05-25 dedup: when the chart has only ONE distinct plexus_agent_id
+  // 2026-05-25 dedup: when the chart has only ONE distinct yaklog_agent_id
   // across all series, drop the agent prefix (it's the same on every line —
   // pure noise). When multi-agent, keep the prefix for disambiguation. The
   // actual agent_id is always stored in a data attribute on the legend row
   // (via wireChartLegendPopovers) so the popover trigger still works.
   function seriesLabel(metric, otherFields, omitAgentPrefix) {
-    const agent = metric.plexus_agent_id || '(no agent)';
+    const agent = metric.yaklog_agent_id || '(no agent)';
     const tail = (otherFields || [])
       .map(f => metric[f])
       .filter(v => v != null && v !== '')
@@ -910,7 +910,7 @@
 
   // Group a Prom matrix result by the `type` label, mapping the 4 raw types
   // into 3 display buckets, summing values within each bucket at each ts.
-  // `extraGroupKeys` lets per-agent rendering also key on plexus_agent_id
+  // `extraGroupKeys` lets per-agent rendering also key on yaklog_agent_id
   // (so cluster-wide buckets stay distinct from per-agent buckets).
   function bucketResultByType(result, extraGroupKeys = []) {
     if (!result || result.length === 0) return [];
@@ -957,7 +957,7 @@
     const tsIndex = new Map(tsList.map((t, i) => [t, i]));
 
     // 2026-05-25 dedup: detect single-agent case → omit agent prefix on legend.
-    const distinctAgents = new Set(result.map(s => s.metric.plexus_agent_id || '(no agent)'));
+    const distinctAgents = new Set(result.map(s => s.metric.yaklog_agent_id || '(no agent)'));
     const omitAgentPrefix = (distinctAgents.size === 1);
 
     const seriesDefs = [{ label: 'time' }];
@@ -972,9 +972,9 @@
         const parsed = parseFloat(v);
         valuesAligned[tsIndex.get(t)] = Number.isFinite(parsed) ? parsed : null;
       }
-      // CP9.1: prefer per-agent color when series is keyed on plexus_agent_id;
+      // CP9.1: prefer per-agent color when series is keyed on yaklog_agent_id;
       // fall back to index-cycle palette for aggregate / non-agent series.
-      const aid = s.metric && s.metric.plexus_agent_id;
+      const aid = s.metric && s.metric.yaklog_agent_id;
       const stroke = aid ? agentColor(aid).hex : seriesColor(idx);
       seriesDefs.push({
         label: seriesLabel(s.metric, otherFields, omitAgentPrefix),
@@ -990,11 +990,11 @@
     return { data: seriesData, series: seriesDefs, agentIds };
   }
 
-  // CP5 / Stage 2.5: PlexusChart is now push-driven. No more fetch loops.
-  // It registers with PlexusLiveStream (shared EventSource) and renders
+  // CP5 / Stage 2.5: YaklogChart is now push-driven. No more fetch loops.
+  // It registers with YaklogLiveStream (shared EventSource) and renders
   // frames as they arrive. Server sends an initial snapshot on connect +
   // deltas on change.
-  class PlexusChart {
+  class YaklogChart {
     constructor(cardEl, opts) {
       this.cardEl = cardEl;
       this.bodyEl = cardEl.querySelector('.chart-card-body');
@@ -1004,7 +1004,7 @@
       this.valueFmt = opts.valueFmt || ((v) => v.toFixed(3));
       // v0.5.8.1 hook: optional pre-render transform on Prom matrix `result`.
       // Lets per-template logic re-bucket / re-label series (e.g. token type
-      // collapse cacheRead+cacheCreation → cache) without forking PlexusChart.
+      // collapse cacheRead+cacheCreation → cache) without forking YaklogChart.
       // Identity by default.
       this.transformResult = opts.transformResult || ((r) => r);
       // Per-series color override map keyed on a label-extracted bucket
@@ -1031,7 +1031,7 @@
       if (this.uplot) { this.uplot.destroy(); this.uplot = null; }
       this.lastSeriesSig = null;
     }
-    // Called by PlexusLiveStream when a frame for this template arrives.
+    // Called by YaklogLiveStream when a frame for this template arrives.
     onFrame(payload) {
       this.lastFrameMs = Date.now();
       const rawResult = payload.data && payload.data.result;
@@ -1102,12 +1102,12 @@
   }
 
   // ────────────────────────────────────────────────────────────────────
-  // CP5: PlexusLiveStream — single EventSource shared by all Live charts.
+  // CP5: YaklogLiveStream — single EventSource shared by all Live charts.
   // Server pushes "frame" events on change. Client routes by template name
   // to subscribed charts. Replaces N per-chart fetch loops with one push
   // connection.
   // ────────────────────────────────────────────────────────────────────
-  class PlexusLiveStream {
+  class YaklogLiveStream {
     constructor() {
       this.es = null;
       this.subscribers = new Map();   // template-name → [chart, …]
@@ -1129,7 +1129,7 @@
     connect() {
       this.state = 'connecting';
       try {
-        this.es = new EventSource('/api/v1/plexus/public/stream');
+        this.es = new EventSource('/api/v1/yaklog/public/stream');
       } catch (e) {
         this.state = 'error';
         this._scheduleReconnect();
@@ -1145,7 +1145,7 @@
         try { payload = JSON.parse(ev.data); } catch { return; }
         // 2026-05-25: refresh the OTel-presence map BEFORE routing to charts.
         // Even templates a chart doesn't subscribe to contribute agent-id
-        // observations (e.g. session.count carries plexus_agent_id even if
+        // observations (e.g. session.count carries yaklog_agent_id even if
         // no chart on this dashboard cares).
         noteFrameOtelAgents(payload);
         const subs = this.subscribers.get(payload.template);
@@ -1188,10 +1188,10 @@
   }
 
   // CP5: instantiate the shared live stream + register the Live tab charts.
-  const liveStream = new PlexusLiveStream();
+  const liveStream = new YaklogLiveStream();
 
   // 2026-05-25: per-agent OTel-presence tracker. Every incoming SSE frame
-  // carries series with plexus_agent_id labels; populate this map so the
+  // carries series with yaklog_agent_id labels; populate this map so the
   // presence table can show a "live OTel" badge next to agents that are
   // currently emitting (= they restarted CC since the Path A install).
   // Map<agent_id, lastSeenMs>
@@ -1199,7 +1199,7 @@
   // v0.5.8.2: track service_name observed per agent_id so the AgentCard
   // runtime badge can derive runtime from OTel (claude-code | gemini-cli)
   // first, falling back to the server registry only when OTel is silent.
-  // CP12.x.3.1 (2026-06-13): also track plexus.runtime_class resource attr
+  // CP12.x.3.1 (2026-06-13): also track yaklog.runtime_class resource attr
   // per s345-aieng #8539 canonical schema. Prefer runtime_class over
   // service_name when both present (runtime_class is the cluster-canonical
   // attribute; service_name is the OTel SDK built-in). Cluster substrate
@@ -1213,7 +1213,7 @@
     // CP12.x.3 (2026-06-13; renamed from CP14.1 per Jon-direct premature-
     // chapter-numbering correction while CP13 unratified): codex-cli mapping
     // so aieng3 + future codex-class agents resolve to the codex runtime
-    // badge when they emit OTel with PLEXUS_SERVICE_NAME=codex-cli. Without
+    // badge when they emit OTel with YAKLOG_SERVICE_NAME=codex-cli. Without
     // this entry the OTel-first resolution returned null and silently fell
     // back to the registry — mostly a no-op because registry already has
     // aieng3-agent → codex, but it meant the OTel-first preference was
@@ -1226,14 +1226,14 @@
     const result = payload && payload.data && payload.data.result;
     if (!result) return;
     for (const s of result) {
-      const id = s.metric && s.metric.plexus_agent_id;
+      const id = s.metric && s.metric.yaklog_agent_id;
       if (id) otelLastSeen.set(id, now);
-      // CP12.x.3.1: prefer plexus_runtime_class resource attr over service_name.
+      // CP12.x.3.1: prefer yaklog_runtime_class resource attr over service_name.
       // OTel resource attrs surface as Prom labels with dots converted to
-      // underscores (plexus.runtime_class → plexus_runtime_class). Falls
+      // underscores (yaklog.runtime_class → yaklog_runtime_class). Falls
       // back to service_name when the canonical attr isn't set — defends
       // against agents whose OTel emit hasn't been Layer-2-aligned yet.
-      const cls = s.metric && s.metric.plexus_runtime_class;
+      const cls = s.metric && s.metric.yaklog_runtime_class;
       const svc = s.metric && s.metric.service_name;
       const observed = cls || svc;
       if (id && observed) otelServiceByAgent.set(id, observed);
@@ -1306,7 +1306,7 @@
   // from "agent · model · type" labels (first segment).
   // 2026-05-25 dedup: agent_id is no longer text-parseable from the legend
   // label (single-agent charts omit the prefix). Use the agentIds array
-  // stashed on the PlexusChart instance during render.
+  // stashed on the YaklogChart instance during render.
   function wireChartLegendPopovers(chart) {
     if (!chart || !chart.uplot || !chart.uplot.root) return;
     const legendRows = chart.uplot.root.querySelectorAll('.u-legend .u-series th');
@@ -1325,14 +1325,14 @@
   }
   // CP5: wire popover triggers after each onFrame instead of after each
   // refresh (refresh is gone in the push model).
-  const _origOnFrame = PlexusChart.prototype.onFrame;
-  PlexusChart.prototype.onFrame = function (payload) {
+  const _origOnFrame = YaklogChart.prototype.onFrame;
+  YaklogChart.prototype.onFrame = function (payload) {
     // Task #264 Phase 2.1 (Jon-direct 2026-07-03): in non-live mode, ignore
     // SSE frame updates so the historical snapshot rendered via
     // setHistoricalWindow() isn't clobbered by continuing SSE deltas.
     // Cache last SSE frame so return-to-live can restore without waiting
     // for the next server-side frame emission (which may lag ~15s per
-    // plexusStreamer poll cadence).
+    // yaklogStreamer poll cadence).
     if (payload && payload.data) this._lastSseFrame = payload;
     if (!window.isDashboardLive || window.isDashboardLive()) {
       _origOnFrame.call(this, payload);
@@ -1343,7 +1343,7 @@
   // same onFrame pipeline. Uses existing /query_range endpoint sister-shape
   // fetchAgentSeries (dashboard.js:1624) but preserves the full multi-series
   // result (not filtered to one agent, since these are cluster-level charts).
-  PlexusChart.prototype.setHistoricalWindow = async function (windowS) {
+  YaklogChart.prototype.setHistoricalWindow = async function (windowS) {
     if (!windowS || !Number.isFinite(windowS)) return;
     const to = Math.floor(Date.now() / 1000);
     const from = to - windowS;
@@ -1358,7 +1358,7 @@
     });
     this.setStatus(`loading ${windowS}s window…`);
     try {
-      const res = await fetch('/api/v1/plexus/public/query_range?' + qs.toString(), { cache: 'no-store' });
+      const res = await fetch('/api/v1/yaklog/public/query_range?' + qs.toString(), { cache: 'no-store' });
       if (!res.ok) {
         this.setStatus(`historical fetch: HTTP ${res.status}`, true);
         return;
@@ -1385,7 +1385,7 @@
   // frame. If no SSE frame has arrived yet (chart lifecycle: created but
   // stream hasn't emitted), no-op — the next SSE frame will render normally
   // via the (now-passing) onFrame gate.
-  PlexusChart.prototype.restoreLiveWindow = function () {
+  YaklogChart.prototype.restoreLiveWindow = function () {
     if (this._lastSseFrame) {
       _origOnFrame.call(this, this._lastSseFrame);
       wireChartLegendPopovers(this);
@@ -1398,7 +1398,7 @@
   // divider's "N agents · M emitting OTel" meta instead, freeing up
   // top-row real estate.
   const charts = [
-    new PlexusChart(document.querySelector('[data-chart="tokens"]'), {
+    new YaklogChart(document.querySelector('[data-chart="tokens"]'), {
       template: 'tokens.rate.cluster',
       // v0.5.8.1: type-broken-out cluster token rate. Backend returns 4 raw
       // types (input/output/cacheRead/cacheCreation); transformResult buckets
@@ -1426,7 +1426,7 @@
     }
   });
   // Initial-load hash may have `?range=<preset>` → render historical on mount.
-  // Deferred one tick so PlexusChart lifecycle + tabs activate first.
+  // Deferred one tick so YaklogChart lifecycle + tabs activate first.
   setTimeout(() => {
     if (window.getDashboardTimeWindow) {
       const win = window.getDashboardTimeWindow();
@@ -1545,7 +1545,7 @@
     // "(unknown)" as if it were an account is worse than showing an empty
     // state per Jon-flag.
     const labelFor = (m) => acctState.by === 'agent'
-      ? m.plexus_agent_id
+      ? m.yaklog_agent_id
       : (m.user_email || m.user_account_id);
     const byName = new Map();
     for (const s of (result || [])) {
@@ -1645,7 +1645,7 @@
   async function refreshAcctFromPersisted() {
     for (const [period, field] of [['today', 'today'], ['7d', 'sevend'], ['mtd', 'mtd']]) {
       try {
-        const r = await fetch(`/api/v1/plexus/public/cost/summary?period=${period}`);
+        const r = await fetch(`/api/v1/yaklog/public/cost/summary?period=${period}`);
         if (!r.ok) continue;
         const j = await r.json();
         if (typeof j.value_usd === 'number') {
@@ -1662,8 +1662,8 @@
   // Periodic refresh every 60s — picks up intraday-rollup updates
   setInterval(refreshAcctFromPersisted, 60_000);
   // Hook the SSE listener so accounting frames flow into the card.
-  const _origConnect = PlexusLiveStream.prototype.connect;
-  PlexusLiveStream.prototype.connect = function () {
+  const _origConnect = YaklogLiveStream.prototype.connect;
+  YaklogLiveStream.prototype.connect = function () {
     _origConnect.call(this);
     if (!this.es) return;
     this.es.addEventListener('frame', (ev) => {
@@ -1758,7 +1758,7 @@
   }
   // CP6.5: scale rate-window with lookback so sparse-usage agents still
   // show non-zero buckets. Allowlist (RATE_WINDOW_ALLOWLIST in
-  // plexusRoutes) caps at '1h'; 24h + 7d both use 1h.
+  // yaklogRoutes) caps at '1h'; 24h + 7d both use 1h.
   function pickRateWindow(ws) {
     if (ws <= 3600)   return '5m';
     if (ws <= 21600)  return '15m';
@@ -1790,9 +1790,9 @@
   // The accounting connect-monkeypatch already installed an event listener;
   // we need to ALSO get cluster.cost.topAgents + the per-agent rate frames
   // to flow into per-card state. The cleanest hook is to extend the existing
-  // PlexusLiveStream.connect monkey-patch.
-  const _origConnectForCards = PlexusLiveStream.prototype.connect;
-  PlexusLiveStream.prototype.connect = function () {
+  // YaklogLiveStream.connect monkey-patch.
+  const _origConnectForCards = YaklogLiveStream.prototype.connect;
+  YaklogLiveStream.prototype.connect = function () {
     _origConnectForCards.call(this);
     if (!this.es) return;
     this.es.addEventListener('frame', (ev) => {
@@ -1800,10 +1800,10 @@
     });
   };
 
-  // Filter Prom matrix-series to those whose plexus_agent_id matches.
+  // Filter Prom matrix-series to those whose yaklog_agent_id matches.
   function seriesForAgent(payload, agentId) {
     if (!payload || !payload.data || !payload.data.result) return [];
-    return payload.data.result.filter(s => s.metric && s.metric.plexus_agent_id === agentId);
+    return payload.data.result.filter(s => s.metric && s.metric.yaklog_agent_id === agentId);
   }
 
   // CP6.5: on-demand range fetch for AgentCard chart views when the
@@ -1822,11 +1822,11 @@
       const step = pickStep(windowS);
       const window = pickRateWindow(windowS);
       const qs = new URLSearchParams({ template, window, from: String(from), to: String(to), step });
-      const res = await fetch('/api/v1/plexus/public/query_range?' + qs.toString(), { cache: 'no-store' });
+      const res = await fetch('/api/v1/yaklog/public/query_range?' + qs.toString(), { cache: 'no-store' });
       if (!res.ok) return [];
       const body = await res.json();
       const results = (body.data && body.data.result) || [];
-      const series = results.filter(s => s.metric && s.metric.plexus_agent_id === agentId);
+      const series = results.filter(s => s.metric && s.metric.yaklog_agent_id === agentId);
       cardsFetchCache.set(cacheKey, { series, ts: Date.now() });
       return series;
     } catch (e) { return []; }
@@ -1920,7 +1920,7 @@
     }, data, hostEl);
   }
 
-  // Tiny inline chart helper (smaller than PlexusChart; no legend; fixed height).
+  // Tiny inline chart helper (smaller than YaklogChart; no legend; fixed height).
   function tinyChart(hostEl, data, opts = {}) {
     if (hostEl._uplot) { hostEl._uplot.destroy(); hostEl._uplot = null; }
     clearChildren(hostEl);
@@ -2116,7 +2116,7 @@
       const otel = agentOtelStatus(this.agentId);
       if (otel) {
         const tip = otel.kind === 'live'
-          ? `Plexus OTel data observed ${otel.ageS}s ago`
+          ? `Yaklog OTel data observed ${otel.ageS}s ago`
           : `OTel data stale (${Math.floor(otel.ageS/60)}m ago)`;
         pills.appendChild(el('span', { class: 'otel-pill ' + otel.kind, title: tip },
           otel.kind === 'live' ? 'OTel' : 'OTel quiet'));
@@ -2195,7 +2195,7 @@
         // CP7.3: agent's daemon is pre-version-reporting (pre-v0.5.7.4) so we
         // can't compare against canon. Surface a distinct "stale daemon" pill
         // so this cohort gets the upgrade nag — they were silent under CP7.2.
-        const tip = `daemon is pre-v${r.canonical_daemon_version || '0.5.7.4'} (pre-version-reporting); re-pull the Plexus daemon from /update`;
+        const tip = `daemon is pre-v${r.canonical_daemon_version || '0.5.7.4'} (pre-version-reporting); re-pull the Yaklog daemon from /update`;
         pills.appendChild(el('span', {
           class: 'stale-pill',
           title: tip,
@@ -2214,8 +2214,8 @@
       }, '✉ DM');
       dmBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        if (window.PlexusOperatorDM) {
-          window.PlexusOperatorDM.openCompose(this.agentId);
+        if (window.YaklogOperatorDM) {
+          window.YaklogOperatorDM.openCompose(this.agentId);
         }
       });
       this.headEl.appendChild(dmBtn);
@@ -2322,7 +2322,7 @@
       let cum = null;
       const cumPayload = perAgentFrames.costCumByAgent;
       if (cumPayload && cumPayload.data && cumPayload.data.result) {
-        const match = cumPayload.data.result.find(s => s.metric.plexus_agent_id === this.agentId);
+        const match = cumPayload.data.result.find(s => s.metric.yaklog_agent_id === this.agentId);
         if (match) cum = parseFloat(match.value[1]);
       }
       this.bodyEl.appendChild(el('div', { class: 'cum' },
@@ -2369,7 +2369,7 @@
       this.identityFetchPromise = (async () => {
         try {
           const qs = new URLSearchParams({ template: 'agent.identity.byAgentId', agent_id: this.agentId });
-          const res = await fetch('/api/v1/plexus/public/query?' + qs.toString(), { cache: 'no-store' });
+          const res = await fetch('/api/v1/yaklog/public/query?' + qs.toString(), { cache: 'no-store' });
           if (res.ok) {
             const respBody = await res.json();
             const results = respBody.data && respBody.data.result;
@@ -2399,11 +2399,11 @@
         const runtime = resolveRuntime(this.agentId, this.presence);
         let msg;
         if (runtime === 'codex') {
-          msg = 'OpenAI Codex doesn’t emit Plexus telemetry (Anthropic OTel-only)';
+          msg = 'OpenAI Codex doesn’t emit Yaklog telemetry (Anthropic OTel-only)';
         } else if (runtime === 'gemini') {
           msg = 'no Gemini identity data in last 24h — session not yet run, or daemon offline';
         } else {
-          msg = 'no OTel data in last 24h — agent not opted in to Plexus, or no CC sessions yet';
+          msg = 'no OTel data in last 24h — agent not opted in to Yaklog, or no CC sessions yet';
         }
         this.bodyEl.appendChild(el('div', { class: 'view-empty' }, msg));
         return;
@@ -2411,7 +2411,7 @@
       // CP6.10: Identity = pure Anthropic-account identity. Runtime
       // fingerprint (CC version / os / arch / terminal / service_name /
       // query_source) moved to the Runtime view.
-      const identitySectionIds = ['plexus', 'anthropic'];
+      const identitySectionIds = ['yaklog', 'anthropic'];
       for (const sec of POPOVER_SECTIONS.filter(s => identitySectionIds.includes(s.id))) {
         const fields = POPOVER_IDENTITY_FIELDS.filter(f => f.section === sec.id && metric[f.key] != null);
         if (!fields.length) continue;
@@ -2443,7 +2443,7 @@
     //                            Identity per Jon-direct 2026-05-26)
     //   3. CC session            cwd / model / source / current_tool /
     //                            last_tool_name / last_tool_status
-    //   4. Plexus wire state     events_consumer_count / sse_connected /
+    //   4. Yaklog wire state     events_consumer_count / sse_connected /
     //                            cursor_position / last_hook_at /
     //                            last_state_change_at
     //
@@ -2507,7 +2507,7 @@
         const runtime = resolveRuntime(this.agentId, this.presence);
         let msg;
         if (runtime === 'codex') {
-          msg = 'OpenAI Codex doesn’t emit Plexus telemetry';
+          msg = 'OpenAI Codex doesn’t emit Yaklog telemetry';
         } else if (runtime === 'gemini') {
           msg = 'no Gemini OTel observations in last 24h';
         } else {
@@ -2551,8 +2551,8 @@
       }
       this.bodyEl.appendChild(sessDl);
 
-      // ── Section 4: Plexus wire state ─────────────────────────
-      this.bodyEl.appendChild(el('h4', null, 'Plexus wire state'));
+      // ── Section 4: Yaklog wire state ─────────────────────────
+      this.bodyEl.appendChild(el('h4', null, 'Yaklog wire state'));
       const wireDl = el('dl');
       const hookAge = ageOf(r.last_hook_at);
       const stateAge = ageOf(r.last_state_change_at);
@@ -2573,7 +2573,7 @@
       this.bodyEl.appendChild(wireDl);
     }
     // CP10.3 M3: per-agent event-trace bubble timeline.
-    // Fetches /plexus/public/activity?agent_id=X (operator-only network-isolation
+    // Fetches /yaklog/public/activity?agent_id=X (operator-only network-isolation
     // trust). Renders each event as an agent-colored bubble, newest-first.
     // Distillation is daemon-side (allowlist-redacted secrets); UI just renders.
     async _renderTrace() {
@@ -2587,7 +2587,7 @@
       this.bodyEl.appendChild(el('div', { class: 'view-loading-inline' }, 'loading activity…'));
       const seq = ++this._traceSeq || (this._traceSeq = 1);
       try {
-        const r = await fetch(`/api/v1/plexus/public/activity?agent_id=${encodeURIComponent(this.agentId)}&limit=50`);
+        const r = await fetch(`/api/v1/yaklog/public/activity?agent_id=${encodeURIComponent(this.agentId)}&limit=50`);
         if (this.currentView !== 5) return;
         if (this._traceSeq !== seq) return;
         clearChildren(this.bodyEl);
@@ -2636,15 +2636,15 @@
 
     // Task #260 Phase B: Ptah ORP trace render (parch #11233 RATIFY view=5
     // branch per OQ3). Sister-shape existing _renderTrace polling + trace-row
-    // bubble render but sources from /api/v1/plexus/ptah-orp/<agent>/{episodes,trace}
-    // per Task #246 substrate. Auth via sessionStorage plexus_operator_bearer
-    // (OQ2 empirical-verified sister-shape PlexusOperatorDM at dashboard.js:6294).
+    // bubble render but sources from /api/v1/yaklog/ptah-orp/<agent>/{episodes,trace}
+    // per Task #246 substrate. Auth via sessionStorage yaklog_operator_bearer
+    // (OQ2 empirical-verified sister-shape YaklogOperatorDM at dashboard.js:6294).
     async _renderPtahTrace() {
       clearChildren(this.bodyEl);
       this.bodyEl.className = 'agent-card-body view-trace view-ptah-trace';
       this.bodyEl.appendChild(el('div', { class: 'view-loading-inline' }, 'loading Ptah trace…'));
       const seq = ++this._traceSeq || (this._traceSeq = 1);
-      const bearer = sessionStorage.getItem('plexus_operator_bearer');
+      const bearer = sessionStorage.getItem('yaklog_operator_bearer');
       const headers = bearer ? { Authorization: `Bearer ${bearer}` } : {};
       try {
         // Phase B.1 (Jon-direct 2026-07-01 overnight-visibility): fetch recent
@@ -2652,7 +2652,7 @@
         // historical episodes. Sticky per-instance selection preserved across
         // 5s auto-refresh so poll doesn't hijack the operator's active review.
         const epRes = await fetch(
-          `/api/v1/plexus/ptah-orp/${encodeURIComponent(this.agentId)}/episodes?limit=20`,
+          `/api/v1/yaklog/ptah-orp/${encodeURIComponent(this.agentId)}/episodes?limit=20`,
           { headers },
         );
         if (this.currentView !== 5) return;
@@ -2684,7 +2684,7 @@
         }
         // Fetch traces for selected episode
         const trRes = await fetch(
-          `/api/v1/plexus/ptah-orp/${encodeURIComponent(this.agentId)}/trace?episode_id=${encodeURIComponent(ep.episode_id)}&limit=200`,
+          `/api/v1/yaklog/ptah-orp/${encodeURIComponent(this.agentId)}/trace?episode_id=${encodeURIComponent(ep.episode_id)}&limit=200`,
           { headers },
         );
         if (this.currentView !== 5) return;
@@ -2995,10 +2995,10 @@
   // from cached /presence/public for v0.5.7 fields.
   // ────────────────────────────────────────────────────────────────────
   const POPOVER_IDENTITY_FIELDS = [
-    { key: 'plexus_agent_id',    label: 'agent_id',    section: 'plexus' },
-    { key: 'plexus_cluster_id',  label: 'cluster',     section: 'plexus' },
-    { key: 'plexus_deployment',  label: 'deployment',  section: 'plexus' },
-    { key: 'plexus_run_kind',    label: 'run kind',    section: 'plexus' },
+    { key: 'yaklog_agent_id',    label: 'agent_id',    section: 'yaklog' },
+    { key: 'yaklog_cluster_id',  label: 'cluster',     section: 'yaklog' },
+    { key: 'yaklog_deployment',  label: 'deployment',  section: 'yaklog' },
+    { key: 'yaklog_run_kind',    label: 'run kind',    section: 'yaklog' },
     { key: 'user_email',         label: 'email',       section: 'anthropic' },
     { key: 'user_account_id',    label: 'account_id',  section: 'anthropic' },
     { key: 'user_account_uuid',  label: 'account_uuid',section: 'anthropic', truncate: 18 },
@@ -3013,7 +3013,7 @@
     { key: 'query_source',       label: 'query_source',section: 'runtime' },
   ];
   const POPOVER_SECTIONS = [
-    { id: 'plexus',    title: 'Plexus' },
+    { id: 'yaklog',    title: 'Yaklog' },
     { id: 'anthropic', title: 'Anthropic account' },
     { id: 'runtime',   title: 'Runtime fingerprint' },
   ];
@@ -3112,9 +3112,9 @@
       body.appendChild(section);
     }
     if (!metric && !presenceRow) {
-      body.appendChild(el('div', { class: 'pop-empty' }, 'no data — agent unknown to both Plexus OTel and the presence registry'));
+      body.appendChild(el('div', { class: 'pop-empty' }, 'no data — agent unknown to both Yaklog OTel and the presence registry'));
     } else if (!metric) {
-      body.appendChild(el('div', { class: 'pop-empty' }, 'no Plexus OTel data — agent has not opted in to telemetry'));
+      body.appendChild(el('div', { class: 'pop-empty' }, 'no Yaklog OTel data — agent has not opted in to telemetry'));
     }
   }
 
@@ -3136,7 +3136,7 @@
     let metric = null;
     try {
       const qs = new URLSearchParams({ template: 'agent.identity.byAgentId', agent_id: agentId });
-      const res = await fetch('/api/v1/plexus/public/query?' + qs.toString(), { cache: 'no-store' });
+      const res = await fetch('/api/v1/yaklog/public/query?' + qs.toString(), { cache: 'no-store' });
       if (res.ok) {
         const respBody = await res.json();
         const results = respBody.data && respBody.data.result;
@@ -3242,11 +3242,11 @@
           from: now - 604800, to: now, step: '15m',
         });
         const [cumRes, rateRes] = await Promise.all([
-          fetch('/api/v1/plexus/public/query?' + cumQs.toString(), { cache: 'no-store' }),
-          fetch('/api/v1/plexus/public/query_range?' + rateQs.toString(), { cache: 'no-store' }),
+          fetch('/api/v1/yaklog/public/query?' + cumQs.toString(), { cache: 'no-store' }),
+          fetch('/api/v1/yaklog/public/query_range?' + rateQs.toString(), { cache: 'no-store' }),
         ]);
         if (!cumRes.ok) throw new Error('cum HTTP ' + cumRes.status);
-        const cacheHdr = cumRes.headers.get('X-Plexus-Cache');
+        const cacheHdr = cumRes.headers.get('X-Yaklog-Cache');
         const respBody = await cumRes.json();
         if (seq !== this.fetchSeq) return;
         const results = (respBody.data && respBody.data.result) || [];
@@ -3296,21 +3296,21 @@
         ));
         table.appendChild(thead);
         const tbody = el('tbody');
-        // CP10.1: feed cost-spike alerts when dim is plexus_agent_id.
+        // CP10.1: feed cost-spike alerts when dim is yaklog_agent_id.
         // Spike alerts only fire when the cost-tab cumulative table has
         // rendered — Phase 1 limitation; Phase 2 may add background poll.
         const spikeAgents = new Set();
         for (const r of rows) {
           const tr = el('tr');
           if (r.rate && r.rate.ratio >= ANOMALY_RATIO) tr.classList.add('cost-anomaly');
-          if (r.rate && r.rate.ratio >= ANOMALY_RATIO && dim === 'plexus_agent_id') {
+          if (r.rate && r.rate.ratio >= ANOMALY_RATIO && dim === 'yaklog_agent_id') {
             spikeAgents.add(r.dimValue);
             const usdPerHr = r.rate.current * 3600;
             const meanPerHr = r.rate.mean7d * 3600;
             alertEngine.pushCostSpike(r.dimValue, r.rate.ratio, meanPerHr, usdPerHr);
           }
           const dimCell = el('td', { class: 'dim-val' });
-          if (dim === 'plexus_agent_id') {
+          if (dim === 'yaklog_agent_id') {
             dimCell.appendChild(el('span', { class: 'agent-clickable', 'data-agent-id': r.dimValue }, r.dimValue));
           } else {
             dimCell.appendChild(document.createTextNode(r.dimValue));
@@ -3346,7 +3346,7 @@
         table.appendChild(tbody);
         this.cumulativeBody.appendChild(table);
         // CP10.1: auto-resolve cost-spike alerts for agents no longer flagged.
-        if (dim === 'plexus_agent_id') alertEngine.syncCostSpikes(spikeAgents);
+        if (dim === 'yaklog_agent_id') alertEngine.syncCostSpikes(spikeAgents);
         const anomalyTxt = anomalyN > 0 ? `· 🔴 ${anomalyN} anomaly` : '';
         this.setCumulativeStatus(`${rows.length} ${dim}(s) ${anomalyTxt} · ${cacheHdr || '—'} · ${new Date().toLocaleTimeString()}`);
       } catch (e) {
@@ -3365,9 +3365,9 @@
                    : windowS <= 86400 ? '5m'
                    : '15m';
         const qs = new URLSearchParams({ template: 'cost.rate.byDim', dim, window: '5m', from, to, step });
-        const res = await fetch('/api/v1/plexus/public/query_range?' + qs.toString(), { cache: 'no-store' });
+        const res = await fetch('/api/v1/yaklog/public/query_range?' + qs.toString(), { cache: 'no-store' });
         if (!res.ok) throw new Error('HTTP ' + res.status);
-        const cacheHdr = res.headers.get('X-Plexus-Cache');
+        const cacheHdr = res.headers.get('X-Yaklog-Cache');
         const respBody = await res.json();
         if (seq !== this.fetchSeq) return;
         const results = (respBody.data && respBody.data.result) || [];
@@ -3391,9 +3391,9 @@
             valsAligned[tsIndex.get(t)] = Number.isFinite(p) ? p : null;
           }
           const labelStr = s.metric[dim] || '(empty)';
-          // CP9.1: when dim is plexus_agent_id, use the canonical agent color
+          // CP9.1: when dim is yaklog_agent_id, use the canonical agent color
           // (same as bubbles/cards). Otherwise fall back to index-cycle palette.
-          const stroke = (dim === 'plexus_agent_id') ? agentColor(labelStr).hex : seriesColor(idx);
+          const stroke = (dim === 'yaklog_agent_id') ? agentColor(labelStr).hex : seriesColor(idx);
           seriesDefs.push({
             label: labelStr,
             stroke,
@@ -3420,9 +3420,9 @@
           legend: { live: true },
           cursor: { drag: { x: true, y: false } },
         }, seriesData, this.rateBody);
-        // CP3: popover triggers on legend (only when dim=plexus_agent_id; otherwise the
+        // CP3: popover triggers on legend (only when dim=yaklog_agent_id; otherwise the
         // legend label is a non-agent string like an email or model name).
-        if (dim === 'plexus_agent_id') {
+        if (dim === 'yaklog_agent_id') {
           this.rateChart.root.querySelectorAll('.u-legend .u-series th').forEach((th, idx) => {
             if (idx === 0) return;
             const labelStr = th.textContent.split('·')[0].trim();
@@ -3531,7 +3531,7 @@
   // + gemini (#8524) canonical-token-emitters land data into cost_daily.
   async function refreshVendorStrip() {
     try {
-      const r = await fetch('/api/v1/plexus/public/cost/by-vendor?period=mtd');
+      const r = await fetch('/api/v1/yaklog/public/cost/by-vendor?period=mtd');
       const j = await r.json();
       const totalEl = document.getElementById('vendor-strip-total');
       if (totalEl) totalEl.textContent = fmtUSD(j.total_usd || 0);
@@ -3580,7 +3580,7 @@
   async function refreshHeroStrip() {
     // Burn-vs-Budget (cluster-wide envelope; cost_center='')
     try {
-      const r = await fetch('/api/v1/plexus/public/cost/burn-vs-budget?cost_center=&period_kind=monthly');
+      const r = await fetch('/api/v1/yaklog/public/cost/burn-vs-budget?cost_center=&period_kind=monthly');
       const j = await r.json();
       const tile = document.getElementById('tile-burn-budget');
       if (j.budget_usd != null) {
@@ -3601,7 +3601,7 @@
 
     // Run-rate · projected EOM
     try {
-      const r = await fetch('/api/v1/plexus/public/cost/projection?period=eom');
+      const r = await fetch('/api/v1/yaklog/public/cost/projection?period=eom');
       const j = await r.json();
       const tile = document.getElementById('tile-runrate');
       tile.querySelector('.tile-val').textContent = fmtUSD(j.projected_usd);
@@ -3614,7 +3614,7 @@
       const today = new Date().toISOString().slice(0, 10);
       // R1 (ADR-0029 v2.3 §Hero strip): default top-movers to cost_center (CFO-tier)
       // not agent_id (engineering-ops-tier). Operator-switchable dimension TBD.
-      const r = await fetch(`/api/v1/plexus/public/cost/daily?from=${sevenDaysAgo}&to=${today}&by=cost_center`);
+      const r = await fetch(`/api/v1/yaklog/public/cost/daily?from=${sevenDaysAgo}&to=${today}&by=cost_center`);
       const j = await r.json();
       const tile = document.getElementById('tile-top-movers');
       const wrap = tile.querySelector('.tile-movers');
@@ -3635,7 +3635,7 @@
 
     // MTD
     try {
-      const r = await fetch('/api/v1/plexus/public/cost/summary?period=mtd');
+      const r = await fetch('/api/v1/yaklog/public/cost/summary?period=mtd');
       const j = await r.json();
       const tile = document.getElementById('tile-mtd');
       tile.querySelector('.tile-val').textContent = fmtUSD(j.value_usd);
@@ -3649,9 +3649,9 @@
     panel.innerHTML = '<div class="cost-loading">loading pace data…</div>';
     try {
       const [bvbR, projR, ccR] = await Promise.all([
-        fetch('/api/v1/plexus/public/cost/burn-vs-budget?cost_center=&period_kind=monthly').then(r => r.json()),
-        fetch('/api/v1/plexus/public/cost/projection?period=eom').then(r => r.json()),
-        fetch('/api/v1/plexus/public/cost/by-cost-center?period=mtd&period_kind=monthly').then(r => r.json()),
+        fetch('/api/v1/yaklog/public/cost/burn-vs-budget?cost_center=&period_kind=monthly').then(r => r.json()),
+        fetch('/api/v1/yaklog/public/cost/projection?period=eom').then(r => r.json()),
+        fetch('/api/v1/yaklog/public/cost/by-cost-center?period=mtd&period_kind=monthly').then(r => r.json()),
       ]);
       clearChildren(panel);
       const grid = el('div', { class: 'pace-grid' });
@@ -3770,8 +3770,8 @@
     panel.appendChild(el('div', { class: 'cost-loading' }, 'loading…'));
     try {
       // Convert period to from/to first
-      const sumR = await fetch(`/api/v1/plexus/public/cost/summary?period=${_compPeriod}`).then(r => r.json());
-      const r = await fetch(`/api/v1/plexus/public/cost/daily?from=${sumR.from}&to=${sumR.to}&by=${_compDim}`);
+      const sumR = await fetch(`/api/v1/yaklog/public/cost/summary?period=${_compPeriod}`).then(r => r.json());
+      const r = await fetch(`/api/v1/yaklog/public/cost/daily?from=${sumR.from}&to=${sumR.to}&by=${_compDim}`);
       const j = await r.json();
       // Remove "loading" placeholder
       panel.removeChild(panel.lastChild);
@@ -3818,8 +3818,8 @@
     panel.appendChild(header);
     panel.appendChild(el('div', { class: 'cost-loading' }, 'loading…'));
     try {
-      const sumR = await fetch(`/api/v1/plexus/public/cost/summary?period=${_compPeriod}`).then(r => r.json());
-      const r = await fetch(`/api/v1/plexus/public/cost/daily?from=${sumR.from}&to=${sumR.to}&by=agent_id,user_email`);
+      const sumR = await fetch(`/api/v1/yaklog/public/cost/summary?period=${_compPeriod}`).then(r => r.json());
+      const r = await fetch(`/api/v1/yaklog/public/cost/daily?from=${sumR.from}&to=${sumR.to}&by=agent_id,user_email`);
       if (!r.ok) {
         panel.removeChild(panel.lastChild);
         panel.appendChild(el('div', { class: 'view-empty' }, "Couldn't load account timeline. Retry shortly."));
@@ -3888,10 +3888,10 @@
     try {
       // Compute anomalies client-side: for each agent, compare today's cost
       // against the 7d average. Flag agents with ratio >= 2.
-      const sumR = await fetch('/api/v1/plexus/public/cost/summary?period=today').then(r => r.json());
+      const sumR = await fetch('/api/v1/yaklog/public/cost/summary?period=today').then(r => r.json());
       const today = sumR.to;
       const sevenAgo = new Date(new Date(today) - 6 * 86400_000).toISOString().slice(0, 10);
-      const dailyR = await fetch(`/api/v1/plexus/public/cost/daily?from=${sevenAgo}&to=${today}&by=agent_id,date`).then(r => r.json());
+      const dailyR = await fetch(`/api/v1/yaklog/public/cost/daily?from=${sevenAgo}&to=${today}&by=agent_id,date`).then(r => r.json());
 
       // Group by agent_id; for each, separate today vs the prior 6 days
       const byAgent = new Map();
@@ -3985,7 +3985,7 @@
     const exportBtn = el('button', { class: 'ghost' }, 'Export period CSV');
     form.appendChild(exportBtn);
     exportBtn.addEventListener('click', () => {
-      const url = `/api/v1/plexus/public/cost/export?format=csv&schema=anthropic-invoice&period=mtd`;
+      const url = `/api/v1/yaklog/public/cost/export?format=csv&schema=anthropic-invoice&period=mtd`;
       window.open(url, '_blank');
     });
     panel.appendChild(form);
@@ -4016,7 +4016,7 @@
         }
         result.innerHTML = '';
         const banner = el('div', { class: 'recon-banner' });
-        banner.appendChild(el('div', null, `Reconciled · invoice ${fmtUSD(body.invoice_total_usd)} vs Plexus ${fmtUSD(j.plexus_total_usd)} · delta ${fmtUSD(j.delta_usd)} (${j.delta_pct.toFixed(1)}%)`));
+        banner.appendChild(el('div', null, `Reconciled · invoice ${fmtUSD(body.invoice_total_usd)} vs Yaklog ${fmtUSD(j.yaklog_total_usd)} · delta ${fmtUSD(j.delta_usd)} (${j.delta_pct.toFixed(1)}%)`));
         result.appendChild(banner);
         loadReconHistory();
       } catch (e) {
@@ -4090,8 +4090,8 @@
     clearChildren(wrap);
     try {
       const [clusterR, ccR] = await Promise.all([
-        fetch('/api/v1/plexus/public/cost/burn-vs-budget?cost_center=&period_kind=monthly').then(r => r.json()),
-        fetch('/api/v1/plexus/public/cost/by-cost-center?period=mtd&period_kind=monthly').then(r => r.json()),
+        fetch('/api/v1/yaklog/public/cost/burn-vs-budget?cost_center=&period_kind=monthly').then(r => r.json()),
+        fetch('/api/v1/yaklog/public/cost/by-cost-center?period=mtd&period_kind=monthly').then(r => r.json()),
       ]);
       const clusterCap = clusterR.budget_usd;
       const ccBudgets = (ccR.rows || []).filter(r => r.budget_usd != null && r.cost_center !== '');
@@ -4137,7 +4137,7 @@
     list.innerHTML = '<div class="cost-loading">loading…</div>';
     try {
       // Use by-cost-center for current period
-      const r = await fetch('/api/v1/plexus/public/cost/by-cost-center?period=mtd&period_kind=monthly');
+      const r = await fetch('/api/v1/yaklog/public/cost/by-cost-center?period=mtd&period_kind=monthly');
       const j = await r.json();
       clearChildren(list);
       const withBudget = (j.rows || []).filter(r => r.budget_usd != null);
@@ -4350,7 +4350,7 @@
   async function refreshAuditHero() {
     // Tile 1: Open policy violations (severity-colored)
     try {
-      const r = await fetch('/api/v1/plexus/public/policy/violations?disposition=pending&limit=100');
+      const r = await fetch('/api/v1/yaklog/public/policy/violations?disposition=pending&limit=100');
       const j = await r.json();
       const tile = document.getElementById('tile-open-violations');
       if (!tile) return;
@@ -4375,8 +4375,8 @@
     // Tile 2: Coverage gaps (policies + audit-trail)
     try {
       const [polR, gapR] = await Promise.all([
-        fetch('/api/v1/plexus/public/policy/divergence').then(r => r.json()),
-        fetch('/api/v1/plexus/public/audit/coverage-gap').then(r => r.json()),
+        fetch('/api/v1/yaklog/public/policy/divergence').then(r => r.json()),
+        fetch('/api/v1/yaklog/public/audit/coverage-gap').then(r => r.json()),
       ]);
       const tile = document.getElementById('tile-coverage-gaps');
       if (!tile) return;
@@ -4403,7 +4403,7 @@
 
       // CP12.9 (2026-06-06): Phase 1.5.D OPERATIONAL per #7959 — forensic-
       // content tier (tool_name + file-access digests) now landed via the
-      // plexus-audit-ingester eBPF substrate. Stale "gated on Phase 1.5.D"
+      // yaklog-audit-ingester eBPF substrate. Stale "gated on Phase 1.5.D"
       // qualifier removed.
       tile.querySelector('.tile-sub').textContent =
         `${codified} policies codified · ${genuineGap} genuine instrumentation gaps in 7d` +
@@ -4424,7 +4424,7 @@
 
     // Tile 3: Recent high-risk events (last 24h)
     try {
-      const r = await fetch('/api/v1/plexus/public/audit/anomaly-detail');
+      const r = await fetch('/api/v1/yaklog/public/audit/anomaly-detail');
       const j = await r.json();
       const tile = document.getElementById('tile-recent-risk');
       if (!tile) return;
@@ -4451,7 +4451,7 @@
     // counts; surfaced as a secondary signal so operators see attestation-
     // cadence health alongside substrate-coverage.
     try {
-      const r = await fetch('/api/v1/plexus/public/audit/by-control-area?control_framework=soc2&period=mtd');
+      const r = await fetch('/api/v1/yaklog/public/audit/by-control-area?control_framework=soc2&period=mtd');
       const j = await r.json();
       const tile = document.getElementById('tile-attest-status');
       if (!tile) return;
@@ -4494,7 +4494,7 @@
 
     try {
       // Pending violations sorted by severity (server already does R-A2 sort)
-      const r = await fetch('/api/v1/plexus/public/policy/violations?disposition=pending&limit=50');
+      const r = await fetch('/api/v1/yaklog/public/policy/violations?disposition=pending&limit=50');
       const j = await r.json();
       clearChildren(list);
       const rows = j.rows || j.violations || [];
@@ -4520,7 +4520,7 @@
 
   async function lookupEvent(eventId, panel) {
     try {
-      const r = await fetch(`/api/v1/plexus/public/audit/event/${encodeURIComponent(eventId)}`);
+      const r = await fetch(`/api/v1/yaklog/public/audit/event/${encodeURIComponent(eventId)}`);
       if (r.status === 404) { alert(`Event ${eventId} not found`); return; }
       const j = await r.json();
       const detail = JSON.stringify(j, null, 2);
@@ -4590,7 +4590,7 @@
 
     // Populate coverage gap
     try {
-      const r = await fetch('/api/v1/plexus/public/audit/coverage-gap');
+      const r = await fetch('/api/v1/yaklog/public/audit/coverage-gap');
       const j = await r.json();
       clearChildren(cg);
       const missing = j.agents_missing_trail_7d || 0;
@@ -4624,7 +4624,7 @@
       // control_area: aggregate from /audit/by-control-area (same source-of-truth
       // as the Attest sub-tab; class-level counts surface directly per area).
       if (_reviewDim === 'control_area') {
-        const r = await fetch(`/api/v1/plexus/public/audit/by-control-area?control_framework=soc2&period=7d`);
+        const r = await fetch(`/api/v1/yaklog/public/audit/by-control-area?control_framework=soc2&period=7d`);
         const j = await r.json();
         const counts = new Map();
         for (const a of (j.control_areas || [])) {
@@ -4637,7 +4637,7 @@
 
       // policy_rule: aggregate from /policy/violations grouped by rule_id.
       if (_reviewDim === 'policy_rule') {
-        const r = await fetch(`/api/v1/plexus/public/policy/violations?from=${sevenAgo}&to=${today}&limit=500`);
+        const r = await fetch(`/api/v1/yaklog/public/policy/violations?from=${sevenAgo}&to=${today}&limit=500`);
         const j = await r.json();
         const counts = new Map();
         for (const v of (j.rows || j.violations || [])) {
@@ -4659,7 +4659,7 @@
       }
 
       // agent_id (and any other fallthrough): aggregate from /audit/tool-invocations.
-      const r = await fetch(`/api/v1/plexus/public/audit/tool-invocations?from=${sevenAgo}&to=${today}&limit=500`);
+      const r = await fetch(`/api/v1/yaklog/public/audit/tool-invocations?from=${sevenAgo}&to=${today}&limit=500`);
       const j = await r.json();
       const rows = j.rows || j.tool_invocations || [];
       const counts = new Map();
@@ -4689,7 +4689,7 @@
 
   async function populateReviewCard2(body) {
     try {
-      const r = await fetch('/api/v1/plexus/public/policy/violations?limit=100');
+      const r = await fetch('/api/v1/yaklog/public/policy/violations?limit=100');
       const j = await r.json();
       const rows = j.rows || j.violations || [];
       clearChildren(body);
@@ -4721,7 +4721,7 @@
     try {
       const today = new Date().toISOString();
       const thirtyAgo = new Date(Date.now() - 30 * 86400_000).toISOString();
-      const r = await fetch(`/api/v1/plexus/public/audit/credential-changes?from=${thirtyAgo}&to=${today}&limit=50`);
+      const r = await fetch(`/api/v1/yaklog/public/audit/credential-changes?from=${thirtyAgo}&to=${today}&limit=50`);
       const j = await r.json();
       const rows = j.rows || j.credential_changes || [];
       clearChildren(body);
@@ -4744,7 +4744,7 @@
     try {
       const today = new Date().toISOString();
       const thirtyAgo = new Date(Date.now() - 30 * 86400_000).toISOString();
-      const r = await fetch(`/api/v1/plexus/public/audit/permission-changes?from=${thirtyAgo}&to=${today}&limit=50`);
+      const r = await fetch(`/api/v1/yaklog/public/audit/permission-changes?from=${thirtyAgo}&to=${today}&limit=50`);
       const j = await r.json();
       const rows = j.rows || j.permission_changes || [];
       clearChildren(body);
@@ -4780,7 +4780,7 @@
     ctrl.appendChild(fwSel);
     const exportBtn = el('button', null, 'Export evidence bundle');
     exportBtn.addEventListener('click', () => {
-      const url = `/api/v1/plexus/public/audit/export?format=csv&schema=${_attestFramework}-bundle&period=mtd`;
+      const url = `/api/v1/yaklog/public/audit/export?format=csv&schema=${_attestFramework}-bundle&period=mtd`;
       window.open(url, '_blank');
     });
     ctrl.appendChild(exportBtn);
@@ -4791,7 +4791,7 @@
     list.appendChild(el('div', { class: 'audit-loading' }, `loading ${_attestFramework.toUpperCase()} control areas…`));
 
     try {
-      const r = await fetch(`/api/v1/plexus/public/audit/by-control-area?control_framework=${_attestFramework}&period=mtd`);
+      const r = await fetch(`/api/v1/yaklog/public/audit/by-control-area?control_framework=${_attestFramework}&period=mtd`);
       const j = await r.json();
       clearChildren(list);
       const areas = j.control_areas || [];
@@ -4883,14 +4883,14 @@
     const days = card._days;
     if (!cellByDay || !days) return;
     try {
-      const r = await fetch(`/api/v1/plexus/public/audit/anchors?from=${days[0]}&to=${days[days.length-1]}&limit=100`);
+      const r = await fetch(`/api/v1/yaklog/public/audit/anchors?from=${days[0]}&to=${days[days.length-1]}&limit=100`);
       const j = await r.json();
       const anchors = j.rows || [];
       await Promise.all(anchors.map(async (a) => {
         const cell = cellByDay.get(a.anchor_day);
         if (!cell) return;
         try {
-          const vr = await fetch(`/api/v1/plexus/public/audit/anchor-verify?day=${a.anchor_day}&anchor_substrate=${encodeURIComponent(a.anchor_substrate)}`);
+          const vr = await fetch(`/api/v1/yaklog/public/audit/anchor-verify?day=${a.anchor_day}&anchor_substrate=${encodeURIComponent(a.anchor_substrate)}`);
           const vj = await vr.json();
           cell.classList.remove('ci-missing');
           if (vj.match) {
@@ -4907,13 +4907,13 @@
 
   async function _drillChainIntegrity(day) {
     try {
-      const r = await fetch(`/api/v1/plexus/public/audit/anchor/${day}`);
+      const r = await fetch(`/api/v1/yaklog/public/audit/anchor/${day}`);
       if (r.status === 404) {
         alert(`No anchor recorded for ${day}.\n\nGap may mean: anchor-publisher cron didn't run that day, OR the day is before the first anchor was recorded.`);
         return;
       }
       const j = await r.json();
-      const vr = await fetch(`/api/v1/plexus/public/audit/anchor-verify?day=${day}`);
+      const vr = await fetch(`/api/v1/yaklog/public/audit/anchor-verify?day=${day}`);
       const vj = await vr.json();
       const lines = [
         `Anchor: ${day}`,
@@ -4968,7 +4968,7 @@
     if (!list) return;
     list.innerHTML = '<div class="audit-loading">loading…</div>';
     try {
-      const r = await fetch('/api/v1/plexus/public/policy/rules');
+      const r = await fetch('/api/v1/yaklog/public/policy/rules');
       const j = await r.json();
       clearChildren(list);
       const rules = j.rules || [];
@@ -5066,7 +5066,7 @@
       ['period_start', 'Period start (YYYY-MM-DD)', new Date(Date.now() - 30 * 86400_000).toISOString().slice(0, 10)],
       ['period_end', 'Period end (YYYY-MM-DD)', new Date().toISOString().slice(0, 10)],
       ['external_system_label', 'External system label', 'siem'],
-      ['plexus_count', 'Plexus count', ''],
+      ['yaklog_count', 'Yaklog count', ''],
       ['external_count', 'External count', ''],
       ['reconciler_agent_id', 'Reconciler agent_id', SELF_AGENT_ID || ''],
     ];
@@ -5093,7 +5093,7 @@
         period_start: inputs.period_start.value,
         period_end: inputs.period_end.value,
         external_system_label: inputs.external_system_label.value,
-        plexus_count: parseInt(inputs.plexus_count.value || '0', 10),
+        yaklog_count: parseInt(inputs.yaklog_count.value || '0', 10),
         external_count: parseInt(inputs.external_count.value || '0', 10),
         reconciler_agent_id: inputs.reconciler_agent_id.value,
       };
@@ -5112,7 +5112,7 @@
         result.innerHTML = '';
         const banner = el('div', { class: 'recon-banner' });
         banner.appendChild(el('div', null,
-          `Reconciled · external ${body.external_count} vs Plexus ${body.plexus_count} · delta ${j.delta_count >= 0 ? '+' : ''}${j.delta_count} (${(j.delta_pct || 0).toFixed(1)}%)`));
+          `Reconciled · external ${body.external_count} vs Yaklog ${body.yaklog_count} · delta ${j.delta_count >= 0 ? '+' : ''}${j.delta_count} (${(j.delta_pct || 0).toFixed(1)}%)`));
         result.appendChild(banner);
       } catch (e) {
         renderError(result, 'audit-loading', `network error: ${e.message}`);
@@ -5567,7 +5567,7 @@
       this.state = 'connecting';
       this._notifyState();
       try {
-        const res = await fetch('/api/v1/plexus/public/messages?limit=' + BUS_BACKFILL_LIMIT, { cache: 'no-store' });
+        const res = await fetch('/api/v1/yaklog/public/messages?limit=' + BUS_BACKFILL_LIMIT, { cache: 'no-store' });
         if (res.ok) {
           const body = await res.json();
           const msgs = body.messages || [];
@@ -5582,7 +5582,7 @@
     _openSse() {
       if (this.paused) return;
       try {
-        const url = '/api/v1/plexus/public/messages-stream' + (this.maxId > 0 ? `?since=${this.maxId}` : '');
+        const url = '/api/v1/yaklog/public/messages-stream' + (this.maxId > 0 ? `?since=${this.maxId}` : '');
         this.es = new EventSource(url);
       } catch (e) {
         this.state = 'error';
@@ -5654,7 +5654,7 @@
         after_ts_ms: String(fromMs),
       });
       try {
-        const res = await fetch('/api/v1/plexus/public/messages?' + qs.toString(), { cache: 'no-store' });
+        const res = await fetch('/api/v1/yaklog/public/messages?' + qs.toString(), { cache: 'no-store' });
         if (res.ok) {
           const body = await res.json();
           const msgs = body.messages || [];
@@ -5946,8 +5946,8 @@
   // Per PLAN-OPERATE-EYES-ON-GLASS-VIEW.md trio-converged (#10904 / #10906
   // / #10908) + parch ratify #10925. Composition over existing endpoints:
   //   - /api/v1/presence/public        → red-state + active sessions
-  //   - /api/v1/plexus/public/policy/violations?from=<60min>
-  //   - /api/v1/plexus/public/audit/anchor-verify?day=<today>
+  //   - /api/v1/yaklog/public/policy/violations?from=<60min>
+  //   - /api/v1/yaklog/public/audit/anchor-verify?day=<today>
   //   - /api/v1/cost/anomalies?period=7d&threshold=2.0&dim=agent_id
   //
   // Phase A (this ship): poll-only at 30s interval; per-tile state classes
@@ -5956,7 +5956,7 @@
   //
   // Phase B (RATIFIED parch #11160 post substrate-correction #11159): bounded
   // browser-tier UX optimization. 4 elements:
-  //   1. Page Visibility API integration (sister-shape PlexusLiveStream pause/resume)
+  //   1. Page Visibility API integration (sister-shape YaklogLiveStream pause/resume)
   //   2. chain-integrity cadence-slow 30s → 5min (anchor publishes daily)
   //   3. Stale-data indicator (sister-shape sse-pill; >2× cadence → state-stale class)
   //   4. Two-tier cadence: presence-tiles 10s / aggregate-tiles 30s / chain 5min
@@ -6015,7 +6015,7 @@
         });
       });
       // Page Visibility API: tab-hidden suspends intervals (cascade-prevention
-      // sister-shape PlexusLiveStream lines 919-922 + 974-980). On-restore,
+      // sister-shape YaklogLiveStream lines 919-922 + 974-980). On-restore,
       // immediate-refresh + restart.
       operateVisibilityHandler = () => {
         if (document.visibilityState === 'visible' && _operateTabActive()) {
@@ -6122,7 +6122,7 @@
   async function _refreshAggregateTiles() {
     try {
       const from = new Date(Date.now() - 60 * 60 * 1000).toISOString();
-      const r = await fetch(`/api/v1/plexus/public/policy/violations?from=${encodeURIComponent(from)}&limit=20`);
+      const r = await fetch(`/api/v1/yaklog/public/policy/violations?from=${encodeURIComponent(from)}&limit=20`);
       const j = await r.json();
       const violations = j.violations || j.results || [];
       const pending = violations.filter((v) => v.disposition === 'pending' || !v.disposition);
@@ -6154,7 +6154,7 @@
   async function _refreshChainIntegrity() {
     try {
       const today = new Date().toISOString().slice(0, 10);
-      const r = await fetch(`/api/v1/plexus/public/audit/anchor-verify?day=${today}`);
+      const r = await fetch(`/api/v1/yaklog/public/audit/anchor-verify?day=${today}`);
       const j = await r.json();
       if (j.found === false) {
         _setOperateTileState('chain-integrity', 'yellow', '—', 'no anchor for today yet (publisher cadence)', 'awaiting publish');
@@ -6190,7 +6190,7 @@
 
   // ────────────────────────────────────────────────────────────────────
   // CP17.B Repos tab (Jon-direct 2026-07-07)
-  // Consumes /api/v1/plexus/public/repos/{summary,heatmap,list,detail,by-agent}
+  // Consumes /api/v1/yaklog/public/repos/{summary,heatmap,list,detail,by-agent}
   // + POST /api/v1/repos + POST /api/v1/repos/bare-git-request.
   // Sister-shape existing tab lazy-mount + Cost hero + AgentCard patterns.
   // Time-nav aware via Task #264 dashboardTimeRangeChange event.
@@ -6221,7 +6221,7 @@
   function _reposReqUrl(pathAfterRepos) {
     const period = _reposCurrentPeriod();
     const sep = pathAfterRepos.includes('?') ? '&' : '?';
-    return `/api/v1/plexus/public/repos${pathAfterRepos}${sep}period=${encodeURIComponent(period)}`;
+    return `/api/v1/yaklog/public/repos${pathAfterRepos}${sep}period=${encodeURIComponent(period)}`;
   }
 
   // CP17.C Task 3: hash-param cross-nav primitive.
@@ -6242,7 +6242,7 @@
   // ADR-0041 v2 Increment 2 — analytical band pivot state (default 'repo').
   // Pivot re-pivots DATA only; hero + management widgets are pivot-independent.
   // Fold-B tier-gating travels via the existing ADR-0031 §3 audience-picker,
-  // NOT this toggle (per plexus-ui #11950 chrome-decoupled precision).
+  // NOT this toggle (per yaklog-ui #11950 chrome-decoupled precision).
   let _outputPivot = 'repo';
   let _outputRepo = null;  // ADR-0042 §3: null = All-repos aggregate; 'owner/name' = repo-focused
 
@@ -6636,7 +6636,7 @@
   // Persist repo focus: #output?repo=<owner/name> via replaceState (no re-activation)
   // + localStorage. 'all'/absent = aggregate. URL wins over localStorage on load.
   function _outputPersistRepo() {
-    try { localStorage.setItem('plexus_output_last_repo', _outputRepo || 'all'); } catch (_) { /* private mode */ }
+    try { localStorage.setItem('yaklog_output_last_repo', _outputRepo || 'all'); } catch (_) { /* private mode */ }
     const cur = String(window.location.hash || '');
     const qi = cur.indexOf('?');
     const tab = (qi >= 0 ? cur.slice(1, qi) : cur.slice(1)) || 'output';
@@ -6652,7 +6652,7 @@
     const cur = String(window.location.hash || '');
     const qi = cur.indexOf('?');
     if (qi >= 0) repo = new URLSearchParams(cur.slice(qi + 1)).get('repo');
-    if (!repo) { try { repo = localStorage.getItem('plexus_output_last_repo'); } catch (_) { /* private mode */ } }
+    if (!repo) { try { repo = localStorage.getItem('yaklog_output_last_repo'); } catch (_) { /* private mode */ } }
     if (!repo || repo === 'all') return;  // aggregate default stands
     const input = document.getElementById('orp-input');
     if (input) input.value = repo;
@@ -6934,7 +6934,7 @@
       }
       const p95 = (data.scale && data.scale.p95) || 1;
       const grid = el('div', { class: 'repos-heatmap-grid', role: 'grid', 'aria-label': `Cluster activity heatmap by ${_reposState.dim}` });
-      // CP17.C: cells get full a11y (RF1 per plexus-ui #11805) — aria-label +
+      // CP17.C: cells get full a11y (RF1 per yaklog-ui #11805) — aria-label +
       // role=button + tabindex + keydown all bundled with click-to-drill-in.
       // Sister-shape existing dashboard interactive-cell patterns.
       for (const c of cells) {
@@ -7024,7 +7024,7 @@
       });
       if (_reposState.filterRepo) q.set('filter_repo', _reposState.filterRepo);
       if (_reposState.filterAgent) q.set('filter_agent', _reposState.filterAgent);
-      const sumRes = await fetch(`/api/v1/plexus/public/repos/heatmap?${q.toString()}`, { cache: 'no-store' });
+      const sumRes = await fetch(`/api/v1/yaklog/public/repos/heatmap?${q.toString()}`, { cache: 'no-store' });
       let summaryLine = '';
       if (sumRes.ok) {
         const sd = await sumRes.json();
@@ -7034,7 +7034,7 @@
       // If filtered to a specific repo, fetch the detail commit-list for drill-in.
       let listEls = [];
       if (_reposState.filterRepo) {
-        const dRes = await fetch(`/api/v1/plexus/public/repos/${encodeURIComponent(_reposState.filterRepo)}/detail?from=${date}&to=${date}`, { cache: 'no-store' });
+        const dRes = await fetch(`/api/v1/yaklog/public/repos/${encodeURIComponent(_reposState.filterRepo)}/detail?from=${date}&to=${date}`, { cache: 'no-store' });
         if (dRes.ok) {
           const dd = await dRes.json();
           const commits = (dd.commits || []).slice(0, 50);
@@ -7123,7 +7123,7 @@
     try {
       const period = _reposCurrentPeriod();
       const res = await fetch(
-        `/api/v1/plexus/public/repos/${encodeURIComponent(repoKey)}/detail?period=${encodeURIComponent(period)}`,
+        `/api/v1/yaklog/public/repos/${encodeURIComponent(repoKey)}/detail?period=${encodeURIComponent(period)}`,
         { cache: 'no-store' },
       );
       if (!res.ok) {
@@ -7367,7 +7367,7 @@
 
     async function loadChannels() {
       try {
-        const r = await fetch('/api/v1/plexus/public/channels?limit=100');
+        const r = await fetch('/api/v1/yaklog/public/channels?limit=100');
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         const j = await r.json();
         channels = j.channels || [];
@@ -7389,7 +7389,7 @@
     async function loadThread(channel, opts = {}) {
       const isPaginate = opts.paginate === true;
       const state = threadPaginationState.get(channel) || { oldestId: null, allLoaded: false };
-      let url = `/api/v1/plexus/public/messages?channel=${encodeURIComponent(channel)}&limit=${THREAD_PAGE_LIMIT}`;
+      let url = `/api/v1/yaklog/public/messages?channel=${encodeURIComponent(channel)}&limit=${THREAD_PAGE_LIMIT}`;
       if (isPaginate && state.oldestId !== null) {
         url += `&before_id=${state.oldestId}`;
       }
@@ -7514,7 +7514,7 @@
     modal.classList.add('open');
     listEl.innerHTML = '<div class="chan-empty">loading…</div>';
 
-    fetch('/api/v1/plexus/public/presence?limit=200').then(r => r.json()).then(j => {
+    fetch('/api/v1/yaklog/public/presence?limit=200').then(r => r.json()).then(j => {
       const agents = (j.presence || []).map(p => p.agent_id).filter(Boolean).sort();
       // Augment with the static SELF id in case it isn't in /presence
       if (!agents.includes(SELF_AGENT_ID)) agents.unshift(SELF_AGENT_ID);
@@ -7767,7 +7767,7 @@
   // Background registrations fetch (every 60s) — independent of Register tab visit.
   async function fetchRegistrationsForAlerts() {
     try {
-      const r = await fetch('/api/v1/plexus/public/registrations?limit=200');
+      const r = await fetch('/api/v1/yaklog/public/registrations?limit=200');
       if (!r.ok) return;
       const j = await r.json();
       alertEngine.evaluateRegistrations(j.registrations || []);
@@ -7907,7 +7907,7 @@
     bodyEl.classList.add('audit-body-redacted');
     modal.setAttribute('aria-hidden', 'false');
     // Fetch body now (writes audit entry server-side); reveal action just displays.
-    fetch(`/api/v1/plexus/public/messages/${messageId}`, { cache: 'no-store' })
+    fetch(`/api/v1/yaklog/public/messages/${messageId}`, { cache: 'no-store' })
       .then(r => r.ok ? r.json() : Promise.reject(r))
       .then(d => { revealCurrent.body = (d.message && d.message.body) || ''; })
       .catch(() => { revealCurrent.body = '(failed to fetch body — message may have been deleted)'; });
@@ -7968,7 +7968,7 @@
       if (fOpsKey.value.trim())     params.set('ops_key_id', fOpsKey.value.trim());
       statusEl.textContent = 'loading…';
       try {
-        const r = await fetch('/api/v1/plexus/public/dm-audit-log?' + params.toString(), { cache: 'no-store' });
+        const r = await fetch('/api/v1/yaklog/public/dm-audit-log?' + params.toString(), { cache: 'no-store' });
         if (!r.ok) {
           statusEl.textContent = `error HTTP ${r.status}`;
           return;
@@ -8188,7 +8188,7 @@
     async function fetchAndRender() {
       statusEl.textContent = 'loading…';
       try {
-        const r = await fetch('/api/v1/plexus/public/registrations?limit=500', { cache: 'no-store' });
+        const r = await fetch('/api/v1/yaklog/public/registrations?limit=500', { cache: 'no-store' });
         if (!r.ok) {
           statusEl.textContent = `error HTTP ${r.status}`;
           return;
@@ -8261,9 +8261,9 @@
   // `default-src 'self'; script-src 'self'` blocks inline scripts +
   // cross-origin script sources; sessionStorage scope is browser-tab.
   // ────────────────────────────────────────────────────────────────────
-  const PlexusOperatorDM = (function () {
-    const STORAGE_KEY = 'plexus_operator_bearer';
-    const STORAGE_OP_KEY = 'plexus_operator_id';
+  const YaklogOperatorDM = (function () {
+    const STORAGE_KEY = 'yaklog_operator_bearer';
+    const STORAGE_OP_KEY = 'yaklog_operator_id';
     const loginModal = document.getElementById('dm-login-modal');
     const composeModal = document.getElementById('dm-compose-modal');
     let pendingRecipient = null;  // agent_id captured at click; opened after login
@@ -8456,7 +8456,7 @@
     return { openCompose, openLogin, getOperatorId, clearSession };
   })();
   // Expose globally for AgentCard click handlers (renderHead injects ✉ DM btn)
-  window.PlexusOperatorDM = PlexusOperatorDM;
+  window.YaklogOperatorDM = YaklogOperatorDM;
 
   // Kick off presence polling (unchanged from v0.5.7).
   poll();

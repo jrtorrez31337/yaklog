@@ -147,7 +147,7 @@ function initializeDb() {
   }
 
   // v0.5.7 migration: idempotent ADD COLUMN for runtime-meta fields per
-  // Plexus enterprise dashboard ask (Jon-direct 2026-05-24). Pre-v0.5.7
+  // Yaklog enterprise dashboard ask (Jon-direct 2026-05-24). Pre-v0.5.7
   // daemons send NULL for these; v0.5.7+ daemons distill from CC stdin
   // payload (model, current tool, tool errors, compaction trigger, stop
   // reason, subagent activity). 9 fields total. SQLite ADD COLUMN is
@@ -514,7 +514,7 @@ function initializeDb() {
       period_end            TEXT NOT NULL,
       invoice_label         TEXT,
       invoice_total_usd     REAL NOT NULL,
-      plexus_total_usd      REAL NOT NULL,
+      yaklog_total_usd      REAL NOT NULL,
       delta_usd             REAL NOT NULL,
       delta_pct             REAL NOT NULL,
       concentration_json    TEXT,
@@ -720,7 +720,7 @@ function initializeDb() {
       period_start          TEXT NOT NULL,
       period_end            TEXT NOT NULL,
       external_system_label TEXT NOT NULL,
-      plexus_count          INTEGER NOT NULL,
+      yaklog_count          INTEGER NOT NULL,
       external_count        INTEGER NOT NULL,
       delta_count           INTEGER NOT NULL,
       delta_pct             REAL NOT NULL,
@@ -817,7 +817,7 @@ function initializeDb() {
   // CANONICAL-AUTHORITY channel subscription list. Written by admin via
   // POST /api/v1/register/:id/channels; read by daemon ServerChannelPuller.
   // Distinct from CP12.15 audit_channel_subscription_change (LOG tier);
-  // this is AUTHORITY tier per PLAN-PLEXUS-ADMIN-CHANNEL-SUBSCRIPTION.
+  // this is AUTHORITY tier per PLAN-YAKLOG-ADMIN-CHANNEL-SUBSCRIPTION.
   // Empty rows for agent_id = no server-canonical filter (daemon writes
   // empty file → ChannelWatcher no-filter mode; subscribe-to-all).
   db.prepare(`
@@ -1643,7 +1643,7 @@ function queryOutputDailySummary({ from, to }) {
 }
 
 // ADR-0041 P1a: hero-summary composed from cross-tier-safe substrate primitives.
-// Field contract locked at plexus-ui #11975 + s345 #11973 (R1 total-headline
+// Field contract locked at yaklog-ui #11975 + s345 #11973 (R1 total-headline
 // expose-both; R2 lifetime cumulative merged PRs, never window-rate).
 // All fields cross-tier-safe by construction — no ratio/velocity/cost fields.
 function queryHeroSummary({ from, to }) {
@@ -1664,7 +1664,7 @@ function queryHeroSummary({ from, to }) {
   `).get();
   const pr_merged_count_cumulative = mergedRow.n || 0;
 
-  // Attribution integrity (PROOF, positive framing per plexus-ui #11975).
+  // Attribution integrity (PROOF, positive framing per yaklog-ui #11975).
   // Same underlying signal as coverage-gap (%) and attribution_gap_count (raw);
   // consolidated into one tile with two fields.
   const attrRow = database.prepare(`
@@ -2593,22 +2593,22 @@ function insertCostReconciliation(row) {
   if (!row || !row.period_start || !row.period_end || !row.reconciled_by) {
     throw new Error('insertCostReconciliation: period_start + period_end + reconciled_by required');
   }
-  if (!Number.isFinite(row.invoice_total_usd) || !Number.isFinite(row.plexus_total_usd)) {
-    throw new Error('insertCostReconciliation: invoice_total_usd + plexus_total_usd must be finite');
+  if (!Number.isFinite(row.invoice_total_usd) || !Number.isFinite(row.yaklog_total_usd)) {
+    throw new Error('insertCostReconciliation: invoice_total_usd + yaklog_total_usd must be finite');
   }
   const database = getDb();
-  const delta_usd = row.invoice_total_usd - row.plexus_total_usd;
-  const delta_pct = row.plexus_total_usd !== 0
-    ? (delta_usd / row.plexus_total_usd) * 100
+  const delta_usd = row.invoice_total_usd - row.yaklog_total_usd;
+  const delta_pct = row.yaklog_total_usd !== 0
+    ? (delta_usd / row.yaklog_total_usd) * 100
     : (row.invoice_total_usd === 0 ? 0 : 100);
   const result = database.prepare(`
     INSERT INTO cost_reconciliation (
       period_start, period_end, invoice_label,
-      invoice_total_usd, plexus_total_usd, delta_usd, delta_pct,
+      invoice_total_usd, yaklog_total_usd, delta_usd, delta_pct,
       concentration_json, notes, reconciled_by, reconciled_at
     ) VALUES (
       @period_start, @period_end, @invoice_label,
-      @invoice_total_usd, @plexus_total_usd, @delta_usd, @delta_pct,
+      @invoice_total_usd, @yaklog_total_usd, @delta_usd, @delta_pct,
       @concentration_json, @notes, @reconciled_by, @reconciled_at
     )
   `).run({
@@ -2616,7 +2616,7 @@ function insertCostReconciliation(row) {
     period_end: row.period_end,
     invoice_label: row.invoice_label || null,
     invoice_total_usd: row.invoice_total_usd,
-    plexus_total_usd: row.plexus_total_usd,
+    yaklog_total_usd: row.yaklog_total_usd,
     delta_usd,
     delta_pct,
     concentration_json: row.concentration_json ? (typeof row.concentration_json === 'string' ? row.concentration_json : JSON.stringify(row.concentration_json)) : null,
@@ -3127,26 +3127,26 @@ function insertAuditReconciliation(row) {
   if (!row || !row.period_start || !row.period_end || !row.external_system_label || !row.reconciler_agent_id || !row.reconciled_by) {
     throw new Error('insertAuditReconciliation: period_start + period_end + external_system_label + reconciler_agent_id + reconciled_by required');
   }
-  if (!Number.isInteger(row.plexus_count) || !Number.isInteger(row.external_count)) {
-    throw new Error('insertAuditReconciliation: plexus_count + external_count must be integers');
+  if (!Number.isInteger(row.yaklog_count) || !Number.isInteger(row.external_count)) {
+    throw new Error('insertAuditReconciliation: yaklog_count + external_count must be integers');
   }
   const reconcile_class = row.reconcile_class || 'other';
   if (!RECONCILE_CLASS_VOCAB.has(reconcile_class)) {
     throw new Error(`insertAuditReconciliation: reconcile_class must be one of ${[...RECONCILE_CLASS_VOCAB].join('|')}`);
   }
   const database = getDb();
-  const delta_count = row.external_count - row.plexus_count;
-  const delta_pct = row.plexus_count !== 0
-    ? (delta_count / row.plexus_count) * 100
+  const delta_count = row.external_count - row.yaklog_count;
+  const delta_pct = row.yaklog_count !== 0
+    ? (delta_count / row.yaklog_count) * 100
     : (row.external_count === 0 ? 0 : 100);
   const result = database.prepare(`
     INSERT INTO audit_reconciliation (
       period_start, period_end, external_system_label, reconcile_class,
-      plexus_count, external_count, delta_count, delta_pct,
+      yaklog_count, external_count, delta_count, delta_pct,
       concentration_json, notes, reconciler_agent_id, reconciled_by, reconciled_at
     ) VALUES (
       @period_start, @period_end, @external_system_label, @reconcile_class,
-      @plexus_count, @external_count, @delta_count, @delta_pct,
+      @yaklog_count, @external_count, @delta_count, @delta_pct,
       @concentration_json, @notes, @reconciler_agent_id, @reconciled_by, @reconciled_at
     )
   `).run({
@@ -3154,7 +3154,7 @@ function insertAuditReconciliation(row) {
     period_end: row.period_end,
     external_system_label: row.external_system_label,
     reconcile_class,
-    plexus_count: row.plexus_count,
+    yaklog_count: row.yaklog_count,
     external_count: row.external_count,
     delta_count,
     delta_pct,
@@ -5051,7 +5051,7 @@ function processChannelSubscriptionScan({ subscriptions, actor, scan_at } = {}) 
 }
 
 // ─── Task #223 v1: agent_channel_subscription (canonical authority tier) ────
-// Per PLAN-PLEXUS-ADMIN-CHANNEL-SUBSCRIPTION + parch #11225 RATIFY.
+// Per PLAN-YAKLOG-ADMIN-CHANNEL-SUBSCRIPTION + parch #11225 RATIFY.
 // Distinct from CP12.15 audit_channel_subscription_change (log tier).
 
 function getAgentChannels(agent_id) {

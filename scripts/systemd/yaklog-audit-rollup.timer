@@ -7,7 +7,7 @@
 # to spread cluster-wide writer-lock pressure).
 
 [Unit]
-Description=Plexus CP16 audit-aggregate rollup (hourly)
+Description=Yaklog CP16 audit-aggregate rollup (hourly)
 Requires=yaklog-audit-rollup.service
 
 [Timer]

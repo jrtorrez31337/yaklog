@@ -670,10 +670,10 @@ router.post('/ops/cost/reconcile', (req, res) => {
     return res.status(400).json({ error: 'ValidationError', message: 'period_start/end must be YYYY-MM-DD' });
   }
   try {
-    // Compute plexus-side total for the same period; insert audit row with delta.
+    // Compute yaklog-side total for the same period; insert audit row with delta.
     const { getCostByPeriod, insertCostReconciliation } = require('./db');
     const rows = getCostByPeriod({ from: b.period_start, to: b.period_end });
-    const plexusTotal = rows.reduce((s, r) => s + r.cost_usd, 0);
+    const yaklogTotal = rows.reduce((s, r) => s + r.cost_usd, 0);
 
     // Concentration analysis: where does divergence pile up by (user_email × model)?
     const concentration = {};
@@ -683,17 +683,17 @@ router.post('/ops/cost/reconcile', (req, res) => {
       byDim.set(k, (byDim.get(k) || 0) + r.cost_usd);
     }
     concentration.by_user_email_model = [...byDim.entries()]
-      .map(([k, v]) => { const [user_email, model] = k.split('|'); return { user_email, model, plexus_usd: v }; })
-      .sort((a, b) => b.plexus_usd - a.plexus_usd).slice(0, 10);
+      .map(([k, v]) => { const [user_email, model] = k.split('|'); return { user_email, model, yaklog_usd: v }; })
+      .sort((a, b) => b.yaklog_usd - a.yaklog_usd).slice(0, 10);
 
     const result = insertCostReconciliation({
       period_start: b.period_start, period_end: b.period_end,
       invoice_label: b.invoice_label || null,
-      invoice_total_usd: b.invoice_total_usd, plexus_total_usd: plexusTotal,
+      invoice_total_usd: b.invoice_total_usd, yaklog_total_usd: yaklogTotal,
       concentration_json: concentration, notes: b.notes || null,
       reconciled_by: `ops:${req.auth.opsKeyId}`,
     });
-    return res.json({ ok: true, ...result, plexus_total_usd: plexusTotal, top_dims: concentration.by_user_email_model.slice(0, 5) });
+    return res.json({ ok: true, ...result, yaklog_total_usd: yaklogTotal, top_dims: concentration.by_user_email_model.slice(0, 5) });
   } catch (e) {
     return res.status(400).json({ error: 'ReconcileFailed', message: e.message });
   }

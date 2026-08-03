@@ -171,20 +171,20 @@ test('processChannelSubscriptionScan: validates actor required', () => {
 // ── HTTP endpoints ──────────────────────────────────────────────────────
 
 test('GET /audit/channel-subscriptions: lists recent rows', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/audit/channel-subscriptions');
+  const r = await request(app).get('/api/v1/yaklog/public/audit/channel-subscriptions');
   assert.equal(r.status, 200);
   assert.ok(Array.isArray(r.body.rows));
   assert.ok(r.body.count >= 2);  // from second-scan diff
 });
 
 test('GET /audit/channel-subscriptions: filters by agent', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/audit/channel-subscriptions?agent=scan-a');
+  const r = await request(app).get('/api/v1/yaklog/public/audit/channel-subscriptions?agent=scan-a');
   assert.equal(r.status, 200);
   assert.ok(r.body.rows.every(x => x.agent_id === 'scan-a'));
 });
 
 test('GET /audit/channel-subscriptions: filters by channel', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/audit/channel-subscriptions?channel=status');
+  const r = await request(app).get('/api/v1/yaklog/public/audit/channel-subscriptions?channel=status');
   assert.equal(r.status, 200);
   assert.ok(r.body.rows.every(x => x.channel_name === 'status'));
 });
@@ -226,12 +226,12 @@ test('POST /ops/audit/channel-subscription/scan: 400 on bad shape', async () => 
 // ── by-control-area wiring ─────────────────────────────────────────────
 
 test('by-control-area: CC6 + A.9 include audit_channel_subscription_change', async () => {
-  const r1 = await request(app).get('/api/v1/plexus/public/audit/by-control-area?control_framework=soc2');
+  const r1 = await request(app).get('/api/v1/yaklog/public/audit/by-control-area?control_framework=soc2');
   const cc6 = r1.body.control_areas.find(a => a.id === 'CC6');
   assert.ok(cc6.audit_object_classes.includes('audit_channel_subscription_change'),
     'CC6 must include audit_channel_subscription_change');
 
-  const r2 = await request(app).get('/api/v1/plexus/public/audit/by-control-area?control_framework=iso27001');
+  const r2 = await request(app).get('/api/v1/yaklog/public/audit/by-control-area?control_framework=iso27001');
   const a9 = r2.body.control_areas.find(a => a.id === 'A.9');
   assert.ok(a9.audit_object_classes.includes('audit_channel_subscription_change'),
     'A.9 must include audit_channel_subscription_change');
@@ -243,7 +243,7 @@ test('by-control-area: CC6 + A.9 include audit_channel_subscription_change', asy
 // aspectually clean (same event in CC6 + CC2 since channels are both
 // access-control and communication infrastructure).
 test('by-control-area: CC2 enrichment with audit_channel_subscription_change', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/audit/by-control-area?control_framework=soc2');
+  const r = await request(app).get('/api/v1/yaklog/public/audit/by-control-area?control_framework=soc2');
   const cc2 = r.body.control_areas.find(a => a.id === 'CC2');
   assert.ok(cc2.audit_object_classes.includes('audit_attestation'),
     'CC2 must retain audit_attestation (CP12.10)');

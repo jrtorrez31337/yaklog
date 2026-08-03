@@ -48,7 +48,7 @@ const ptahTraceDb = require('./ptahTraceDb');  // Task #246 sister-shape per-Pta
 // Path Y per parch #10658: at /activate, provision operator_records row when
 // submission declares session_class='operator'. Sister-canon to ptahAuditDb
 // provisioning at runtime_class='ptah'. Closes the Phase A scope-gap from #10650.
-const plexusSecureDb = require('./plexusSecureDb');
+const yaklogSecureDb = require('./yaklogSecureDb');
 
 const router = express.Router();
 
@@ -440,7 +440,7 @@ router.post('/:id/activate', (req, res) => {
   // offboarding step (a)). Auth-class derivation lives in auth.js path-b.
   if (submission && submission.session_class === 'operator') {
     try {
-      plexusSecureDb.upsertOperatorRecord({
+      yaklogSecureDb.upsertOperatorRecord({
         operatorId: reg.agent_id,
         userEmail: submission.user_email || null,
         actor: 'register-state-machine',
@@ -695,7 +695,7 @@ router.get('/', auth, (req, res) => {
 });
 
 // ─── Task #223 v1: /register/:id/channels (canonical-authority tier) ────────
-// Per PLAN-PLEXUS-ADMIN-CHANNEL-SUBSCRIPTION + parch #11225 RATIFY.
+// Per PLAN-YAKLOG-ADMIN-CHANNEL-SUBSCRIPTION + parch #11225 RATIFY.
 // POST = ops-key write (admin authority); GET = bearer OR ops-key read.
 
 const { setAgentChannels, getAgentChannels } = require('./db');

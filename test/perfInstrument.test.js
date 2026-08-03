@@ -34,8 +34,8 @@ test.beforeEach(() => {
   fetchCalls = [];
   storage.clear();
   // Default: operator IS logged in (bearer present)
-  sessionStorage.setItem('plexus_operator_bearer', 'test-bearer');
-  sessionStorage.setItem('plexus_operator_id', 'op-test');
+  sessionStorage.setItem('yaklog_operator_bearer', 'test-bearer');
+  sessionStorage.setItem('yaklog_operator_id', 'op-test');
 });
 
 test('record: appends to buffer with required fields', () => {
@@ -128,7 +128,7 @@ test('flush: post-login bearer triggers normal flush', () => {
   PerfInstrument.record('first.try', 10);
   assert.equal(PerfInstrument.flush(), false, 'first attempt skipped (no bearer)');
   // Operator logs in
-  sessionStorage.setItem('plexus_operator_bearer', 'fresh-bearer');
+  sessionStorage.setItem('yaklog_operator_bearer', 'fresh-bearer');
   PerfInstrument.record('second.try', 20);
   assert.equal(PerfInstrument.flush(), true, 'flush fires after bearer present');
   assert.equal(fetchCalls.length, 1);
@@ -144,7 +144,7 @@ test('buffer cap: oldest dropped when over MAX_BUFFER', () => {
 });
 
 test('flush: agent_id from sessionStorage operator_id', () => {
-  sessionStorage.setItem('plexus_operator_id', 'op-specific');
+  sessionStorage.setItem('yaklog_operator_id', 'op-specific');
   PerfInstrument.record('agent.id.test', 10);
   PerfInstrument.flush();
   const body = JSON.parse(fetchCalls[0].body);

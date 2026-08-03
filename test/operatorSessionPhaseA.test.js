@@ -7,7 +7,7 @@
 //   - req.tokenClass middleware resolution (operator/agent/ops)
 //   - session_class server-enforced from req.tokenClass at /presence/event
 //   - /secure-store/vendor-keys 401 reject when req.tokenClass === 'operator'
-//   - operator_records CRUD in plexus-secure.db (upsert/get/list/decommission)
+//   - operator_records CRUD in yaklog-secure.db (upsert/get/list/decommission)
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -17,7 +17,7 @@ const path = require('path');
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'yaklog-operator-session-test-'));
 process.env.YAKLOG_DB_PATH = path.join(tempDir, 'yaklog.db');
-process.env.YAKLOG_PLEXUS_SECURE_DB_PATH = path.join(tempDir, 'plexus-secure.db');
+process.env.YAKLOG_YAKLOG_SECURE_DB_PATH = path.join(tempDir, 'yaklog-secure.db');
 process.env.YAKLOG_API_KEYS = 'tok-agent,tok-operator,tok-ops';
 process.env.YAKLOG_TOKEN_BINDINGS = 'agent-a:tok-agent';
 process.env.YAKLOG_DAEMON_BINDINGS = 'agent-a:tok-agent';
@@ -30,14 +30,14 @@ const request = require('supertest');
 const app = require('../src/app');
 const { closeDb } = require('../src/db');
 const config = require('../src/config');
-const plexusSecureDb = require('../src/plexusSecureDb');
+const yaklogSecureDb = require('../src/yaklogSecureDb');
 
 const authAgent = { Authorization: 'Bearer tok-agent' };
 const authOperator = { Authorization: 'Bearer tok-operator' };
 
 test.after(() => {
   try { closeDb(); } catch {}
-  try { plexusSecureDb.closeDb(); } catch {}
+  try { yaklogSecureDb.closeDb(); } catch {}
   try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {}
 });
 
@@ -119,8 +119,8 @@ test('GET /api/v1/secure-store/vendor-keys does NOT reject agent class with 401 
 // ─── operator_records CRUD ─────────────────────────────────────────────────
 
 test('upsertOperatorRecord creates row with user_email + actor', () => {
-  plexusSecureDb.initializeDb({ dbPath: process.env.YAKLOG_PLEXUS_SECURE_DB_PATH });
-  const r = plexusSecureDb.upsertOperatorRecord({
+  yaklogSecureDb.initializeDb({ dbPath: process.env.YAKLOG_YAKLOG_SECURE_DB_PATH });
+  const r = yaklogSecureDb.upsertOperatorRecord({
     operatorId: 'op-test-1',
     userEmail: 'test1@example.com',
     actor: 'admin-agent',
@@ -131,7 +131,7 @@ test('upsertOperatorRecord creates row with user_email + actor', () => {
 });
 
 test('getOperatorRecord returns row with all fields', () => {
-  const row = plexusSecureDb.getOperatorRecord('op-test-1');
+  const row = yaklogSecureDb.getOperatorRecord('op-test-1');
   assert.ok(row);
   assert.equal(row.operator_id, 'op-test-1');
   assert.equal(row.user_email, 'test1@example.com');
@@ -140,35 +140,35 @@ test('getOperatorRecord returns row with all fields', () => {
 });
 
 test('listOperatorRecords excludes decommissioned by default', () => {
-  plexusSecureDb.upsertOperatorRecord({
+  yaklogSecureDb.upsertOperatorRecord({
     operatorId: 'op-test-2',
     userEmail: 'test2@example.com',
     actor: 'admin-agent',
   });
-  plexusSecureDb.decommissionOperatorRecord({
+  yaklogSecureDb.decommissionOperatorRecord({
     operatorId: 'op-test-2',
     actor: 'admin-agent',
     notes: 'offboarded',
   });
-  const active = plexusSecureDb.listOperatorRecords();
+  const active = yaklogSecureDb.listOperatorRecords();
   assert.ok(!active.find((r) => r.operator_id === 'op-test-2'), 'op-test-2 excluded');
   assert.ok(active.find((r) => r.operator_id === 'op-test-1'), 'op-test-1 included');
 });
 
 test('listOperatorRecords with includeDecommissioned returns all', () => {
-  const all = plexusSecureDb.listOperatorRecords({ includeDecommissioned: true });
+  const all = yaklogSecureDb.listOperatorRecords({ includeDecommissioned: true });
   assert.ok(all.find((r) => r.operator_id === 'op-test-1'));
   assert.ok(all.find((r) => r.operator_id === 'op-test-2'));
 });
 
 test('decommissionOperatorRecord sets decommissioned_at + by', () => {
-  const row = plexusSecureDb.getOperatorRecord('op-test-2');
+  const row = yaklogSecureDb.getOperatorRecord('op-test-2');
   assert.ok(row.decommissioned_at, 'decommissioned_at set');
   assert.equal(row.decommissioned_by, 'admin-agent');
 });
 
 test('decommissionOperatorRecord is no-op on already-decommissioned row', () => {
-  const r = plexusSecureDb.decommissionOperatorRecord({
+  const r = yaklogSecureDb.decommissionOperatorRecord({
     operatorId: 'op-test-2',
     actor: 'admin-agent',
   });

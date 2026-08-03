@@ -1,5 +1,5 @@
 // Task #246 Phase A.2 manifest write-path endpoint tests per parch #10755
-// RATIFY. Covers POST /api/v1/plexus/ptah-orp/<id>/episodes/<eid>/manifest:
+// RATIFY. Covers POST /api/v1/yaklog/ptah-orp/<id>/episodes/<eid>/manifest:
 // auth scoping, episode-exists 404, JSON shape validation, episode/agent_id
 // binding, artifact array validation, round-trip via GET.
 
@@ -71,14 +71,14 @@ test('POST manifest: own-agent bearer accepted; persists + round-trips via GET',
     ],
   };
   const post = await request(app)
-    .post('/api/v1/plexus/ptah-orp/ptah-test-1/episodes/ep-route-1/manifest')
+    .post('/api/v1/yaklog/ptah-orp/ptah-test-1/episodes/ep-route-1/manifest')
     .set('Authorization', 'Bearer tok-ptah-x')
     .send(manifest);
   assert.equal(post.status, 200);
   assert.equal(post.body.artifact_count, 4);
 
   const get = await request(app)
-    .get('/api/v1/plexus/ptah-orp/ptah-test-1/episodes/ep-route-1/manifest')
+    .get('/api/v1/yaklog/ptah-orp/ptah-test-1/episodes/ep-route-1/manifest')
     .set('Authorization', 'Bearer tok-ptah-x');
   assert.equal(get.status, 200);
   assert.equal(get.body.manifest.artifacts.length, 4);
@@ -87,7 +87,7 @@ test('POST manifest: own-agent bearer accepted; persists + round-trips via GET',
 
 test('POST manifest: ops-key accepted', async () => {
   const r = await request(app)
-    .post('/api/v1/plexus/ptah-orp/ptah-test-1/episodes/ep-route-1/manifest')
+    .post('/api/v1/yaklog/ptah-orp/ptah-test-1/episodes/ep-route-1/manifest')
     .set('Authorization', 'Bearer tok-ops')
     .send({ artifacts: [{ kind: 'x', path: '/p' }] });
   assert.equal(r.status, 200);
@@ -95,7 +95,7 @@ test('POST manifest: ops-key accepted', async () => {
 
 test('POST manifest: 404 when episode does not exist', async () => {
   const r = await request(app)
-    .post('/api/v1/plexus/ptah-orp/ptah-test-1/episodes/ep-nope/manifest')
+    .post('/api/v1/yaklog/ptah-orp/ptah-test-1/episodes/ep-nope/manifest')
     .set('Authorization', 'Bearer tok-ptah-x')
     .send({ artifacts: [] });
   assert.equal(r.status, 404);
@@ -103,7 +103,7 @@ test('POST manifest: 404 when episode does not exist', async () => {
 
 test('POST manifest: 400 when artifacts not array', async () => {
   const r = await request(app)
-    .post('/api/v1/plexus/ptah-orp/ptah-test-1/episodes/ep-route-1/manifest')
+    .post('/api/v1/yaklog/ptah-orp/ptah-test-1/episodes/ep-route-1/manifest')
     .set('Authorization', 'Bearer tok-ptah-x')
     .send({ artifacts: 'nope' });
   assert.equal(r.status, 400);
@@ -111,12 +111,12 @@ test('POST manifest: 400 when artifacts not array', async () => {
 
 test('POST manifest: 400 when artifact missing kind or path', async () => {
   const noKind = await request(app)
-    .post('/api/v1/plexus/ptah-orp/ptah-test-1/episodes/ep-route-1/manifest')
+    .post('/api/v1/yaklog/ptah-orp/ptah-test-1/episodes/ep-route-1/manifest')
     .set('Authorization', 'Bearer tok-ptah-x')
     .send({ artifacts: [{ path: '/p' }] });
   assert.equal(noKind.status, 400);
   const noPath = await request(app)
-    .post('/api/v1/plexus/ptah-orp/ptah-test-1/episodes/ep-route-1/manifest')
+    .post('/api/v1/yaklog/ptah-orp/ptah-test-1/episodes/ep-route-1/manifest')
     .set('Authorization', 'Bearer tok-ptah-x')
     .send({ artifacts: [{ kind: 'story_txt' }] });
   assert.equal(noPath.status, 400);
@@ -124,7 +124,7 @@ test('POST manifest: 400 when artifact missing kind or path', async () => {
 
 test('POST manifest: 400 when episode_id mismatch URL', async () => {
   const r = await request(app)
-    .post('/api/v1/plexus/ptah-orp/ptah-test-1/episodes/ep-route-1/manifest')
+    .post('/api/v1/yaklog/ptah-orp/ptah-test-1/episodes/ep-route-1/manifest')
     .set('Authorization', 'Bearer tok-ptah-x')
     .send({ episode_id: 'ep-different', artifacts: [{ kind: 'x', path: '/p' }] });
   assert.equal(r.status, 400);
@@ -132,7 +132,7 @@ test('POST manifest: 400 when episode_id mismatch URL', async () => {
 
 test('POST manifest: 400 when agent_id mismatch URL', async () => {
   const r = await request(app)
-    .post('/api/v1/plexus/ptah-orp/ptah-test-1/episodes/ep-route-1/manifest')
+    .post('/api/v1/yaklog/ptah-orp/ptah-test-1/episodes/ep-route-1/manifest')
     .set('Authorization', 'Bearer tok-ptah-x')
     .send({ agent_id: 'ptah-other', artifacts: [{ kind: 'x', path: '/p' }] });
   assert.equal(r.status, 400);
@@ -141,7 +141,7 @@ test('POST manifest: 400 when agent_id mismatch URL', async () => {
 test('POST manifest: 400 when orp_version contradicts episode-frozen value (aieng3 #10758)', async () => {
   // Episode ep-route-1 is frozen at v0.1.0 (per before() seed).
   const r = await request(app)
-    .post('/api/v1/plexus/ptah-orp/ptah-test-1/episodes/ep-route-1/manifest')
+    .post('/api/v1/yaklog/ptah-orp/ptah-test-1/episodes/ep-route-1/manifest')
     .set('Authorization', 'Bearer tok-ptah-x')
     .send({ orp_version: 'v0.99.0', artifacts: [{ kind: 'x', path: '/p' }] });
   assert.equal(r.status, 400);
@@ -150,7 +150,7 @@ test('POST manifest: 400 when orp_version contradicts episode-frozen value (aien
 
 test('POST manifest: accepted when orp_version matches episode-frozen value', async () => {
   const r = await request(app)
-    .post('/api/v1/plexus/ptah-orp/ptah-test-1/episodes/ep-route-1/manifest')
+    .post('/api/v1/yaklog/ptah-orp/ptah-test-1/episodes/ep-route-1/manifest')
     .set('Authorization', 'Bearer tok-ptah-x')
     .send({ orp_version: 'v0.1.0', artifacts: [{ kind: 'story_txt', path: '/p' }] });
   assert.equal(r.status, 200);
@@ -161,7 +161,7 @@ test('POST manifest: falsy-present orp_version rejected (aieng3 #10761 truthy-by
   // `false` through. Presence check `!= null` catches them.
   for (const bad of ['', 0, false]) {
     const r = await request(app)
-      .post('/api/v1/plexus/ptah-orp/ptah-test-1/episodes/ep-route-1/manifest')
+      .post('/api/v1/yaklog/ptah-orp/ptah-test-1/episodes/ep-route-1/manifest')
       .set('Authorization', 'Bearer tok-ptah-x')
       .send({ orp_version: bad, artifacts: [{ kind: 'x', path: '/p' }] });
     assert.equal(r.status, 400, `value ${JSON.stringify(bad)} must reject as C6 mismatch`);
@@ -174,12 +174,12 @@ test('POST manifest: persisted orp_version always canonicalized to episode-froze
   // persisted manifest must use ep.orp_version not client-supplied value.
   // (Omitted manifest.orp_version is the path that exercises this canon.)
   const r = await request(app)
-    .post('/api/v1/plexus/ptah-orp/ptah-test-1/episodes/ep-route-1/manifest')
+    .post('/api/v1/yaklog/ptah-orp/ptah-test-1/episodes/ep-route-1/manifest')
     .set('Authorization', 'Bearer tok-ptah-x')
     .send({ artifacts: [{ kind: 'episode_final_png', path: '/p' }] });
   assert.equal(r.status, 200);
   const get = await request(app)
-    .get('/api/v1/plexus/ptah-orp/ptah-test-1/episodes/ep-route-1/manifest')
+    .get('/api/v1/yaklog/ptah-orp/ptah-test-1/episodes/ep-route-1/manifest')
     .set('Authorization', 'Bearer tok-ptah-x');
   assert.equal(get.status, 200);
   assert.equal(get.body.manifest.orp_version, 'v0.1.0', 'persisted manifest uses episode-frozen value');
@@ -192,7 +192,7 @@ test('POST manifest: 403 when bearer is generic non-binding (no per-agent + no o
   // A third cluster-bearer would 403. Simulate with a bound-to-different-agent token:
   // (not easy without reconfig). Instead test missing bearer → auth 401.
   const r = await request(app)
-    .post('/api/v1/plexus/ptah-orp/ptah-test-1/episodes/ep-route-1/manifest')
+    .post('/api/v1/yaklog/ptah-orp/ptah-test-1/episodes/ep-route-1/manifest')
     .send({ artifacts: [] });
   assert.ok(r.status === 401 || r.status === 403, `expected 401/403, got ${r.status}`);
 });

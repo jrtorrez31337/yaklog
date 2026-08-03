@@ -1,12 +1,12 @@
 // CP16-prep observability migration per parch #10157 ratify of #10153 Option 2c
 // + parch #10166 6-OQ arbitration. Sister-shape gap fix for both substrate-prep
 // scripts (yaklog-wal-checkpoint + yaklog-output-ingester) whose Prom textfile
-// emit never landed in cluster Prom — see [[feedback_plexus_prom_topology_does_not_include_node_exporter_textfile_collector]].
+// emit never landed in cluster Prom — see [[feedback_yaklog_prom_topology_does_not_include_node_exporter_textfile_collector]].
 //
 // Architecture: yaklog server emits gauges via prom-client custom Registry;
 // GET /api/v1/metrics route exposes Prom text-format (auth-required per
 // secops #10164 corrected Q2 disposition — yaklog:3100 is 0.0.0.0 host-public,
-// NOT internal-only like plexus-otel-collector:8889; see
+// NOT internal-only like yaklog-otel-collector:8889; see
 // [[feedback_public_bind_vs_internal_only_network_isolation_distinction_at_substrate_auth_disposition_tier]]).
 //
 // Custom Registry per secops Gate (1) condition (#10161 / #10166 condition 3):
@@ -28,7 +28,7 @@ const registry = new Registry();
 
 // Per-db labels (per secops #10177 + parch #10201 forward-track + task #221):
 // labelNames includes 'db' so per-db wal-checkpoint pressure is distinguishable
-// in Prom (CP14-X added plexus-secure.db; cron loop fires both yaklog + plexus-secure
+// in Prom (CP14-X added yaklog-secure.db; cron loop fires both yaklog + yaklog-secure
 // per checkpoint cycle; without 'db' label the second call overwrites the first
 // at the /metrics tier per [[feedback_writer_lock_contention_visible_via_checkpoint_elapsed_ms]]).
 const walCheckpointElapsedMs = new Gauge({
@@ -127,7 +127,7 @@ const outputIngesterInvocationsTotal = new Counter({
   registers: [registry],
 });
 
-// ─── ORP write gauges (CP14-X Plexus Secure Store; secops #10172 condition C) ─
+// ─── ORP write gauges (CP14-X Yaklog Secure Store; secops #10172 condition C) ─
 // Set by POST /api/v1/ops/orp/<agent_id> handler after upsertOrp returns.
 
 const orpWriteInvocationsTotal = new Counter({

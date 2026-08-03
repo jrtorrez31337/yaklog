@@ -1,5 +1,5 @@
-# Plexus Prometheus config — DEMO variant of otel/prometheus.yml.
-# Only delta: external_labels reflect plexus-demo, not devel.
+# Yaklog Prometheus config — DEMO variant of otel/prometheus.yml.
+# Only delta: external_labels reflect yaklog-demo, not devel.
 #
 # Retention 15 days for Stage 1 (set via --storage.tsdb.retention.time
 # in docker-compose command args).
@@ -8,7 +8,7 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
   external_labels:
-    cluster: plexus-demo
+    cluster: yaklog-demo
     deployment: demo
 
 scrape_configs:
@@ -17,11 +17,11 @@ scrape_configs:
     static_configs:
       - targets: ['localhost:9090']
 
-  # Plexus OTel collector — scrapes the collector's prometheus exporter
+  # Yaklog OTel collector — scrapes the collector's prometheus exporter
   # which receives OTLP from real-fleet agents and re-exposes as Prom metrics.
-  # Container DNS name on plexus-demo_default network.
-  - job_name: plexus-otel-collector
+  # Container DNS name on yaklog-demo_default network.
+  - job_name: yaklog-otel-collector
     static_configs:
-      - targets: ['plexus-otel-collector:8889']
+      - targets: ['yaklog-otel-collector:8889']
         labels:
           source: otel-collector

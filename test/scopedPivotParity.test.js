@@ -1,6 +1,6 @@
 // ADR-0041 v2 Phase 1 — scopedPivotParity substrate invariant test.
 //
-// Per plexus-ui #11946 §A ask + my #11983 Commitment 1 + #12077 confirm:
+// Per yaklog-ui #11946 §A ask + my #11983 Commitment 1 + #12077 confirm:
 // enforce that both pivots (agent-primary vs repo-primary) derive from the
 // SAME source rows in output_commit / output_merge — any pivot-tier
 // mismatch is visible as numbers-shift-when-they-shouldn't in the UI, which
@@ -166,7 +166,7 @@ test('scopedPivotParity — I6: empty window returns both pivots empty', async (
 // ── I7: heatmap no-filter sum matches ground-truth total commits ─────────
 
 test('scopedPivotParity — I7: heatmap no-filter sum matches I1 ground truth', async () => {
-  const res = await request(app).get('/api/v1/plexus/public/repos/heatmap?from=2020-01-01&to=2100-01-01');
+  const res = await request(app).get('/api/v1/yaklog/public/repos/heatmap?from=2020-01-01&to=2100-01-01');
   assert.equal(res.statusCode, 200);
   const heatmapSum = res.body.cells.reduce((s, c) => s + (c.value || 0), 0);
   const totalCommits = getDb().prepare(`SELECT COUNT(*) AS n FROM output_commit`).get().n;

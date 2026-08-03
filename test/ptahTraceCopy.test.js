@@ -1,4 +1,4 @@
-// Ptah trace-view empty/error microcopy — plexus-ui-agent (yaklog-dev #11243).
+// Ptah trace-view empty/error microcopy — yaklog-ui-agent (yaklog-dev #11243).
 //
 // Marker-style (mirrors test/effortTab.test.js): asserts the served dashboard.js
 // carries honest, on-voice Ptah empty/error copy — no em-dash (cluster AI-tell

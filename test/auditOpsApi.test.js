@@ -191,7 +191,7 @@ test('POST /audit/reconcile: happy with positive delta', async () => {
   const r = await request(app).post('/api/v1/ops/audit/reconcile').set(opsAuth).send({
     period_start: '2026-06-01', period_end: '2026-06-04',
     external_system_label: 'anthropic-console-export',
-    plexus_count: 100, external_count: 105,
+    yaklog_count: 100, external_count: 105,
     reconciler_agent_id: 'admin-agent',
     notes: 'expected: 5-row drift from late hook flushes',
   });
@@ -202,11 +202,11 @@ test('POST /audit/reconcile: happy with positive delta', async () => {
   assert.equal(r.body.delta_pct, 5);
 });
 
-test('POST /audit/reconcile: negative delta (external < plexus)', async () => {
+test('POST /audit/reconcile: negative delta (external < yaklog)', async () => {
   const r = await request(app).post('/api/v1/ops/audit/reconcile').set(opsAuth).send({
     period_start: '2026-06-01', period_end: '2026-06-04',
     external_system_label: 'external-A',
-    plexus_count: 100, external_count: 90,
+    yaklog_count: 100, external_count: 90,
     reconciler_agent_id: 'admin-agent',
   });
   assert.equal(r.statusCode, 200);
@@ -218,7 +218,7 @@ test('POST /audit/reconcile: zero delta', async () => {
   const r = await request(app).post('/api/v1/ops/audit/reconcile').set(opsAuth).send({
     period_start: '2026-06-01', period_end: '2026-06-04',
     external_system_label: 'external-B',
-    plexus_count: 50, external_count: 50,
+    yaklog_count: 50, external_count: 50,
     reconciler_agent_id: 'admin-agent',
   });
   assert.equal(r.statusCode, 200);
@@ -230,7 +230,7 @@ test('POST /audit/reconcile: non-integer counts → 400', async () => {
   const r = await request(app).post('/api/v1/ops/audit/reconcile').set(opsAuth).send({
     period_start: '2026-06-01', period_end: '2026-06-04',
     external_system_label: 'external-bad',
-    plexus_count: 100.5, external_count: 'not-a-number',
+    yaklog_count: 100.5, external_count: 'not-a-number',
     reconciler_agent_id: 'admin-agent',
   });
   assert.equal(r.statusCode, 400);

@@ -33,7 +33,7 @@ async function seedPrivateMessage(body, mentions = ['bob']) {
 }
 
 test('GET /dm-audit-log when log file missing → empty entries, exists=false', async () => {
-  const res = await request(app).get('/api/v1/plexus/public/dm-audit-log');
+  const res = await request(app).get('/api/v1/yaklog/public/dm-audit-log');
   assert.equal(res.statusCode, 200);
   assert.equal(res.body.exists, false);
   assert.deepEqual(res.body.entries, []);
@@ -42,7 +42,7 @@ test('GET /dm-audit-log when log file missing → empty entries, exists=false', 
 test('GET /messages/:id on private → returns body + writes audit entry', async () => {
   const id = await seedPrivateMessage('secret payload one');
   const before = fs.existsSync(auditPath) ? fs.readFileSync(auditPath, 'utf-8').split('\n').filter(Boolean).length : 0;
-  const res = await request(app).get(`/api/v1/plexus/public/messages/${id}`);
+  const res = await request(app).get(`/api/v1/yaklog/public/messages/${id}`);
   assert.equal(res.statusCode, 200);
   assert.equal(res.body.message.private, true);
   assert.match(res.body.message.body, /secret payload one/);
@@ -62,7 +62,7 @@ test('GET /messages/:id on public → body returned, NO audit entry written', as
   });
   const id = post.body.message.id;
   const before = fs.readFileSync(auditPath, 'utf-8').split('\n').filter(Boolean).length;
-  const res = await request(app).get(`/api/v1/plexus/public/messages/${id}`);
+  const res = await request(app).get(`/api/v1/yaklog/public/messages/${id}`);
   assert.equal(res.statusCode, 200);
   assert.equal(res.body.message.private, false);
   const after = fs.readFileSync(auditPath, 'utf-8').split('\n').filter(Boolean).length;
@@ -70,17 +70,17 @@ test('GET /messages/:id on public → body returned, NO audit entry written', as
 });
 
 test('GET /messages/:id non-existent → 404', async () => {
-  const res = await request(app).get('/api/v1/plexus/public/messages/999999');
+  const res = await request(app).get('/api/v1/yaklog/public/messages/999999');
   assert.equal(res.statusCode, 404);
 });
 
 test('GET /dm-audit-log returns entries newest-first after some private fetches', async () => {
   const id2 = await seedPrivateMessage('secret payload two');
-  await request(app).get(`/api/v1/plexus/public/messages/${id2}`);
+  await request(app).get(`/api/v1/yaklog/public/messages/${id2}`);
   await new Promise(r => setTimeout(r, 5));   // ensure distinct timestamps
   const id3 = await seedPrivateMessage('secret payload three', ['carol']);
-  await request(app).get(`/api/v1/plexus/public/messages/${id3}`);
-  const res = await request(app).get('/api/v1/plexus/public/dm-audit-log');
+  await request(app).get(`/api/v1/yaklog/public/messages/${id3}`);
+  const res = await request(app).get('/api/v1/yaklog/public/dm-audit-log');
   assert.equal(res.statusCode, 200);
   assert.equal(res.body.exists, true);
   assert.ok(res.body.entries.length >= 2);
@@ -92,8 +92,8 @@ test('GET /dm-audit-log returns entries newest-first after some private fetches'
 
 test('GET /dm-audit-log filter by message_id', async () => {
   const id = await seedPrivateMessage('targeted payload');
-  await request(app).get(`/api/v1/plexus/public/messages/${id}`);
-  const res = await request(app).get(`/api/v1/plexus/public/dm-audit-log?message_id=${id}`);
+  await request(app).get(`/api/v1/yaklog/public/messages/${id}`);
+  const res = await request(app).get(`/api/v1/yaklog/public/dm-audit-log?message_id=${id}`);
   assert.equal(res.statusCode, 200);
   assert.ok(res.body.entries.length >= 1);
   for (const e of res.body.entries) {
@@ -102,7 +102,7 @@ test('GET /dm-audit-log filter by message_id', async () => {
 });
 
 test('GET /dm-audit-log filter by recipient', async () => {
-  const res = await request(app).get('/api/v1/plexus/public/dm-audit-log?recipient=carol');
+  const res = await request(app).get('/api/v1/yaklog/public/dm-audit-log?recipient=carol');
   assert.equal(res.statusCode, 200);
   for (const e of res.body.entries) {
     assert.ok(e.recipients.includes('carol'));
@@ -110,7 +110,7 @@ test('GET /dm-audit-log filter by recipient', async () => {
 });
 
 test('GET /dm-audit-log limit clamp', async () => {
-  const res = await request(app).get('/api/v1/plexus/public/dm-audit-log?limit=99999');
+  const res = await request(app).get('/api/v1/yaklog/public/dm-audit-log?limit=99999');
   assert.equal(res.statusCode, 200);
   assert.ok(res.body.entries.length <= 500);
 });

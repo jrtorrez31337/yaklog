@@ -101,14 +101,14 @@ test('aggregateCredentialChanges: rejects unknown group_by', () => {
 // ── HTTP endpoints ─────────────────────────────────────────────────────
 
 test('GET /audit/registration-timeline: 400 without agent_id', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/audit/registration-timeline');
+  const r = await request(app).get('/api/v1/yaklog/public/audit/registration-timeline');
   assert.equal(r.status, 400);
   assert.match(r.body.message, /agent_id/);
 });
 
 test('GET /audit/registration-timeline: returns events + transitions for agent', async () => {
   const r = await request(app)
-    .get('/api/v1/plexus/public/audit/registration-timeline?agent_id=alpha-agent');
+    .get('/api/v1/yaklog/public/audit/registration-timeline?agent_id=alpha-agent');
   assert.equal(r.status, 200);
   assert.equal(r.body.agent_id, 'alpha-agent');
   assert.equal(r.body.count, 3);
@@ -123,7 +123,7 @@ test('GET /audit/registration-timeline: returns events + transitions for agent',
 
 test('GET /audit/registration-timeline-summary: aggregates across agents', async () => {
   const r = await request(app)
-    .get('/api/v1/plexus/public/audit/registration-timeline-summary');
+    .get('/api/v1/yaklog/public/audit/registration-timeline-summary');
   assert.equal(r.status, 200);
   assert.ok(r.body.agent_count >= 2);
   const alpha = r.body.agents.find(a => a.agent_id === 'alpha-agent');
@@ -137,7 +137,7 @@ test('GET /audit/registration-timeline-summary: aggregates across agents', async
 
 test('GET /audit/credential-rotation-aggregate: default group_by=credential_class', async () => {
   const r = await request(app)
-    .get('/api/v1/plexus/public/audit/credential-rotation-aggregate');
+    .get('/api/v1/yaklog/public/audit/credential-rotation-aggregate');
   assert.equal(r.status, 200);
   assert.equal(r.body.group_by, 'credential_class');
   assert.equal(r.body.total, 3);
@@ -147,7 +147,7 @@ test('GET /audit/credential-rotation-aggregate: default group_by=credential_clas
 
 test('GET /audit/credential-rotation-aggregate: group_by=change_type', async () => {
   const r = await request(app)
-    .get('/api/v1/plexus/public/audit/credential-rotation-aggregate?group_by=change_type');
+    .get('/api/v1/yaklog/public/audit/credential-rotation-aggregate?group_by=change_type');
   assert.equal(r.status, 200);
   assert.equal(r.body.group_by, 'change_type');
   const mint = r.body.buckets.find(b => b.bucket === 'mint');
@@ -158,20 +158,20 @@ test('GET /audit/credential-rotation-aggregate: group_by=change_type', async () 
 
 test('GET /audit/credential-rotation-aggregate: 400 on unknown group_by', async () => {
   const r = await request(app)
-    .get('/api/v1/plexus/public/audit/credential-rotation-aggregate?group_by=invalid');
+    .get('/api/v1/yaklog/public/audit/credential-rotation-aggregate?group_by=invalid');
   assert.equal(r.status, 400);
 });
 
 test('GET /audit/adr-change-history: 400 on disallowed repo', async () => {
   const r = await request(app)
-    .get('/api/v1/plexus/public/audit/adr-change-history?repo=evil-repo');
+    .get('/api/v1/yaklog/public/audit/adr-change-history?repo=evil-repo');
   assert.equal(r.status, 400);
   assert.match(r.body.message, /repo must be/);
 });
 
 test('GET /audit/adr-change-history: returns commits array with shape (agent-specs repo)', async () => {
   const r = await request(app)
-    .get('/api/v1/plexus/public/audit/adr-change-history?repo=agent-specs&limit=10');
+    .get('/api/v1/yaklog/public/audit/adr-change-history?repo=agent-specs&limit=10');
   // 200 if bare repo accessible; 503 if not (test env may not have /srv/git)
   assert.ok(r.status === 200 || r.status === 503,
     `expected 200 or 503 got ${r.status}: ${JSON.stringify(r.body).slice(0, 200)}`);

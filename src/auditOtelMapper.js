@@ -82,7 +82,7 @@ function normalizeSuccess(v) {
 function mapCodexToolResult(rec, resourceLogs) {
   const occurredAt = toIso(rec.timeUnixNano);
   const spanId = rec.spanId || attr(rec, 'tool_call_id');
-  const agentId = resAttr(resourceLogs, 'plexus.agent_id')
+  const agentId = resAttr(resourceLogs, 'yaklog.agent_id')
                || resAttr(resourceLogs, 'service.instance.id')
                || 'unknown';
   return {
@@ -106,7 +106,7 @@ function mapCodexToolResult(rec, resourceLogs) {
 function mapGeminiToolCall(rec, resourceLogs) {
   const occurredAt = toIso(rec.timeUnixNano);
   const spanId = rec.spanId || attr(rec, 'tool_call_id');
-  const agentId = resAttr(resourceLogs, 'plexus.agent_id')
+  const agentId = resAttr(resourceLogs, 'yaklog.agent_id')
                || resAttr(resourceLogs, 'service.instance.id')
                || 'unknown';
   const decision = attr(rec, 'decision');

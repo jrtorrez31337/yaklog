@@ -3,7 +3,7 @@
 //
 // Time-nav aware: accepts ?period=<preset> OR ?from=&to= (YYYY-MM-DD).
 // Sister-shape existing /cost/summary + /cost/daily patterns
-// (plexusRoutes.js:508). Mounts under /api/v1/plexus/public/repos
+// (yaklogRoutes.js:508). Mounts under /api/v1/yaklog/public/repos
 // alongside existing cost/audit read endpoints.
 
 const express = require('express');
@@ -197,7 +197,7 @@ router.get('/activity-feed', (req, res) => {
   try {
     const { from, to, period } = resolveRange(req);
     const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 50));
-    // Task #277 Phase C inc-4 (plexus-ui #12797): wire optional filter_repo
+    // Task #277 Phase C inc-4 (yaklog-ui #12797): wire optional filter_repo
     // to queryRepoActivityFeed's repo_key filter (already accepts it from
     // my Phase B Task 1 commit 4547af8, but the ROUTE was missing the wire).
     // Param name filter_repo matches the /repos/heatmap family convention.

@@ -9,7 +9,7 @@
 # sister-shape and provides ample headroom vs the 2h-to-cascade observed.
 
 [Unit]
-Description=Plexus yaklog WAL checkpoint maintenance (hourly)
+Description=Yaklog yaklog WAL checkpoint maintenance (hourly)
 Requires=yaklog-wal-checkpoint.service
 
 [Timer]

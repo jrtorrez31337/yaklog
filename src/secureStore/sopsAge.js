@@ -3,7 +3,7 @@
 // + secops #10296 shape (B) separate-as-planned + secops #10319 .sops.env naming canon.
 //
 // Wraps `sops --decrypt` subprocess. age-private-key mounted at
-// /etc/plexus/yaklog-runtime.age.key (per ssw-devops #10288 OOB ferry; per
+// /etc/yaklog/yaklog-runtime.age.key (per ssw-devops #10288 OOB ferry; per
 // docker-compose volumes block to be added at Phase 2 mount). SOPS_AGE_KEY_FILE
 // env var points sops at the mounted key during decrypt invocation.
 //
@@ -22,7 +22,7 @@ const fs = require('fs');
 const path = require('path');
 
 const DEFAULT_AGE_KEY_PATH = process.env.YAKLOG_RUNTIME_AGE_KEY ||
-  '/etc/plexus/yaklog-runtime.age.key';
+  '/etc/yaklog/yaklog-runtime.age.key';
 const DEFAULT_SWARM_SECRETS_DIR = process.env.YAKLOG_SWARM_SECRETS_DIR ||
   '/srv/git/swarm-secrets/vendor-keys';
 const SOPS_TIMEOUT_MS = 5000;

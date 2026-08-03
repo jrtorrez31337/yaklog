@@ -18,7 +18,7 @@
 # Usage:
 #   ./scripts/yaklog-output-rollup.sh \
 #     --yaklog-url http://localhost:3100 \
-#     --ops-key-file /etc/plexus/output-rollup-ops-key \
+#     --ops-key-file /etc/yaklog/output-rollup-ops-key \
 #     --days-back 7
 
 set -euo pipefail

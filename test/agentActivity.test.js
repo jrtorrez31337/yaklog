@@ -100,19 +100,19 @@ test('insertion cap: per-agent 200 trim on overflow', async () => {
 });
 
 test('public mirror returns same data without auth', async () => {
-  const g = await request(app).get('/api/v1/plexus/public/activity?agent_id=agent-a&limit=10');
+  const g = await request(app).get('/api/v1/yaklog/public/activity?agent_id=agent-a&limit=10');
   assert.equal(g.statusCode, 200);
   assert.ok(Array.isArray(g.body.activity));
   assert.equal(g.body.agent_id, 'agent-a');
 });
 
 test('public mirror without agent_id → 400', async () => {
-  const g = await request(app).get('/api/v1/plexus/public/activity');
+  const g = await request(app).get('/api/v1/yaklog/public/activity');
   assert.equal(g.statusCode, 400);
 });
 
 test('public mirror with bad agent_id chars → 400', async () => {
-  const g = await request(app).get('/api/v1/plexus/public/activity?agent_id=bad%20name');
+  const g = await request(app).get('/api/v1/yaklog/public/activity?agent_id=bad%20name');
   assert.equal(g.statusCode, 400);
 });
 

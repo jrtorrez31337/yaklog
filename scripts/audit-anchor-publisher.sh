@@ -5,7 +5,7 @@
 #
 # Flow:
 #   1. POST /api/v1/ops/audit/anchor-snapshot → get current chain digest
-#   2. Publish digest to s3://plexus-audit-anchor-<env>/yyyy/mm/dd/digest.txt
+#   2. Publish digest to s3://yaklog-audit-anchor-<env>/yyyy/mm/dd/digest.txt
 #      with Object Lock Compliance mode + 7-year retention
 #   3. POST /api/v1/ops/audit/anchor-record with the anchor_uri + digest
 #
@@ -16,7 +16,7 @@
 #   ./scripts/audit-anchor-publisher.sh \
 #     --yaklog-url http://localhost:3100 \
 #     --ops-key-file /home/jon/.config/yaklog/ops-key \
-#     --s3-bucket plexus-audit-anchor-devel \
+#     --s3-bucket yaklog-audit-anchor-devel \
 #     [--dry-run]
 
 set -euo pipefail
@@ -166,27 +166,27 @@ BODY=$(printf '%s' "$RESPONSE" | head -n -1)
 
 # CP12.21 Prom metric textfile emit: write last-publish timestamp + status
 # to a textfile-collector path. node_exporter / Prom scrape-config is an
-# admin/ssw-devops coord-ask (path documented in PLEXUS-ANCHOR-OPERATIONS.md).
+# admin/ssw-devops coord-ask (path documented in YAKLOG-ANCHOR-OPERATIONS.md).
 # Emit happens regardless of yaklog-record HTTP status so operator sees
 # failed-record cases distinctly via Prom alert.
 TEXTFILE_DIR="${TEXTFILE_DIR:-/var/lib/yaklog/textfile}"
 mkdir -p "$TEXTFILE_DIR" 2>/dev/null || true
-TEXTFILE_PATH="${TEXTFILE_DIR}/plexus_audit_anchor.prom"
+TEXTFILE_PATH="${TEXTFILE_DIR}/yaklog_audit_anchor.prom"
 NOW_TS=$(date -u +%s)
 
 emit_metrics() {
   local status="$1"
   local http_code="$2"
   cat > "${TEXTFILE_PATH}.tmp" <<EOF
-# HELP plexus_audit_anchor_last_publish_ts_seconds Unix timestamp of last anchor publish attempt
-# TYPE plexus_audit_anchor_last_publish_ts_seconds gauge
-plexus_audit_anchor_last_publish_ts_seconds{substrate="${ANCHOR_SUBSTRATE}",anchor_day="${ANCHOR_DAY}"} ${NOW_TS}
-# HELP plexus_audit_anchor_publish_status Status of last anchor publish (1=success, 0=failure)
-# TYPE plexus_audit_anchor_publish_status gauge
-plexus_audit_anchor_publish_status{substrate="${ANCHOR_SUBSTRATE}",anchor_day="${ANCHOR_DAY}"} ${status}
-# HELP plexus_audit_anchor_publish_http_code Last anchor-record endpoint HTTP code
-# TYPE plexus_audit_anchor_publish_http_code gauge
-plexus_audit_anchor_publish_http_code{substrate="${ANCHOR_SUBSTRATE}"} ${http_code}
+# HELP yaklog_audit_anchor_last_publish_ts_seconds Unix timestamp of last anchor publish attempt
+# TYPE yaklog_audit_anchor_last_publish_ts_seconds gauge
+yaklog_audit_anchor_last_publish_ts_seconds{substrate="${ANCHOR_SUBSTRATE}",anchor_day="${ANCHOR_DAY}"} ${NOW_TS}
+# HELP yaklog_audit_anchor_publish_status Status of last anchor publish (1=success, 0=failure)
+# TYPE yaklog_audit_anchor_publish_status gauge
+yaklog_audit_anchor_publish_status{substrate="${ANCHOR_SUBSTRATE}",anchor_day="${ANCHOR_DAY}"} ${status}
+# HELP yaklog_audit_anchor_publish_http_code Last anchor-record endpoint HTTP code
+# TYPE yaklog_audit_anchor_publish_http_code gauge
+yaklog_audit_anchor_publish_http_code{substrate="${ANCHOR_SUBSTRATE}"} ${http_code}
 EOF
   mv -f "${TEXTFILE_PATH}.tmp" "${TEXTFILE_PATH}" 2>/dev/null || true
 }

@@ -284,27 +284,27 @@ test('CP12.12.1 verifyAuditAnchor: tamper_detected:true when digest mismatches a
 // ── HTTP endpoints — public read ────────────────────────────────────────────
 
 test('GET /audit/anchors: returns rows', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/audit/anchors');
+  const r = await request(app).get('/api/v1/yaklog/public/audit/anchors');
   assert.equal(r.status, 200);
   assert.ok(r.body.count >= 3);
 });
 
 test('GET /audit/anchors: filters by anchor_substrate', async () => {
   const r = await request(app)
-    .get('/api/v1/plexus/public/audit/anchors?anchor_substrate=rfc3161-tsa');
+    .get('/api/v1/yaklog/public/audit/anchors?anchor_substrate=rfc3161-tsa');
   assert.equal(r.status, 200);
   assert.equal(r.body.count, 1);
 });
 
 test('GET /audit/anchors: 400 on bad anchor_substrate', async () => {
   const r = await request(app)
-    .get('/api/v1/plexus/public/audit/anchors?anchor_substrate=invalid');
+    .get('/api/v1/yaklog/public/audit/anchors?anchor_substrate=invalid');
   assert.equal(r.status, 400);
 });
 
 test('GET /audit/anchor/:day: returns single substrate when ?anchor_substrate set', async () => {
   const r = await request(app)
-    .get('/api/v1/plexus/public/audit/anchor/2026-04-15?anchor_substrate=s3-object-lock');
+    .get('/api/v1/yaklog/public/audit/anchor/2026-04-15?anchor_substrate=s3-object-lock');
   assert.equal(r.status, 200);
   assert.equal(r.body.anchor_day, '2026-04-15');
   assert.equal(r.body.anchor_substrate, 's3-object-lock');
@@ -312,7 +312,7 @@ test('GET /audit/anchor/:day: returns single substrate when ?anchor_substrate se
 
 test('GET /audit/anchor/:day: returns array when day has dual-substrate anchors', async () => {
   const r = await request(app)
-    .get('/api/v1/plexus/public/audit/anchor/2026-04-20');
+    .get('/api/v1/yaklog/public/audit/anchor/2026-04-20');
   assert.equal(r.status, 200);
   assert.equal(r.body.count, 2);
   assert.equal(r.body.anchors.length, 2);
@@ -320,19 +320,19 @@ test('GET /audit/anchor/:day: returns array when day has dual-substrate anchors'
 
 test('GET /audit/anchor/:day: 404 on missing day', async () => {
   const r = await request(app)
-    .get('/api/v1/plexus/public/audit/anchor/2099-12-31');
+    .get('/api/v1/yaklog/public/audit/anchor/2099-12-31');
   assert.equal(r.status, 404);
 });
 
 test('GET /audit/anchor/:day: 400 on bad day format', async () => {
   const r = await request(app)
-    .get('/api/v1/plexus/public/audit/anchor/not-a-date');
+    .get('/api/v1/yaklog/public/audit/anchor/not-a-date');
   assert.equal(r.status, 400);
 });
 
 test('GET /audit/anchor-verify: returns found:true with match boolean', async () => {
   const r = await request(app)
-    .get('/api/v1/plexus/public/audit/anchor-verify?day=2026-04-15');
+    .get('/api/v1/yaklog/public/audit/anchor-verify?day=2026-04-15');
   assert.equal(r.status, 200);
   assert.equal(r.body.found, true);
   assert.ok(typeof r.body.match === 'boolean');
@@ -340,7 +340,7 @@ test('GET /audit/anchor-verify: returns found:true with match boolean', async ()
 
 test('GET /audit/anchor-verify: 400 without day', async () => {
   const r = await request(app)
-    .get('/api/v1/plexus/public/audit/anchor-verify');
+    .get('/api/v1/yaklog/public/audit/anchor-verify');
   assert.equal(r.status, 400);
 });
 

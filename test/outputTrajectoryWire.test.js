@@ -1,4 +1,4 @@
-// Task #288 Trajectory Lens BROWSER WIRE — plexus-ui-agent.
+// Task #288 Trajectory Lens BROWSER WIRE — yaklog-ui-agent.
 // (Server-side endpoint tests live in outputTrajectory.test.js — yaklog-dev's.)
 //
 // Marker-style: verifies the served #output tab ships the Trajectory band wired

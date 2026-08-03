@@ -57,14 +57,14 @@ test('GET /audit/credential-changes: to=YYYY-MM-DD includes events with time com
   // BEFORE FIX: to=2026-04-15 → SQL occurred_at <= '2026-04-15' → excludes 2026-04-15T14:23
   // AFTER FIX:  to=2026-04-15 → expanded to 2026-04-15T23:59:59.999Z → includes the event
   const r = await request(app)
-    .get(`/api/v1/plexus/public/audit/credential-changes?from=${DAY}&to=${DAY}`);
+    .get(`/api/v1/yaklog/public/audit/credential-changes?from=${DAY}&to=${DAY}`);
   assert.equal(r.status, 200);
   assert.ok(r.body.count >= 1, `expected ≥1 event when to=${DAY} (event at ${EVENT_TS}); got ${r.body.count}`);
 });
 
 test('GET /audit/credential-changes: to=YYYY-MM-DD-prior excludes same-day events (correctness boundary)', async () => {
   const r = await request(app)
-    .get(`/api/v1/plexus/public/audit/credential-changes?from=2026-04-01&to=2026-04-14`);
+    .get(`/api/v1/yaklog/public/audit/credential-changes?from=2026-04-01&to=2026-04-14`);
   assert.equal(r.status, 200);
   const ours = r.body.rows.filter(x => x.credential_class === 'cp1214-marker');
   assert.equal(ours.length, 0, `expected 0 cp1214 events when to=prior-day`);
@@ -74,7 +74,7 @@ test('GET /audit/credential-changes: to=YYYY-MM-DD-prior excludes same-day event
 
 test('GET /audit/permission-changes: to=YYYY-MM-DD includes events with time component on that day', async () => {
   const r = await request(app)
-    .get(`/api/v1/plexus/public/audit/permission-changes?from=${DAY}&to=${DAY}`);
+    .get(`/api/v1/yaklog/public/audit/permission-changes?from=${DAY}&to=${DAY}`);
   assert.equal(r.status, 200);
   const ours = r.body.rows.filter(x => x.agent_id === 'cp1214-agent');
   assert.ok(ours.length >= 1, `expected ≥1 perm event when to=${DAY}; got ${ours.length}`);
@@ -85,7 +85,7 @@ test('GET /audit/permission-changes: to=YYYY-MM-DD includes events with time com
 test('GET /audit/credential-changes: full ISO to passes through unchanged', async () => {
   // to=2026-04-15T15:00:00.000Z → includes 14:23 event (which is <= 15:00)
   const r = await request(app)
-    .get(`/api/v1/plexus/public/audit/credential-changes?from=2026-04-15T00:00:00.000Z&to=2026-04-15T15:00:00.000Z`);
+    .get(`/api/v1/yaklog/public/audit/credential-changes?from=2026-04-15T00:00:00.000Z&to=2026-04-15T15:00:00.000Z`);
   assert.equal(r.status, 200);
   const ours = r.body.rows.filter(x => x.credential_class === 'cp1214-marker');
   assert.equal(ours.length, 1);
@@ -93,7 +93,7 @@ test('GET /audit/credential-changes: full ISO to passes through unchanged', asyn
 
 test('GET /audit/credential-changes: full ISO to truncated mid-day excludes later events', async () => {
   const r = await request(app)
-    .get(`/api/v1/plexus/public/audit/credential-changes?from=2026-04-15T00:00:00.000Z&to=2026-04-15T13:00:00.000Z`);
+    .get(`/api/v1/yaklog/public/audit/credential-changes?from=2026-04-15T00:00:00.000Z&to=2026-04-15T13:00:00.000Z`);
   assert.equal(r.status, 200);
   const ours = r.body.rows.filter(x => x.credential_class === 'cp1214-marker');
   assert.equal(ours.length, 0, 'event at 14:23 should be excluded when full-ISO to=13:00');
@@ -103,7 +103,7 @@ test('GET /audit/credential-changes: full ISO to truncated mid-day excludes late
 
 test('GET /audit/credential-changes: only to= (no from) still includes same-day events', async () => {
   const r = await request(app)
-    .get(`/api/v1/plexus/public/audit/credential-changes?to=${DAY}`);
+    .get(`/api/v1/yaklog/public/audit/credential-changes?to=${DAY}`);
   assert.equal(r.status, 200);
   const ours = r.body.rows.filter(x => x.credential_class === 'cp1214-marker');
   assert.ok(ours.length >= 1);
@@ -113,7 +113,7 @@ test('GET /audit/credential-changes: only to= (no from) still includes same-day 
 
 test('GET /audit/credential-rotation-aggregate: to=YYYY-MM-DD includes same-day events', async () => {
   const r = await request(app)
-    .get(`/api/v1/plexus/public/audit/credential-rotation-aggregate?from=${DAY}&to=${DAY}&group_by=actor`);
+    .get(`/api/v1/yaklog/public/audit/credential-rotation-aggregate?from=${DAY}&to=${DAY}&group_by=actor`);
   assert.equal(r.status, 200);
   const cp1214 = r.body.buckets.find(b => b.bucket === 'cp1214-admin');
   assert.ok(cp1214 && cp1214.count >= 1, 'cp1214 admin event should appear when to=YYYY-MM-DD on the same day');

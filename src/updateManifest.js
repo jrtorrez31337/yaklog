@@ -32,7 +32,7 @@ const MANIFEST = {
         'WORK=$(mktemp -d); git clone /srv/git/yaklog.git "$WORK/y"; ' +
         'cd "$WORK/y" && docker compose up -d --build yaklog',
       description:
-        'Node.js/Express/SQLite SSE message bus + Plexus dashboard. ' +
+        'Node.js/Express/SQLite SSE message bus + Yaklog dashboard. ' +
         'Runs in docker; rebuild + restart picks up the new commit.',
       changed_in:
         'CP6.13 (rate/lookback labels) + CP6.10 (Runtime card split) + ' +
@@ -47,7 +47,7 @@ const MANIFEST = {
       source_path: 'yaklog-sub/yaklog-sub',
       install_command:
         'WORK=$(mktemp -d); git clone /srv/git/agent-tooling.git "$WORK/at" && ' +
-        '"$WORK/at/yaklog-sub/install-plexus.sh"',
+        '"$WORK/at/yaklog-sub/install-yaklog.sh"',
       description:
         'Per-agent Python daemon: tails state.jsonl, posts /presence/event ' +
         'heartbeat. v0.5.19.2 forwards wrapper-emitted SessionHealth events ' +
@@ -79,7 +79,7 @@ const MANIFEST = {
       check_dashboard_pill: true,
       download_url: '/api/v1/update/artifact/yaklog-sub',
       auto_update_env: 'YAKLOG_AUTO_UPDATE=1',
-      install_via: 'install-plexus.sh',
+      install_via: 'install-yaklog.sh',
     },
 
     {
@@ -103,14 +103,14 @@ const MANIFEST = {
     },
 
     {
-      name: 'install-plexus-otel.sh',
+      name: 'install-yaklog-otel.sh',
       version: 'v3 (b5622e8)',
       source_repo: '/srv/git/yaklog.git',
-      source_path: 'otel/install-plexus-otel.sh',
+      source_path: 'otel/install-yaklog-otel.sh',
       install_command:
         'WORK=$(mktemp -d); git clone /srv/git/yaklog.git "$WORK/y" && ' +
-        'install -m 755 "$WORK/y/otel/install-plexus-otel.sh" ~/install-plexus-otel.sh && ' +
-        '~/install-plexus-otel.sh <YOUR-AGENT-ID>',
+        'install -m 755 "$WORK/y/otel/install-yaklog-otel.sh" ~/install-yaklog-otel.sh && ' +
+        '~/install-yaklog-otel.sh <YOUR-AGENT-ID>',
       description:
         'Per-agent OTel opt-in installer. v3 writes to ' +
         '<workspace>/.claude/settings.local.json env (CC reads at session start). ' +
@@ -122,13 +122,13 @@ const MANIFEST = {
     },
 
     {
-      name: 'plexus-emit.sh',
+      name: 'yaklog-emit.sh',
       version: 'edaba03',
       source_repo: '/srv/git/yaklog.git',
-      source_path: 'otel/plexus-emit.sh',
+      source_path: 'otel/yaklog-emit.sh',
       install_command:
         'WORK=$(mktemp -d); git clone /srv/git/yaklog.git "$WORK/y" && ' +
-        'mkdir -p ~/.yaklog && install -m 755 "$WORK/y/otel/plexus-emit.sh" ~/.yaklog/plexus-emit.sh',
+        'mkdir -p ~/.yaklog && install -m 755 "$WORK/y/otel/yaklog-emit.sh" ~/.yaklog/yaklog-emit.sh',
       description:
         'OTLP push helper for non-CC runtimes (Gemini CLI, Codex, custom). ' +
         'Hides OTLP/HTTP JSON payload shape behind a one-line invocation.',

@@ -245,7 +245,7 @@ function maybeAddGitHubWalker(walkers, db) {
   const patFile = process.env.GITHUB_PAT_FILE;
   if (!patFile) return walkers;  // no PAT configured → graceful-degradation
   // Bootstrap output_repo from per-host config if empty + config exists
-  const configPath = process.env.OUTPUT_REPO_CONFIG_FILE || '/etc/plexus/output-repos.txt';
+  const configPath = process.env.OUTPUT_REPO_CONFIG_FILE || '/etc/yaklog/output-repos.txt';
   dbModule.bootstrapOutputReposFromConfig(configPath);
   const enabledRepos = dbModule.listEnabledOutputRepos();
   if (enabledRepos.length === 0) return walkers;  // no repos enabled → skip

@@ -71,7 +71,7 @@ module.exports = {
   // (NOT per agent — file-access is host-scope). Reuses same `host:token`
   // CSV shape as YAKLOG_DAEMON_BINDINGS. Host identifier is the hostname
   // string the per-host ingester reports in events (e.g. 'devel',
-  // 'operator-host'). Token lives in EnvironmentFile per plexus-audit-ingester
+  // 'operator-host'). Token lives in EnvironmentFile per yaklog-audit-ingester
   // service-account. Never reuse an agent's token — confuses substrate
   // attribution with message-bus identity per secops #7810.
   hostIngesterBindings: parseTokenBindings(process.env.YAKLOG_HOST_INGESTER_BINDINGS),
@@ -97,11 +97,11 @@ module.exports = {
   ),
   presenceTtlSeconds: parseNumber(process.env.YAKLOG_PRESENCE_TTL_S, 90),
   presenceSweepIntervalMs: parseNumber(process.env.YAKLOG_PRESENCE_SWEEP_MS, 30_000),
-  // Plexus Prometheus URL — Stage 2 backend query proxy talks to this.
+  // Yaklog Prometheus URL — Stage 2 backend query proxy talks to this.
   // Default targets the docker-compose service-name (resolves on yaklog_default network).
-  plexusPromUrl: process.env.YAKLOG_PLEXUS_PROM_URL || 'http://plexus-prometheus:9090',
-  plexusQueryCacheTtlMs: parseNumber(process.env.YAKLOG_PLEXUS_QUERY_CACHE_TTL_MS, 60_000),
-  plexusQueryCacheMaxEntries: parseNumber(process.env.YAKLOG_PLEXUS_QUERY_CACHE_MAX, 500),
-  plexusQueryTimeoutMs: parseNumber(process.env.YAKLOG_PLEXUS_QUERY_TIMEOUT_MS, 5_000),
+  yaklogPromUrl: process.env.YAKLOG_YAKLOG_PROM_URL || 'http://yaklog-prometheus:9090',
+  yaklogQueryCacheTtlMs: parseNumber(process.env.YAKLOG_YAKLOG_QUERY_CACHE_TTL_MS, 60_000),
+  yaklogQueryCacheMaxEntries: parseNumber(process.env.YAKLOG_YAKLOG_QUERY_CACHE_MAX, 500),
+  yaklogQueryTimeoutMs: parseNumber(process.env.YAKLOG_YAKLOG_QUERY_TIMEOUT_MS, 5_000),
   isProduction: process.env.NODE_ENV === 'production'
 };

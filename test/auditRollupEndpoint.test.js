@@ -73,7 +73,7 @@ test.after(() => {
 
 test('GET /audit/by-control-area: period=today live-only path (rollup not consulted)', async () => {
   const r = await request(app)
-    .get(`/api/v1/plexus/public/audit/by-control-area?control_framework=soc2&period=today`);
+    .get(`/api/v1/yaklog/public/audit/by-control-area?control_framework=soc2&period=today`);
   assert.equal(r.status, 200);
   assert.equal(r.body._live_day, todayUtc);
   assert.equal(r.body._rollup_tier_used, false);
@@ -85,7 +85,7 @@ test('GET /audit/by-control-area: period=mtd with EMPTY rollup → baseline sing
   // Rollup table empty for soc2 framework — single-range fallback path used
   // (sister-shape pre-Phase-1c). Empirical-fix per ssw-devops #10883.
   const r = await request(app)
-    .get(`/api/v1/plexus/public/audit/by-control-area?control_framework=soc2&period=mtd`);
+    .get(`/api/v1/yaklog/public/audit/by-control-area?control_framework=soc2&period=mtd`);
   assert.equal(r.status, 200);
   assert.equal(r.body._rollup_tier_used, false, 'rollup empty → baseline single-range');
   const cc7 = r.body.control_areas.find((a) => a.id === 'CC7');
@@ -121,7 +121,7 @@ test('GET /audit/by-control-area: period spanning past with FULL rollup coverage
   // control. Skip-assert that rollup IS used; instead assert response shape
   // when SOME rollup data exists for matching range.
   const r = await request(app)
-    .get(`/api/v1/plexus/public/audit/by-control-area?control_framework=iso27001&period=7d`);
+    .get(`/api/v1/yaklog/public/audit/by-control-area?control_framework=iso27001&period=7d`);
   assert.equal(r.status, 200);
   // _rollup_rows_available > 0 confirms rollup data was fetched for the range
   assert.ok(r.body._rollup_rows_available >= 0, 'response carries rollup metadata');
@@ -131,14 +131,14 @@ test('GET /audit/by-control-area: period spanning past with FULL rollup coverage
 
 test('GET /audit/by-control-area: bad framework rejected', async () => {
   const r = await request(app)
-    .get(`/api/v1/plexus/public/audit/by-control-area?control_framework=bogus&period=mtd`);
+    .get(`/api/v1/yaklog/public/audit/by-control-area?control_framework=bogus&period=mtd`);
   assert.equal(r.status, 400);
   assert.match(r.body.message, /control_framework must be one of/);
 });
 
 test('GET /audit/by-control-area: every framework area present in response', async () => {
   const r = await request(app)
-    .get(`/api/v1/plexus/public/audit/by-control-area?control_framework=soc2&period=mtd`);
+    .get(`/api/v1/yaklog/public/audit/by-control-area?control_framework=soc2&period=mtd`);
   assert.equal(r.status, 200);
   const areaIds = r.body.control_areas.map((a) => a.id).sort();
   assert.deepEqual(areaIds, ['CC1', 'CC2', 'CC6', 'CC7', 'CC8', 'CC9']);
@@ -151,7 +151,7 @@ test('REGRESSION GUARD: empty rollup → query count matches baseline single-ran
   // hint surfaces the path taken; this assertion is the canary for future
   // regressions.
   const r = await request(app)
-    .get(`/api/v1/plexus/public/audit/by-control-area?control_framework=soc2&period=mtd`);
+    .get(`/api/v1/yaklog/public/audit/by-control-area?control_framework=soc2&period=mtd`);
   assert.equal(r.status, 200);
   assert.equal(r.body._rollup_tier_used, false, 'rollup not used when empty → single-range path');
 });

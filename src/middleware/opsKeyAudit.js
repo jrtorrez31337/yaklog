@@ -13,7 +13,7 @@
 //
 // Per feedback_admin_session_otel_secret_leak: admin's OTel ships raw API
 // bodies. If admin posts /ops/audit/reconcile from a CC session, the raw
-// ops-key in Authorization: would cross the Plexus collector. This
+// ops-key in Authorization: would cross the Yaklog collector. This
 // middleware ensures the in-memory header value the collector sees is
 // already the sha256-prefix form.
 

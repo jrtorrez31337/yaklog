@@ -305,7 +305,7 @@ function computeCompositionByAgent(db, opts = {}) {
   const bound = periodBound(periodDays);
   const repoKey = opts.repo_key || null;
 
-  // Task #277 Phase C inc-4 (plexus-ui #12797): optional repo_key filter for
+  // Task #277 Phase C inc-4 (yaklog-ui #12797): optional repo_key filter for
   // #output repo-focused drill-in. When null (cluster-wide), preserves the
   // legacy universe. When set, agent universe still spans coord+commit+merge+cost
   // but the per-source counts scope to `repo`/`repo` clauses. cost_daily has NO
@@ -337,7 +337,7 @@ function computeCompositionByAgent(db, opts = {}) {
           AND (@repo_key IS NULL OR repo = @repo_key)) AS merges,
       (SELECT COALESCE(SUM(cost_usd), 0) FROM cost_daily WHERE agent_id = u.agent_id AND date >= date('now', '-${periodDays} days')) AS cost_usd
     FROM agent_universe u
-    WHERE u.agent_id NOT IN ('plexus-admin', 'jon', 'Jon', 'ops', 'admin', '')
+    WHERE u.agent_id NOT IN ('yaklog-admin', 'jon', 'Jon', 'ops', 'admin', '')
     ORDER BY merges DESC, coord_msgs DESC
   `).all({ repo_key: repoKey });
 

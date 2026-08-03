@@ -13,15 +13,15 @@
 #      review-pair canon at handoff #9768)
 #   1. cp scripts/systemd/yaklog-audit-rollup.service /etc/systemd/system/
 #   2. cp scripts/systemd/yaklog-audit-rollup.timer   /etc/systemd/system/
-#   3. cp scripts/systemd/yaklog-audit-rollup.env.example /etc/plexus/yaklog-audit-rollup.env
-#      + edit to set PLEXUS_OPS_KEY_FILE path
-#   4. install -d -m 0755 -o plexus-audit-rollup -g plexus-audit-rollup \
+#   3. cp scripts/systemd/yaklog-audit-rollup.env.example /etc/yaklog/yaklog-audit-rollup.env
+#      + edit to set YAKLOG_OPS_KEY_FILE path
+#   4. install -d -m 0755 -o yaklog-audit-rollup -g yaklog-audit-rollup \
 #      /var/lib/yaklog/textfile/audit-rollup
 #   5. systemctl daemon-reload
 #   6. systemctl enable --now yaklog-audit-rollup.timer
 
 [Unit]
-Description=Plexus CP16 audit-aggregate rollup driver
+Description=Yaklog CP16 audit-aggregate rollup driver
 After=network-online.target docker.service
 Wants=docker.service
 
@@ -30,13 +30,13 @@ Type=oneshot
 
 # Dedicated unprivileged runner per secops least-privilege canon.
 # Operator creates with:
-#   useradd --system --no-create-home --shell /usr/sbin/nologin plexus-audit-rollup
-User=plexus-audit-rollup
-Group=plexus-audit-rollup
+#   useradd --system --no-create-home --shell /usr/sbin/nologin yaklog-audit-rollup
+User=yaklog-audit-rollup
+Group=yaklog-audit-rollup
 
-# EnvironmentFile provides PLEXUS_OPS_KEY_FILE path (mode-600 owned by
+# EnvironmentFile provides YAKLOG_OPS_KEY_FILE path (mode-600 owned by
 # this service user); never argv per feedback_secrets_no_yaklog.
-EnvironmentFile=/etc/plexus/yaklog-audit-rollup.env
+EnvironmentFile=/etc/yaklog/yaklog-audit-rollup.env
 
 # Prom textfile collector sub-directory. Sister-shape to existing
 # /var/lib/yaklog/textfile/ canonical tree (output-ingester / wal-checkpoint
@@ -45,7 +45,7 @@ EnvironmentFile=/etc/plexus/yaklog-audit-rollup.env
 Environment=TEXTFILE_DIR=/var/lib/yaklog/textfile/audit-rollup
 
 # Defaults to 7-day window per incremental rollup canon; can be overridden via
-# /etc/plexus/yaklog-audit-rollup.env DAYS_BACK= (e.g. 90 for full backfill
+# /etc/yaklog/yaklog-audit-rollup.env DAYS_BACK= (e.g. 90 for full backfill
 # at deploy time per PLAN §13 option (a)/(d) bridge use case).
 Environment=DAYS_BACK=7
 
@@ -55,10 +55,10 @@ Environment=DAYS_BACK=7
 # install sequence (mode 0755 root:root).
 ExecStart=/usr/local/bin/yaklog-audit-rollup.sh \
   --yaklog-url http://localhost:3100 \
-  --ops-key-file ${PLEXUS_OPS_KEY_FILE} \
+  --ops-key-file ${YAKLOG_OPS_KEY_FILE} \
   --days-back ${DAYS_BACK}
 
-# Hardening (mirror plexus-audit-ingester + audit-anchor-publisher pattern)
+# Hardening (mirror yaklog-audit-ingester + audit-anchor-publisher pattern)
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true

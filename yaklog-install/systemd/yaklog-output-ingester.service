@@ -1,0 +1,26 @@
+[Unit]
+Description=Yaklog output-strand ingester (demo flavor)
+After=network-online.target docker.service
+Wants=docker.service
+
+[Service]
+Type=oneshot
+
+User=yaklog-admin
+Group=yaklog-admin
+
+EnvironmentFile=/etc/yaklog-demo/output-ingester.env
+Environment=TEXTFILE_DIR=/var/lib/yaklog-demo/textfile/output-ingester
+
+ExecStart=/usr/local/bin/yaklog-output-ingester.sh \
+  --yaklog-url http://127.0.0.1:3100 \
+  --ops-key-file ${YAKLOG_OPS_KEY_FILE}
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/yaklog-demo/textfile/output-ingester
+PrivateTmp=true
+
+StandardOutput=journal
+StandardError=journal

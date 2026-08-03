@@ -61,7 +61,7 @@ test('gemini_cli.tool_call → audit_tool_invocation row with runtime_class=gemi
     .post('/api/v1/audit/ingest/otel')
     .set('Authorization', 'Bearer ops-key')
     .send(makeBatch([geminiToolCall()], [
-      { key: 'plexus.agent_id', value: { stringValue: 'gemini-agent' } },
+      { key: 'yaklog.agent_id', value: { stringValue: 'gemini-agent' } },
     ]));
   assert.equal(r.statusCode, 200);
   assert.equal(r.body.ingested_count, 1);
@@ -88,7 +88,7 @@ test('gemini_cli.tool_call with tool_type=mcp + mcp_server_name → tool_provena
     .send(makeBatch([geminiToolCall({
       span_id: 'gem-mcp-1', tool_type: 'mcp', mcp_server_name: 'filesystem',
     })], [
-      { key: 'plexus.agent_id', value: { stringValue: 'gemini-agent' } },
+      { key: 'yaklog.agent_id', value: { stringValue: 'gemini-agent' } },
     ]));
   const db = getDb();
   const row = db.prepare(`SELECT tool_provenance FROM audit_tool_invocation WHERE span_id = ?`).get('gem-mcp-1');
@@ -100,7 +100,7 @@ test('gemini_cli.tool_call decision=reject → approval_state=reject', async () 
     .post('/api/v1/audit/ingest/otel')
     .set('Authorization', 'Bearer ops-key')
     .send(makeBatch([geminiToolCall({ span_id: 'gem-reject-1', decision: 'reject' })], [
-      { key: 'plexus.agent_id', value: { stringValue: 'gemini-agent' } },
+      { key: 'yaklog.agent_id', value: { stringValue: 'gemini-agent' } },
     ]));
   const db = getDb();
   const row = db.prepare(`SELECT approval_state FROM audit_tool_invocation WHERE span_id = ?`).get('gem-reject-1');

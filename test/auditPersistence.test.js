@@ -346,7 +346,7 @@ test('audit_reconciliation: insert + delta computation', () => {
   const r = insertAuditReconciliation({
     period_start: '2026-06-01', period_end: '2026-06-30',
     external_system_label: 'siem',
-    plexus_count: 1000, external_count: 998,
+    yaklog_count: 1000, external_count: 998,
     reconciler_agent_id: 'agent-secops',
     reconciled_by: 'opskey-sha256-abc',
     concentration_json: { tool_invocations: 800, file_access: 198 },
@@ -360,7 +360,7 @@ test('audit_reconciliation: required fields enforced', () => {
     () => insertAuditReconciliation({
       period_start: '2026-06-01', period_end: '2026-06-30',
       external_system_label: 'siem',
-      plexus_count: 100, external_count: 100,
+      yaklog_count: 100, external_count: 100,
       reconciled_by: 'x',
       // missing reconciler_agent_id (admin R3)
     }),
@@ -372,7 +372,7 @@ test('audit_reconciliation: list newest-first', () => {
   insertAuditReconciliation({
     period_start: '2026-05-01', period_end: '2026-05-31',
     external_system_label: 'grc-platform',
-    plexus_count: 50, external_count: 50,
+    yaklog_count: 50, external_count: 50,
     reconciler_agent_id: 'agent-x', reconciled_by: 'opskey-x',
   });
   const rows = listAuditReconciliations({ limit: 5 });

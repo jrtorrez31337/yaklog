@@ -8,7 +8,7 @@
 //
 // Per secops: dedicated `YAKLOG_HOST_INGESTER_BINDINGS` env. NOT shared with
 // YAKLOG_DAEMON_BINDINGS (would conflate substrate-identity with agent-bus-
-// identity). Token lives in the per-host plexus-audit-ingester service-account's
+// identity). Token lives in the per-host yaklog-audit-ingester service-account's
 // EnvironmentFile.
 
 const config = require('../config');

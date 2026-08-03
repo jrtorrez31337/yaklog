@@ -1,5 +1,5 @@
 // Task #246 Per-Ptah-instance ORP TraceRecord endpoints.
-// Mounted at /api/v1/plexus/ptah-orp (matches dashboard.js _renderTrace fetch
+// Mounted at /api/v1/yaklog/ptah-orp (matches dashboard.js _renderTrace fetch
 // path canon documented in agent-globals/agentcard-field-spec.md §2.6 —
 // zero dashboard wire churn per PLAN v4 §2.4 Q7 ratify).
 //

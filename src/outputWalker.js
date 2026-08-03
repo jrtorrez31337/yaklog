@@ -257,7 +257,7 @@ class BareGitWalker extends OutputWalker {
 //   - Q1 Option C: output_repo table (canonical allowlist substrate-tier;
 //     bootstrap from per-host config + ops-mutable via Phase 2.2 endpoint)
 //   - Q2 Option A: single canonical PAT at mode-600 file
-//     `~plexus-output-ingester/.config/yaklog/github-pat.token`; scope
+//     `~yaklog-output-ingester/.config/yaklog/github-pat.token`; scope
 //     `repo:read` + `pull_requests:read` only; EnvironmentFile reference
 //     via `GITHUB_PAT_FILE` env-var; NEVER argv per feedback_secrets_no_yaklog
 //   - Q3 DROP: no output_pr_review table (semantic-class-2 anti-feature)
@@ -278,7 +278,7 @@ class GitHubWalker extends OutputWalker {
    *
    * @param {object} opts
    * @param {string} [opts.patFile] - path to GitHub PAT file (mode-600;
-   *   canonical: `~plexus-output-ingester/.config/yaklog/github-pat.token`
+   *   canonical: `~yaklog-output-ingester/.config/yaklog/github-pat.token`
    *   per Q2 Option A ratify). Walker-class agnostic to canonical path
    *   (caller supplies via constructor).
    * @param {string[]} [opts.repos] - GitHub owner/repo allowlist (canonical

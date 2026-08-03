@@ -1,5 +1,5 @@
 // Task #223 v1 tests — agent_channel_subscription canonical-authority tier
-// per PLAN-PLEXUS-ADMIN-CHANNEL-SUBSCRIPTION + parch #11225 RATIFY.
+// per PLAN-YAKLOG-ADMIN-CHANNEL-SUBSCRIPTION + parch #11225 RATIFY.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -30,17 +30,17 @@ test.after(() => closeDb());
 test('setAgentChannels: writes canonical list + returns dedup-sorted', () => {
   const result = setAgentChannels({
     agent_id: 'agent-a',
-    channels: ['plexus', 'handoff', 'plexus', 'agents'],  // dupe
+    channels: ['yaklog', 'handoff', 'yaklog', 'agents'],  // dupe
     subscribed_by: 'admin-agent',
   });
-  assert.deepEqual(result.channels, ['agents', 'handoff', 'plexus']);  // dedup + sort
+  assert.deepEqual(result.channels, ['agents', 'handoff', 'yaklog']);  // dedup + sort
   assert.equal(result.agent_id, 'agent-a');
   assert.equal(result.subscribed_by, 'admin-agent');
 });
 
 test('getAgentChannels: returns previously-set list sorted', () => {
   const channels = getAgentChannels('agent-a');
-  assert.deepEqual(channels, ['agents', 'handoff', 'plexus']);
+  assert.deepEqual(channels, ['agents', 'handoff', 'yaklog']);
 });
 
 test('setAgentChannels: REPLACE semantics — new set overwrites old', () => {
@@ -75,7 +75,7 @@ test('setAgentChannels: audit-emission via CP12.15 helper (subscribe deltas)', (
   const beforeCount = listAuditChannelSubscriptionChanges({ agent_id: 'agent-b' }).length;
   setAgentChannels({
     agent_id: 'agent-b',
-    channels: ['handoff', 'plexus'],
+    channels: ['handoff', 'yaklog'],
     subscribed_by: 'admin-agent',
   });
   const rows = listAuditChannelSubscriptionChanges({ agent_id: 'agent-b' });
@@ -89,13 +89,13 @@ test('setAgentChannels: audit-emission on unsubscribe delta', () => {
   const before = listAuditChannelSubscriptionChanges({ agent_id: 'agent-b' }).length;
   setAgentChannels({
     agent_id: 'agent-b',
-    channels: ['handoff'],  // dropping plexus
+    channels: ['handoff'],  // dropping yaklog
     subscribed_by: 'admin-agent',
   });
   const rows = listAuditChannelSubscriptionChanges({ agent_id: 'agent-b' });
   const newRows = rows.slice(0, rows.length - before);
   const unsubs = newRows.filter(r => r.change_type === 'unsubscribe');
-  assert.ok(unsubs.some(r => r.channel_name === 'plexus'));
+  assert.ok(unsubs.some(r => r.channel_name === 'yaklog'));
 });
 
 // ─── Endpoint tests ─────────────────────────────────────────────────────
@@ -104,7 +104,7 @@ test('POST /register/:id/channels — ops-key required (bearer non-ops rejected)
   const res = await request(app)
     .post('/api/v1/register/agent-a/channels')
     .set(authA)
-    .send({ channels: ['plexus'] });
+    .send({ channels: ['yaklog'] });
   // enforceOpsKey returns 403 when non-ops bearer used (authenticated but not authorized)
   assert.ok(res.statusCode === 401 || res.statusCode === 403, `expected 401/403 got ${res.statusCode}`);
 });
@@ -113,7 +113,7 @@ test('POST /register/:id/channels — invalid agent_id → 400', async () => {
   const res = await request(app)
     .post('/api/v1/register/!!!bad$$$/channels')
     .set(opsHdr)
-    .send({ channels: ['plexus'] });
+    .send({ channels: ['yaklog'] });
   assert.equal(res.statusCode, 400);
 });
 
@@ -121,7 +121,7 @@ test('POST /register/:id/channels — non-array body.channels → 400', async ()
   const res = await request(app)
     .post('/api/v1/register/agent-a/channels')
     .set(opsHdr)
-    .send({ channels: 'plexus' });
+    .send({ channels: 'yaklog' });
   assert.equal(res.statusCode, 400);
 });
 
@@ -129,9 +129,9 @@ test('POST /register/:id/channels — ops-key sets canonical list', async () => 
   const res = await request(app)
     .post('/api/v1/register/agent-a/channels')
     .set(opsHdr)
-    .send({ channels: ['handoff', 'plexus'] });
+    .send({ channels: ['handoff', 'yaklog'] });
   assert.equal(res.statusCode, 200);
-  assert.deepEqual(res.body.channels, ['handoff', 'plexus']);
+  assert.deepEqual(res.body.channels, ['handoff', 'yaklog']);
   assert.equal(res.body.subscribed_by, 'admin-agent');
 });
 

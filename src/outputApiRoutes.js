@@ -112,7 +112,7 @@ publicRouter.get('/composition', (req, res) => {
       message: 'by must be one of: agent, repo',
     });
   }
-  // Task #277 Phase C inc-4 (plexus-ui #12797): optional ?repo filter for
+  // Task #277 Phase C inc-4 (yaklog-ui #12797): optional ?repo filter for
   // #output repo-focused drill-in. Same shape as /trajectory / /repo-summary
   // / /repo-governance — `repo=<owner/name>` regex-validated at route tier.
   const repoQ = typeof req.query.repo === 'string' ? req.query.repo.trim() : '';
@@ -149,8 +149,8 @@ publicRouter.get('/anomalies', (req, res) => {
 // Task #259 / PLAN-EFFORT-PACE-ENDPOINT (parch #11211 RATIFY `/output/pace`
 // naming + s345 #11212 surface-class CONFIRM + parch OQ2-4 silence-is-ack).
 //
-// Linear projection sister-shape /api/v1/plexus/public/cost/projection
-// (src/plexusRoutes.js:597). Effort-strand equivalent: project end-of-period
+// Linear projection sister-shape /api/v1/yaklog/public/cost/projection
+// (src/yaklogRoutes.js:597). Effort-strand equivalent: project end-of-period
 // counts (linear extrapolation) + rate-class metrics as steady-state.
 //
 // Per-audience filter sister to /ratios filterRatiosByAudience (BUYER returns
@@ -250,10 +250,10 @@ publicRouter.get('/coverage-gap', (req, res) => {
 // Fold-B-by-construction: ALL fields cross-tier-safe (OUTCOME/COVERAGE/PROOF).
 // The always-fetched hero-summary payload PHYSICALLY cannot leak tier-gated
 // data regardless of client bug — defense-in-depth via data-partitioning
-// (plexus-ui #11973 applause). Tier-gated tiles fetch /output/ratios?audience=<tier>
+// (yaklog-ui #11973 applause). Tier-gated tiles fetch /output/ratios?audience=<tier>
 // separately.
 //
-// Contract locked at plexus-ui #11975 + s345 #11973 (R1 total-headline
+// Contract locked at yaklog-ui #11975 + s345 #11973 (R1 total-headline
 // expose-both; R2 lifetime cumulative, never window-rate).
 publicRouter.get('/hero-summary', (req, res) => {
   try {

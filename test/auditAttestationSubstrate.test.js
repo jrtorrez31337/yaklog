@@ -106,7 +106,7 @@ test('listAuditAttestations: filters by control_area', () => {
 // ── HTTP: by-control-area reflects attestation counts per area ─────────────
 
 test('by-control-area: CC1/CC2/CC9 now substrate-wired (audit_attestation)', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/audit/by-control-area?control_framework=soc2&period=mtd');
+  const r = await request(app).get('/api/v1/yaklog/public/audit/by-control-area?control_framework=soc2&period=mtd');
   assert.equal(r.status, 200);
   const areas = r.body.control_areas || [];
   const cc1 = areas.find(a => a.id === 'CC1');
@@ -122,7 +122,7 @@ test('by-control-area: CC1/CC2/CC9 now substrate-wired (audit_attestation)', asy
 });
 
 test('by-control-area: CC1 count reflects only CC1-area attestations (no cross-area inflation)', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/audit/by-control-area?control_framework=soc2&period=mtd');
+  const r = await request(app).get('/api/v1/yaklog/public/audit/by-control-area?control_framework=soc2&period=mtd');
   const areas = r.body.control_areas || [];
   const cc1 = areas.find(a => a.id === 'CC1');
   const cc2 = areas.find(a => a.id === 'CC2');

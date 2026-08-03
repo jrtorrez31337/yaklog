@@ -139,10 +139,10 @@ test('rollupOutputWindow — invalid daysBack rejects', () => {
   assert.throws(() => rollupOutputWindow({ daysBack: 'abc' }), /1..365/);
 });
 
-// ── /api/v1/plexus/public/repos/* (public reads) ──────────────────────────
+// ── /api/v1/yaklog/public/repos/* (public reads) ──────────────────────────
 
 test('GET /repos/summary — aggregate over from/to window', async () => {
-  const res = await request(app).get('/api/v1/plexus/public/repos/summary?from=2026-07-01&to=2026-07-03');
+  const res = await request(app).get('/api/v1/yaklog/public/repos/summary?from=2026-07-01&to=2026-07-03');
   assert.equal(res.statusCode, 200);
   assert.ok(res.body.commit_count > 0);
   assert.equal(res.body.from, '2026-07-01');
@@ -155,7 +155,7 @@ test('GET /repos/summary — aggregate over from/to window', async () => {
 });
 
 test('GET /repos/summary — period=7d default resolver', async () => {
-  const res = await request(app).get('/api/v1/plexus/public/repos/summary?period=7d');
+  const res = await request(app).get('/api/v1/yaklog/public/repos/summary?period=7d');
   assert.equal(res.statusCode, 200);
   assert.equal(res.body.period, '7d');
   assert.ok(res.body.from);
@@ -163,12 +163,12 @@ test('GET /repos/summary — period=7d default resolver', async () => {
 });
 
 test('GET /repos/summary — invalid from/to → 400', async () => {
-  const res = await request(app).get('/api/v1/plexus/public/repos/summary?from=nope&to=nope');
+  const res = await request(app).get('/api/v1/yaklog/public/repos/summary?from=nope&to=nope');
   assert.equal(res.statusCode, 400);
 });
 
 test('GET /repos/heatmap — cells + scale', async () => {
-  const res = await request(app).get('/api/v1/plexus/public/repos/heatmap?from=2026-07-01&to=2026-07-03&dim=commits');
+  const res = await request(app).get('/api/v1/yaklog/public/repos/heatmap?from=2026-07-01&to=2026-07-03&dim=commits');
   assert.equal(res.statusCode, 200);
   assert.equal(res.body.dim, 'commits');
   assert.ok(Array.isArray(res.body.cells));
@@ -179,8 +179,8 @@ test('GET /repos/heatmap — cells + scale', async () => {
 });
 
 test('GET /repos/heatmap — filter_repo narrows correctly', async () => {
-  const all = await request(app).get('/api/v1/plexus/public/repos/heatmap?from=2026-07-01&to=2026-07-03&dim=commits');
-  const filtered = await request(app).get('/api/v1/plexus/public/repos/heatmap?from=2026-07-01&to=2026-07-03&dim=commits&filter_repo=repo1.git');
+  const all = await request(app).get('/api/v1/yaklog/public/repos/heatmap?from=2026-07-01&to=2026-07-03&dim=commits');
+  const filtered = await request(app).get('/api/v1/yaklog/public/repos/heatmap?from=2026-07-01&to=2026-07-03&dim=commits&filter_repo=repo1.git');
   const sumAll = all.body.cells.reduce((a, c) => a + (c.value || 0), 0);
   const sumFiltered = filtered.body.cells.reduce((a, c) => a + (c.value || 0), 0);
   assert.ok(sumFiltered <= sumAll);
@@ -188,7 +188,7 @@ test('GET /repos/heatmap — filter_repo narrows correctly', async () => {
 });
 
 test('GET /repos/heatmap — filter_agent narrows correctly', async () => {
-  const res = await request(app).get('/api/v1/plexus/public/repos/heatmap?from=2026-07-01&to=2026-07-03&dim=commits&filter_agent=agent-alice');
+  const res = await request(app).get('/api/v1/yaklog/public/repos/heatmap?from=2026-07-01&to=2026-07-03&dim=commits&filter_agent=agent-alice');
   assert.equal(res.statusCode, 200);
   // Should include alice commits (3+4+1=8) not bob (2) or unattributed (2)
   const total = res.body.cells.reduce((a, c) => a + (c.value || 0), 0);
@@ -196,12 +196,12 @@ test('GET /repos/heatmap — filter_agent narrows correctly', async () => {
 });
 
 test('GET /repos/heatmap — invalid dim → 400', async () => {
-  const res = await request(app).get('/api/v1/plexus/public/repos/heatmap?from=2026-07-01&to=2026-07-03&dim=nope');
+  const res = await request(app).get('/api/v1/yaklog/public/repos/heatmap?from=2026-07-01&to=2026-07-03&dim=nope');
   assert.equal(res.statusCode, 400);
 });
 
 test('GET /repos/list — per-repo aggregates + type enrichment', async () => {
-  const res = await request(app).get('/api/v1/plexus/public/repos/list?from=2026-07-01&to=2026-07-03');
+  const res = await request(app).get('/api/v1/yaklog/public/repos/list?from=2026-07-01&to=2026-07-03');
   assert.equal(res.statusCode, 200);
   assert.ok(Array.isArray(res.body.repos));
   const repo1 = res.body.repos.find(r => r.repo_key === 'repo1.git');
@@ -217,7 +217,7 @@ test('GET /repos/list — github type enrichment via output_repo', async () => {
   await request(app).post('/api/v1/ops/output/repos')
     .set(authOps)
     .send({ github_owner_repo: 'jon/repo1' });
-  const res = await request(app).get('/api/v1/plexus/public/repos/list?from=2026-07-01&to=2026-07-03');
+  const res = await request(app).get('/api/v1/yaklog/public/repos/list?from=2026-07-01&to=2026-07-03');
   const gh = res.body.repos.find(r => r.repo_key === 'jon/repo1');
   assert.ok(gh);
   assert.equal(gh.type, 'github');
@@ -225,7 +225,7 @@ test('GET /repos/list — github type enrichment via output_repo', async () => {
 });
 
 test('GET /repos/:repo_key/detail — per-repo drill-in', async () => {
-  const res = await request(app).get('/api/v1/plexus/public/repos/repo1.git/detail?from=2026-07-01&to=2026-07-03');
+  const res = await request(app).get('/api/v1/yaklog/public/repos/repo1.git/detail?from=2026-07-01&to=2026-07-03');
   assert.equal(res.statusCode, 200);
   assert.equal(res.body.repo_key, 'repo1.git');
   assert.ok(Array.isArray(res.body.timeline));
@@ -239,7 +239,7 @@ test('GET /repos/:repo_key/detail — per-repo drill-in', async () => {
 });
 
 test('GET /repos/by-agent/:agent_id — cross-repo view', async () => {
-  const res = await request(app).get('/api/v1/plexus/public/repos/by-agent/agent-alice?from=2026-07-01&to=2026-07-03');
+  const res = await request(app).get('/api/v1/yaklog/public/repos/by-agent/agent-alice?from=2026-07-01&to=2026-07-03');
   assert.equal(res.statusCode, 200);
   assert.equal(res.body.agent_id, 'agent-alice');
   assert.ok(Array.isArray(res.body.repos));
@@ -249,7 +249,7 @@ test('GET /repos/by-agent/:agent_id — cross-repo view', async () => {
 });
 
 test('GET /repos/agents-in-window — Task 6 dropdown enumeration', async () => {
-  const res = await request(app).get('/api/v1/plexus/public/repos/agents-in-window?from=2026-07-01&to=2026-07-03');
+  const res = await request(app).get('/api/v1/yaklog/public/repos/agents-in-window?from=2026-07-01&to=2026-07-03');
   assert.equal(res.statusCode, 200);
   assert.ok(Array.isArray(res.body.agents));
   // 'unattributed' excluded per canon
@@ -264,7 +264,7 @@ test('GET /repos/agents-in-window — Task 6 dropdown enumeration', async () => 
 });
 
 test('GET /repos/agents-in-window — limit param bounded', async () => {
-  const res = await request(app).get('/api/v1/plexus/public/repos/agents-in-window?from=2026-07-01&to=2026-07-03&limit=999');
+  const res = await request(app).get('/api/v1/yaklog/public/repos/agents-in-window?from=2026-07-01&to=2026-07-03&limit=999');
   assert.equal(res.statusCode, 200);
   // limit is capped internally at 500; server just enforces bound, doesn't 400
 });
@@ -320,7 +320,7 @@ test('live-tail: /summary sees today activity even without rollup', async () => 
     .get(today, 'livetail-repo.git').n;
   assert.equal(rolled, 0, 'sanity: today should not be in output_daily');
   // Query summary for today — must see the live commit
-  const res = await request(app).get(`/api/v1/plexus/public/repos/summary?from=${today}&to=${today}`);
+  const res = await request(app).get(`/api/v1/yaklog/public/repos/summary?from=${today}&to=${today}`);
   assert.equal(res.statusCode, 200);
   assert.ok(res.body.commit_count >= 1, `expected commit_count >= 1 (live-tail); got ${res.body.commit_count}`);
   assert.ok(res.body.repo_count >= 1);
@@ -331,7 +331,7 @@ test('GET /repos/:repo_key/audit — returns audit_repo_change rows for canary o
   const { insertAuditRepoChange } = require('../src/db');
   insertAuditRepoChange({ repo_key: 'bare-git:audit-endpoint-test', action: 'bare-git-requested', actor_agent_id: 'agent-alice', metadata: { purpose: 'canary' } });
   insertAuditRepoChange({ repo_key: 'bare-git:audit-endpoint-test', action: 'bare-git-fulfilled', actor_agent_id: 'ops:admin', metadata: { result: 'success' } });
-  const res = await request(app).get('/api/v1/plexus/public/repos/bare-git%3Aaudit-endpoint-test/audit');
+  const res = await request(app).get('/api/v1/yaklog/public/repos/bare-git%3Aaudit-endpoint-test/audit');
   assert.equal(res.statusCode, 200);
   assert.ok(Array.isArray(res.body.audit));
   const actions = res.body.audit.map(r => r.action);

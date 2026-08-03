@@ -41,7 +41,7 @@ function seedRegistration(overrides = {}) {
 }
 
 test('GET /registrations on empty DB → 200 + empty array', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/registrations');
+  const r = await request(app).get('/api/v1/yaklog/public/registrations');
   assert.equal(r.statusCode, 200);
   assert.deepEqual(r.body.registrations, []);
   assert.equal(r.body.count, 0);
@@ -49,7 +49,7 @@ test('GET /registrations on empty DB → 200 + empty array', async () => {
 
 test('GET /registrations returns sanitized rows (no secret-bearing fields)', async () => {
   seedRegistration({ agent_id: 'leak-canary', status: 'JON_RATIFY' });
-  const r = await request(app).get('/api/v1/plexus/public/registrations');
+  const r = await request(app).get('/api/v1/yaklog/public/registrations');
   assert.equal(r.statusCode, 200);
   assert.ok(r.body.registrations.length >= 1);
   const row = r.body.registrations.find((x) => x.agent_id === 'leak-canary');
@@ -65,7 +65,7 @@ test('GET /registrations returns sanitized rows (no secret-bearing fields)', asy
 });
 
 test('GET /registrations surfaces workflow fields', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/registrations');
+  const r = await request(app).get('/api/v1/yaklog/public/registrations');
   const row = r.body.registrations.find((x) => x.agent_id === 'leak-canary');
   assert.equal(row.status, 'JON_RATIFY');
   assert.equal(row.is_terminal, false);
@@ -77,7 +77,7 @@ test('GET /registrations surfaces workflow fields', async () => {
 test('GET /registrations is_terminal=true for ACTIVE / REJECTED / REVOKED', async () => {
   seedRegistration({ agent_id: 'active-test', status: 'ACTIVE' });
   seedRegistration({ agent_id: 'rejected-test', status: 'REJECTED' });
-  const r = await request(app).get('/api/v1/plexus/public/registrations');
+  const r = await request(app).get('/api/v1/yaklog/public/registrations');
   const active = r.body.registrations.find((x) => x.agent_id === 'active-test');
   const rejected = r.body.registrations.find((x) => x.agent_id === 'rejected-test');
   assert.equal(active.is_terminal, true);
@@ -85,7 +85,7 @@ test('GET /registrations is_terminal=true for ACTIVE / REJECTED / REVOKED', asyn
 });
 
 test('GET /registrations ordered newest-first (by updated_at)', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/registrations');
+  const r = await request(app).get('/api/v1/yaklog/public/registrations');
   for (let i = 1; i < r.body.registrations.length; i++) {
     assert.ok(r.body.registrations[i - 1].updated_at >= r.body.registrations[i].updated_at,
       'must be ordered newest-first');
@@ -93,13 +93,13 @@ test('GET /registrations ordered newest-first (by updated_at)', async () => {
 });
 
 test('GET /registrations?limit=99999 clamps to 500', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/registrations?limit=99999');
+  const r = await request(app).get('/api/v1/yaklog/public/registrations?limit=99999');
   assert.equal(r.statusCode, 200);
   assert.ok(r.body.registrations.length <= 500);
 });
 
 test('GET /registrations?limit=invalid → 400', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/registrations?limit=-5');
+  const r = await request(app).get('/api/v1/yaklog/public/registrations?limit=-5');
   assert.equal(r.statusCode, 400);
   assert.equal(r.body.error, 'ValidationError');
 });

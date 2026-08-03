@@ -1,7 +1,7 @@
 {
   "_meta_": {
-    "_description_": "Plexus Gemini CLI OTel config template per ADR-0032 Phase 0 Item A. Install: merge into ~/.gemini/settings.json on the agent's seat. Source-of-truth at /home/jon/yaklog/otel/gemini-otel-config-template.json.",
-    "_pii_discipline_": "logPrompts=false per feedback_plexus_identity_overlay_not_columns; prompts never leave seat via OTel.",
+    "_description_": "Yaklog Gemini CLI OTel config template per ADR-0032 Phase 0 Item A. Install: merge into ~/.gemini/settings.json on the agent's seat. Source-of-truth at /home/jon/yaklog/otel/gemini-otel-config-template.json.",
+    "_pii_discipline_": "logPrompts=false per feedback_yaklog_identity_overlay_not_columns; prompts never leave seat via OTel.",
     "_security_": "Stage 1 collector accepts any Bearer per Plan C Stage 1 network-isolation; PRODUCTION must upgrade."
   },
   "telemetry": {

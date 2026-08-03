@@ -11,9 +11,9 @@ const os = require('os');
 const path = require('path');
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'yaklog-op-activate-test-'));
-const secureDbPath = path.join(tempDir, 'plexus-secure.db');
+const secureDbPath = path.join(tempDir, 'yaklog-secure.db');
 process.env.YAKLOG_DB_PATH = path.join(tempDir, 'yaklog.db');
-process.env.YAKLOG_PLEXUS_SECURE_DB_PATH = secureDbPath;
+process.env.YAKLOG_YAKLOG_SECURE_DB_PATH = secureDbPath;
 process.env.YAKLOG_API_KEYS = 'tok-x';
 process.env.YAKLOG_PRESENCE_SWEEP_MS = '0';
 process.env.NODE_ENV = 'test';
@@ -21,7 +21,7 @@ process.env.NODE_ENV = 'test';
 const request = require('supertest');
 const app = require('../src/app');
 const { closeDb, insertRegistration, updateRegistration } = require('../src/db');
-const plexusSecureDb = require('../src/plexusSecureDb');
+const yaklogSecureDb = require('../src/yaklogSecureDb');
 
 test.after(() => {
   closeDb();
@@ -57,7 +57,7 @@ test('activate session_class=operator → operator_records row provisioned', asy
     .set('Authorization', `Bearer ${mintedToken}`);
   assert.equal(res.status, 200, `expected 200, got ${res.status} body=${JSON.stringify(res.body)}`);
   assert.equal(res.body.registration.status, 'ACTIVE');
-  const row = plexusSecureDb.getOperatorRecord(agentId);
+  const row = yaklogSecureDb.getOperatorRecord(agentId);
   assert.ok(row, `operator_records row must exist for ${agentId}`);
   assert.equal(row.operator_id, agentId);
   assert.equal(row.created_by, 'register-state-machine');
@@ -69,7 +69,7 @@ test('activate session_class=agent (default) → NO operator_records row', async
     .post(`/api/v1/register/${registrationId}/activate`)
     .set('Authorization', `Bearer ${mintedToken}`);
   assert.equal(res.status, 200);
-  const row = plexusSecureDb.getOperatorRecord(agentId);
+  const row = yaklogSecureDb.getOperatorRecord(agentId);
   assert.equal(row, null, 'agent-class registration must NOT create an operator_records row');
 });
 
@@ -105,9 +105,9 @@ test('auth.js path-b: agent-class minted token sets req.tokenClass=agent', async
 test('activate session_class=operator is idempotent: upsertOperatorRecord on re-activate', () => {
   // Direct upsert call (not via /activate) — the second call must not throw.
   const opId = 'op-idemp-' + crypto.randomBytes(3).toString('hex');
-  plexusSecureDb.upsertOperatorRecord({ operatorId: opId, actor: 'test', notes: 'first' });
-  plexusSecureDb.upsertOperatorRecord({ operatorId: opId, actor: 'test', notes: 'second' });
-  const row = plexusSecureDb.getOperatorRecord(opId);
+  yaklogSecureDb.upsertOperatorRecord({ operatorId: opId, actor: 'test', notes: 'first' });
+  yaklogSecureDb.upsertOperatorRecord({ operatorId: opId, actor: 'test', notes: 'second' });
+  const row = yaklogSecureDb.getOperatorRecord(opId);
   assert.ok(row);
   assert.equal(row.operator_id, opId);
 });

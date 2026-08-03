@@ -1,7 +1,7 @@
-# yaklog demo-Plexus install runbook
+# yaklog demo-Yaklog install runbook
 
 Stand up an isolated yaklog+dashboard on a fresh VM for the "What is
-Plexus" screenshot-capture surface. Fresh bus + store; separate tokens;
+Yaklog" screenshot-capture surface. Fresh bus + store; separate tokens;
 no subscribe to the real cluster.
 
 Delta from prod install: no OTel, no Prom, no Grafana, no MinIO, no TLS
@@ -9,7 +9,7 @@ proxy, no bare-git/GitHub-PAT/age-key mounts. Everything else identical.
 
 ## Default user
 
-The demo VM uses `plexus-admin` as its canonical user (not `jon` — the demo is a distinct-identity substrate, not a Jon-personal box). SSH keys are the same set preseeded by pveadmin. All commands below run as `plexus-admin`.
+The demo VM uses `yaklog-admin` as its canonical user (not `jon` — the demo is a distinct-identity substrate, not a Jon-personal box). SSH keys are the same set preseeded by pveadmin. All commands below run as `yaklog-admin`.
 
 ## Prerequisites (on the demo VM)
 
@@ -23,13 +23,13 @@ The demo VM uses `plexus-admin` as its canonical user (not `jon` — the demo is
 
 ```bash
 cd /opt   # or wherever the demo VM stages installs
-git clone /srv/git/yaklog.git plexus-demo   # if reachable via ssh from VM
+git clone /srv/git/yaklog.git yaklog-demo   # if reachable via ssh from VM
 # OR ferry: on your workstation
 #   git bundle create yaklog.bundle main
 #   scp yaklog.bundle demo-vm:/tmp/
 # then on demo-vm:
-#   git clone /tmp/yaklog.bundle plexus-demo
-cd plexus-demo
+#   git clone /tmp/yaklog.bundle yaklog-demo
+cd yaklog-demo
 git checkout main   # or a specific SHA per capture cycle
 ```
 
@@ -132,7 +132,7 @@ rm -rf ./data   # nukes the demo SQLite; fresh state next run
 - [ ] No OTEL_EXPORTER_OTLP_ENDPOINT pointing at devel collector
 - [ ] No cross-mount to /srv/git or shared paths
 - [ ] Real-fleet yaklog-sub restart uses demo YAKLOG_URL, not the real one
-- [ ] Container name is `plexus-demo` (customer-facing brand + visual distinguisher from production `yaklog`)
+- [ ] Container name is `yaklog-demo` (customer-facing brand + visual distinguisher from production `yaklog`)
 
 ## Rollback
 

@@ -1,14 +1,14 @@
-# Plexus Grafana dashboard provisioning — Stage 1.
+# Yaklog Grafana dashboard provisioning — Stage 1.
 # Loads any JSON dashboard files in /etc/grafana/provisioning/dashboards/json/
-# into Grafana on startup. Stage 1 ships exactly one: plexus-hello-world.
+# into Grafana on startup. Stage 1 ships exactly one: yaklog-hello-world.
 
 apiVersion: 1
 
 providers:
-  - name: plexus-stage-1
+  - name: yaklog-stage-1
     orgId: 1
-    folder: Plexus
-    folderUid: plexus
+    folder: Yaklog
+    folderUid: yaklog
     type: file
     disableDeletion: false
     editable: true  # allow operator to tweak panels in-Grafana for Stage 2 prep

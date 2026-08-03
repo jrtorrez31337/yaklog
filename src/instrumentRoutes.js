@@ -56,17 +56,17 @@ function escapeLabel(v) {
 
 function renderTextfile() {
   let body = '';
-  body += '# HELP plexus_user_prompt_total Cumulative UserPromptSubmit events per agent.\n';
-  body += '# TYPE plexus_user_prompt_total counter\n';
+  body += '# HELP yaklog_user_prompt_total Cumulative UserPromptSubmit events per agent.\n';
+  body += '# TYPE yaklog_user_prompt_total counter\n';
   for (const [key, e] of counters) {
     const [agent_id, session_id, has_tool_calls] = key.split('|');
-    body += `plexus_user_prompt_total{agent_id="${escapeLabel(agent_id)}",session_id="${escapeLabel(session_id)}",has_tool_calls="${has_tool_calls}"} ${e.count}\n`;
+    body += `yaklog_user_prompt_total{agent_id="${escapeLabel(agent_id)}",session_id="${escapeLabel(session_id)}",has_tool_calls="${has_tool_calls}"} ${e.count}\n`;
   }
-  body += '# HELP plexus_user_prompt_char_length_sum Cumulative prompt char-length per agent.\n';
-  body += '# TYPE plexus_user_prompt_char_length_sum counter\n';
+  body += '# HELP yaklog_user_prompt_char_length_sum Cumulative prompt char-length per agent.\n';
+  body += '# TYPE yaklog_user_prompt_char_length_sum counter\n';
   for (const [key, e] of counters) {
     const [agent_id, session_id, has_tool_calls] = key.split('|');
-    body += `plexus_user_prompt_char_length_sum{agent_id="${escapeLabel(agent_id)}",session_id="${escapeLabel(session_id)}",has_tool_calls="${has_tool_calls}"} ${e.char_sum}\n`;
+    body += `yaklog_user_prompt_char_length_sum{agent_id="${escapeLabel(agent_id)}",session_id="${escapeLabel(session_id)}",has_tool_calls="${has_tool_calls}"} ${e.char_sum}\n`;
   }
   return body;
 }
@@ -188,18 +188,18 @@ function rollupCallsites(windowMs = 60 * 60 * 1000) {
 function renderBrowserPerfTextfile() {
   const stats = rollupCallsites();
   let body = '';
-  body += '# HELP plexus_browser_perf_p50_seconds P50 browser callsite duration (last 1h).\n';
-  body += '# TYPE plexus_browser_perf_p50_seconds gauge\n';
-  for (const [cs, s] of stats) body += `plexus_browser_perf_p50_seconds{callsite="${escapeLabel(cs)}"} ${(s.p50 / 1000).toFixed(6)}\n`;
-  body += '# HELP plexus_browser_perf_p95_seconds P95 browser callsite duration (last 1h).\n';
-  body += '# TYPE plexus_browser_perf_p95_seconds gauge\n';
-  for (const [cs, s] of stats) body += `plexus_browser_perf_p95_seconds{callsite="${escapeLabel(cs)}"} ${(s.p95 / 1000).toFixed(6)}\n`;
-  body += '# HELP plexus_browser_perf_p99_seconds P99 browser callsite duration (last 1h).\n';
-  body += '# TYPE plexus_browser_perf_p99_seconds gauge\n';
-  for (const [cs, s] of stats) body += `plexus_browser_perf_p99_seconds{callsite="${escapeLabel(cs)}"} ${(s.p99 / 1000).toFixed(6)}\n`;
-  body += '# HELP plexus_browser_perf_count Number of measurements per callsite (last 1h).\n';
-  body += '# TYPE plexus_browser_perf_count gauge\n';
-  for (const [cs, s] of stats) body += `plexus_browser_perf_count{callsite="${escapeLabel(cs)}"} ${s.count}\n`;
+  body += '# HELP yaklog_browser_perf_p50_seconds P50 browser callsite duration (last 1h).\n';
+  body += '# TYPE yaklog_browser_perf_p50_seconds gauge\n';
+  for (const [cs, s] of stats) body += `yaklog_browser_perf_p50_seconds{callsite="${escapeLabel(cs)}"} ${(s.p50 / 1000).toFixed(6)}\n`;
+  body += '# HELP yaklog_browser_perf_p95_seconds P95 browser callsite duration (last 1h).\n';
+  body += '# TYPE yaklog_browser_perf_p95_seconds gauge\n';
+  for (const [cs, s] of stats) body += `yaklog_browser_perf_p95_seconds{callsite="${escapeLabel(cs)}"} ${(s.p95 / 1000).toFixed(6)}\n`;
+  body += '# HELP yaklog_browser_perf_p99_seconds P99 browser callsite duration (last 1h).\n';
+  body += '# TYPE yaklog_browser_perf_p99_seconds gauge\n';
+  for (const [cs, s] of stats) body += `yaklog_browser_perf_p99_seconds{callsite="${escapeLabel(cs)}"} ${(s.p99 / 1000).toFixed(6)}\n`;
+  body += '# HELP yaklog_browser_perf_count Number of measurements per callsite (last 1h).\n';
+  body += '# TYPE yaklog_browser_perf_count gauge\n';
+  for (const [cs, s] of stats) body += `yaklog_browser_perf_count{callsite="${escapeLabel(cs)}"} ${s.count}\n`;
   return body;
 }
 

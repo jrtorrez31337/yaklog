@@ -1,0 +1,31 @@
+# prometheus.yml — yaklog-install generated ${GENERATED_AT}
+# INSTANCE: ${INSTANCE_NAME}
+#
+# Scrape targets: yaklog-otel-collector (Prom-metrics export), yaklog server /metrics.
+# External labels stamp deployment identity so this Prom's data doesn't
+# collide with any parent-cluster Prom if federated later.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    deployment: ${INSTANCE_NAME}
+    instance_name: ${INSTANCE_NAME}
+
+scrape_configs:
+  - job_name: yaklog-otel-collector
+    static_configs:
+      - targets:
+          - yaklog-otel-collector:8888
+        labels:
+          job: yaklog-otel-collector
+          deployment: ${INSTANCE_NAME}
+
+  - job_name: yaklog
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - ${INSTANCE_NAME}:3100
+        labels:
+          job: yaklog
+          deployment: ${INSTANCE_NAME}

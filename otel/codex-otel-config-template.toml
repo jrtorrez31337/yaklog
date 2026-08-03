@@ -1,10 +1,10 @@
-# Plexus Codex CLI OTel config template
+# Yaklog Codex CLI OTel config template
 # Per ADR-0032 Phase 0 Item A (yaklog-dev #9577 PLAN-ADR-0032-PHASE-0-CROSS-RUNTIME-TELEMETRY-PARITY.md).
 #
 # Install: merge into ~/.codex/config.toml on the agent's seat.
 # Source-of-truth at: /home/jon/yaklog/otel/codex-otel-config-template.toml
 #
-# Per feedback_plexus_identity_overlay_not_columns + feedback_secrets_no_yaklog:
+# Per feedback_yaklog_identity_overlay_not_columns + feedback_secrets_no_yaklog:
 #   - log_user_prompt = false (PII discipline; prompts never leave the seat
 #     via OTel; cluster substrate-truth preserved)
 #
@@ -12,7 +12,7 @@
 # security model. PRODUCTION must upgrade per Plan C Stage 1 §7 risks.
 
 [otel]
-environment = "plexus-devel"
+environment = "yaklog-devel"
 log_user_prompt = false
 exporter = "otlp-grpc"
 
@@ -20,4 +20,4 @@ exporter = "otlp-grpc"
 endpoint = "http://localhost:4327"
 
 [otel.otlp-grpc.headers]
-Authorization = "Bearer plexus-placeholder"
+Authorization = "Bearer yaklog-placeholder"

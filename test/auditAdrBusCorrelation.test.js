@@ -91,7 +91,7 @@ test('findMessageIdsReferencingAdr: returns DESC by id', () => {
 
 test('GET /audit/adr-change-history: response includes correlated_message_ids per commit', async () => {
   const r = await request(app)
-    .get('/api/v1/plexus/public/audit/adr-change-history?repo=agent-specs&limit=10');
+    .get('/api/v1/yaklog/public/audit/adr-change-history?repo=agent-specs&limit=10');
   // 200 or 503 (bare repo may not be accessible in CI)
   assert.ok(r.status === 200 || r.status === 503);
   if (r.status !== 200) return;
@@ -103,7 +103,7 @@ test('GET /audit/adr-change-history: response includes correlated_message_ids pe
 
 test('GET /audit/adr-change-history?correlate=false: opts out of cross-reference', async () => {
   const r = await request(app)
-    .get('/api/v1/plexus/public/audit/adr-change-history?repo=agent-specs&limit=10&correlate=false');
+    .get('/api/v1/yaklog/public/audit/adr-change-history?repo=agent-specs&limit=10&correlate=false');
   assert.ok(r.status === 200 || r.status === 503);
   if (r.status !== 200) return;
   // correlated_message_ids should not be set when correlate=false

@@ -33,7 +33,7 @@ const EVENT_MAP = {
 };
 
 // Distill agent_activity row → audit_tool_invocation insertable.
-// Per PLEXUS-FEATURES.md §4.4: payload_json shape varies by tool. Today most
+// Per YAKLOG-FEATURES.md §4.4: payload_json shape varies by tool. Today most
 // PreToolUse rows have null payload (daemon-side distillation TBD); we default
 // tool_name='(unknown)' for those — Phase 2 daemon fix will populate tool_name
 // + cmd/file/etc fields. Until then we still get audit_wired status from

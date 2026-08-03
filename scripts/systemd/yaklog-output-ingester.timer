@@ -3,7 +3,7 @@
 # Phase 1 scale" (modest substrate volume: ~12 commits/day cluster-wide).
 
 [Unit]
-Description=Plexus CP13/ADR-0032 output-strand ingester (hourly)
+Description=Yaklog CP13/ADR-0032 output-strand ingester (hourly)
 Requires=yaklog-output-ingester.service
 
 [Timer]

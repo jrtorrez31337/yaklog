@@ -3,7 +3,7 @@
 // PHASE-0-CROSS-RUNTIME-TELEMETRY-PARITY.md §2.2 architecture (collector-
 // intermediated) + §3 Task B.2-B.6 mapper implementation.
 //
-// Accepts OTLP/HTTP log batches forwarded from the plexus-otel-collector's
+// Accepts OTLP/HTTP log batches forwarded from the yaklog-otel-collector's
 // new `logs/audit` pipeline (filter codex.* + gemini_cli.* → otlphttp
 // exporter targeting this endpoint). Maps `codex.tool_result` +
 // `gemini_cli.tool_call` log records into audit_tool_invocation rows.

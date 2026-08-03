@@ -1,5 +1,5 @@
 // Task #137 Per-Ptah-Agent Audit File substrate per parch #10266 ratify.
-// ADR-0037 candidate. Sister-shape canon to CP14-X plexusSecureDb.js at
+// ADR-0037 candidate. Sister-shape canon to CP14-X yaklogSecureDb.js at
 // per-class-canon-isolation tier, extended HERE to per-agent granularity
 // per parch #10266 Q1 ratify (per-agent file vs single shared).
 //
@@ -8,7 +8,7 @@
 // context_json blob (Ptah-specific evolution; opaque to substrate).
 //
 // File location: /data/ptah-audit-<agent_id>.db (one SQLite file per Ptah agent;
-// extends [[feedback_plexus_secure_store_separate_db_file_substrate_canon_class_isolation]]
+// extends [[feedback_yaklog_secure_store_separate_db_file_substrate_canon_class_isolation]]
 // from per-class to per-agent tier).
 //
 // Lifecycle (per parch #10266 Q2 ratify): file created at /register time for

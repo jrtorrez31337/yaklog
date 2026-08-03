@@ -9,7 +9,7 @@ const path = require('path');
 const config = require('./config');
 const routes = require('./routes');
 const registerRoutes = require('./registerRoutes');
-const plexusRoutes = require('./plexusRoutes');
+const yaklogRoutes = require('./yaklogRoutes');
 const auditRoutes = require('./auditRoutes');           // CP12.2 (ADR-0030 §5.1)
 const auditOpsRoutes = require('./auditOpsRoutes');     // CP12.2 (ADR-0030 §5.2)
 const auditIngesterRoutes = require('./auditIngesterRoutes'); // CP12.5 (ADR-0030 Phase 1.5.S)
@@ -20,7 +20,7 @@ const repoQueryRoutes = require('./repoQueryRoutes');   // CP17.B Task 3
 const metricsRoute = require('./metricsRoute');         // CP16-prep observability (parch #10166)
 const costAnomaliesRoute = require('./costAnomaliesRoute'); // CP16 Pillar 2 (parch #10268)
 const vendorKeysRoute = require('./secureStore/vendorKeysRoute'); // Task #138 Phase 2B (parch #10320)
-const orpRoute = require('./orpRoute');                 // CP14-X Plexus Secure Store (parch #10175)
+const orpRoute = require('./orpRoute');                 // CP14-X Yaklog Secure Store (parch #10175)
 const ptahTraceRoute = require('./ptahTraceRoute');     // Task #246 Per-Ptah TraceRecord (parch #10731 + #10744 + #10748)
 const dashboardLoginRoute = require('./dashboardLoginRoute'); // PLAN-DASHBOARD-OPERATOR-DM §2.3.1 (secops FLAG-2)
 const { dashboardCspMiddleware } = require('./middleware/csp'); // PLAN-DASHBOARD-OPERATOR-DM §2.9.2 (secops FLAG-1)
@@ -38,17 +38,17 @@ const SESSION_STATES_NOT_CONSUMING = new Set(['idle', 'stop_failure', 'unknown']
 
 initializeDb();
 
-// CP14-X Plexus Secure Store eager-init at app boot so all schema migrations
+// CP14-X Yaklog Secure Store eager-init at app boot so all schema migrations
 // (orp + orp_version + operator_records per PLAN-OPERATOR-SESSION-SUBSTRATE
 // v2 Q13 RATIFY) apply at startup rather than waiting for first request to
 // orpRoute / auditOpsRoutes / operator_records CRUD. Sister-shape to
 // yaklog.db's initializeDb() pattern above. Substrate-honest install-time
 // verifiability per ssw-devops Gate (2) #10434 observation.
-// Skip in test mode unless explicit YAKLOG_PLEXUS_SECURE_DB_PATH is set —
-// most tests don't touch plexus-secure.db and don't bind-mount /data/.
-if (process.env.NODE_ENV !== 'test' || process.env.YAKLOG_PLEXUS_SECURE_DB_PATH) {
-  const plexusSecureDb = require('./plexusSecureDb');
-  plexusSecureDb.initializeDb();
+// Skip in test mode unless explicit YAKLOG_YAKLOG_SECURE_DB_PATH is set —
+// most tests don't touch yaklog-secure.db and don't bind-mount /data/.
+if (process.env.NODE_ENV !== 'test' || process.env.YAKLOG_YAKLOG_SECURE_DB_PATH) {
+  const yaklogSecureDb = require('./yaklogSecureDb');
+  yaklogSecureDb.initializeDb();
 }
 
 // CP12.7 Phase B: env-diff boot detector. Compares current env state
@@ -80,7 +80,7 @@ if (process.env.NODE_ENV !== 'test' && process.env.YAKLOG_ENV_DIFF_DETECTOR_DISA
 // changes on disk. Per secops #8666 standing-authorization: server-side
 // only; zero yaklog-sub touch; respects defensive-freeze posture.
 //
-// Operational invariant per PLEXUS-FEATURES.md audit_credential_change
+// Operational invariant per YAKLOG-FEATURES.md audit_credential_change
 // canon (secops-ratified): operators MUST still pair .env mutations
 // with a server restart in the same ship cycle for transactional safety;
 // the file-watcher is an additional layer that captures mutations even
@@ -327,7 +327,7 @@ app.get('/api/v1/presence/public', (req, res) => {
       : (row.daemon_version !== canonicalDaemonVersion);
     // v0.5.8.2: hand-curated registry-fallback runtime. Frontend prefers the
     // OTel-derived runtime when available (service_name → claude_code/gemini),
-    // falls back to this field for agents that don't emit Plexus telemetry.
+    // falls back to this field for agents that don't emit Yaklog telemetry.
     // CP14.1 (2026-06-13): prefer the DB-stored runtime (now schema-resident
     // per upsertPresence server-side compute). Falls back to registry-lookup
     // when row.runtime is null — defends against pre-CP14.1 rows that haven't
@@ -660,13 +660,13 @@ app.use('/vendor', express.static(path.join(__dirname, '..', 'public', 'vendor')
 // heterogeneous custom auth (enforceRegistrantToken / enforceOpsKey /
 // enforceSenderBinding) wired per-route inside registerRoutes.
 app.use('/api/v1/register', registerRoutes);
-// Plexus public mirror — MUST mount BEFORE the auth'd /api/v1/plexus mount
+// Yaklog public mirror — MUST mount BEFORE the auth'd /api/v1/yaklog mount
 // below (Express tries mounts in order; longer-prefix-first wins). Mirrors
 // the /api/v1/presence/public pattern: read-only, allowlisted (only the
 // registered templates can run), exists because the /dashboard browser
 // surface cannot easily hold a Bearer YAKLOG_TOKEN. Production multi-tenant
 // will swap this for cookie-auth — flagged in PLAN-C-STAGE-2-DESIGN.md §5.
-app.use('/api/v1/plexus/public', plexusRoutes.publicRouter);
+app.use('/api/v1/yaklog/public', yaklogRoutes.publicRouter);
 // Cascade-prevention #10535 substrate-design Option (b): per-route-family
 // concurrency limit for /audit/* + /policy/* (compute-heavy aggregates that
 // can saturate event-loop + writer-lock when poll-storms hit). Excess
@@ -675,17 +675,17 @@ app.use('/api/v1/plexus/public', plexusRoutes.publicRouter);
 // to dashboardLoginRoute rate-limit at request-rate tier; this is in-flight
 // concurrency tier.
 const auditPolicyLimiter = createConcurrencyLimiter({ maxInFlight: 4, retryAfterS: 5, name: 'audit-policy' });
-app.use('/api/v1/plexus/public/audit', auditPolicyLimiter);
-app.use('/api/v1/plexus/public/policy', auditPolicyLimiter);
+app.use('/api/v1/yaklog/public/audit', auditPolicyLimiter);
+app.use('/api/v1/yaklog/public/policy', auditPolicyLimiter);
 // CP12.2 (ADR-0030 §5.1): audit + governance public-read mirror. Mounts
-// under same `/api/v1/plexus/public` namespace; reads from db.js helpers
+// under same `/api/v1/yaklog/public` namespace; reads from db.js helpers
 // only (no mutations). Network-isolation trust model — same as cost/.
-app.use('/api/v1/plexus/public', auditRoutes);
+app.use('/api/v1/yaklog/public', auditRoutes);
 // CP17.B Task 3: Repos tab public read endpoints (/summary /heatmap /list
-// /:key/detail /by-agent). Mounts under /api/v1/plexus/public/repos. Reads
+// /:key/detail /by-agent). Mounts under /api/v1/yaklog/public/repos. Reads
 // from db.js CP17.B helpers only (no mutations). Time-nav aware via
 // ?period=<preset> OR ?from=&to= (sister-shape cost/audit public patterns).
-app.use('/api/v1/plexus/public/repos', repoQueryRoutes.router);
+app.use('/api/v1/yaklog/public/repos', repoQueryRoutes.router);
 // CP13.3 (ADR-0032 Phase 1.3): output ratios + composition + coverage-gap
 // + anomalies + merges public reads. Mounted BEFORE the /api/v1 auth
 // middleware so network-isolation trust model applies (mirrors
@@ -694,9 +694,9 @@ app.use('/api/v1/plexus/public/repos', repoQueryRoutes.router);
 // ratios stripped at substrate level for buyer/investor audience
 // regardless of client request.
 app.use('/api/v1/output', outputApiRoutes.publicRouter);
-// Plexus query proxy (auth'd): server-to-server callers (other agents,
+// Yaklog query proxy (auth'd): server-to-server callers (other agents,
 // scripts) use this with a Bearer YAKLOG_TOKEN.
-app.use('/api/v1/plexus', auth, plexusRoutes);
+app.use('/api/v1/yaklog', auth, yaklogRoutes);
 app.use('/api/v1', auth, routes);
 // CP17.A (Jon-direct 2026-07-06 + secops #11759 SIGN-OFF): agent-writable
 // repo tracking management substrate. Mounts under /api/v1 (auth-required).
@@ -733,19 +733,19 @@ app.use('/api/v1/ops/output', outputApiRoutes.opsRouter);
 // CP16-prep observability migration per parch #10166 Q1 ratify (Option 2c).
 // /api/v1/metrics exposes Prom text-format via custom Registry. Auth REQUIRED
 // per secops #10164 corrected Q2 disposition: yaklog:3100 is host-public
-// (0.0.0.0:3100), NOT internal-only like plexus-otel-collector:8889. See
+// (0.0.0.0:3100), NOT internal-only like yaklog-otel-collector:8889. See
 // feedback_public_bind_vs_internal_only_network_isolation_distinction_at_substrate_auth_disposition_tier.
 // Prometheus scrape config (in prometheus.yml) supplies a scoped bearer per
 // ssw-devops Gate (2) install work.
 app.use('/api/v1/metrics', auth, metricsRoute);
 app.use('/api/v1/cost', auth, costAnomaliesRoute);
 app.use('/api/v1/secure-store', auth, vendorKeysRoute);
-// CP14-X Plexus Secure Store per parch #10175 Q1 ratify: GET /api/v1/orp/<agent_id>
+// CP14-X Yaklog Secure Store per parch #10175 Q1 ratify: GET /api/v1/orp/<agent_id>
 // auth-required (any valid YAKLOG_API_KEYS token reads any ORP per #10174 +
 // secops design Q recommend; per-agent scoping deferred to forward-track).
 // POST /ops/orp/<agent_id> lives under /api/v1/ops mount (ops-key gated).
 app.use('/api/v1/orp', auth, orpRoute);
-app.use('/api/v1/plexus/ptah-orp', auth, ptahTraceRoute);  // Task #246 Per-Ptah TraceRecord substrate
+app.use('/api/v1/yaklog/ptah-orp', auth, ptahTraceRoute);  // Task #246 Per-Ptah TraceRecord substrate
 
 app.get('/', (req, res) => {
   res.json({

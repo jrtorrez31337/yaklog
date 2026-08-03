@@ -10,7 +10,7 @@
 # Usage:
 #   bash phase-0-postdeploy-verify.sh                        # all probes
 #   bash phase-0-postdeploy-verify.sh --probe schema         # single probe
-#   bash phase-0-postdeploy-verify.sh --ops-key-file /etc/plexus/ops-key
+#   bash phase-0-postdeploy-verify.sh --ops-key-file /etc/yaklog/ops-key
 #
 # Pre-conditions:
 #   - Phase 0 PR merged + deployed

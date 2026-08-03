@@ -1,4 +1,4 @@
-// CP11.2 (2026-06-04): Phase 2 of ratified ADR-0029 (Plexus cost-history
+// CP11.2 (2026-06-04): Phase 2 of ratified ADR-0029 (Yaklog cost-history
 // persistence + finance viz). Prom → cost_daily rollup job.
 //
 // Implements:
@@ -40,10 +40,10 @@ function ymdIsToday(ymd) {
   return ymd === dateToYmd(new Date());
 }
 
-// Prom fetch helper (mirrors plexusRoutes.promFetch shape; standalone copy
+// Prom fetch helper (mirrors yaklogRoutes.promFetch shape; standalone copy
 // to avoid circular import). Times out via AbortController.
-async function promFetch(path, params, { timeoutMs = config.plexusQueryTimeoutMs || 10000 } = {}) {
-  const url = new URL(`${config.plexusPromUrl}${path}`);
+async function promFetch(path, params, { timeoutMs = config.yaklogQueryTimeoutMs || 10000 } = {}) {
+  const url = new URL(`${config.yaklogPromUrl}${path}`);
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), timeoutMs);
@@ -103,7 +103,7 @@ async function rollupDay(ymd, opts = {}) {
   // but no equivalent Prom label (closest is host_arch/os_type; per ADR-0029
   // v2.3 facts §4 — recommend leaving host empty for v1; future migration
   // can map host_arch in if useful).
-  const dimsForGrouping = ['plexus_agent_id', 'user_email', 'organization_id', 'model'];
+  const dimsForGrouping = ['yaklog_agent_id', 'user_email', 'organization_id', 'model'];
   const groupBy = dimsForGrouping.join(', ');
 
   // Cost query: sum by dims of increase over the window.
@@ -111,8 +111,8 @@ async function rollupDay(ymd, opts = {}) {
   // Tokens query: same dims + type for per-bucket breakdown.
   const tokenPromql = `sum by (${groupBy}, type) (increase(claude_code_token_usage_tokens_total[${windowS}s]${offsetClause}))`;
   // CP11.x.1 (2026-06-15) Jon-direct "complete all CP11 items": multi-runtime
-  // token rollup. Codex emits `plexus_tokens_{input,output}_total` with
-  // `plexus_runtime_class` resource attribute (per s345-aieng #8539 canonical
+  // token rollup. Codex emits `yaklog_tokens_{input,output}_total` with
+  // `yaklog_runtime_class` resource attribute (per s345-aieng #8539 canonical
   // schema). Gemini will emit through the same family when wiring lands
   // (currently zero series). No cost USD counter for codex/gemini — these
   // runtimes have no Anthropic-style cost-tagged metric (consumed via
@@ -122,14 +122,14 @@ async function rollupDay(ymd, opts = {}) {
   // [[feedback_canonical_phase_label_check_before_claiming]] honesty:
   // "token-tracked / cost-untracked" surface in dashboard tooltip.
   //
-  // Grouping uses plexus_runtime_class (not model — codex's plexus_tokens
+  // Grouping uses yaklog_runtime_class (not model — codex's yaklog_tokens
   // metrics carry no model label per #8907 empirical probe). Vendor derivation
   // happens server-side via vendorOf() OR by the upsertCostDaily caller
   // passing vendor explicitly (we use the explicit path for these rows since
   // model is synthetic).
-  const multiRuntimeGroupBy = 'plexus_agent_id, user_email, organization_id, plexus_runtime_class';
-  const multiRuntimeInputPromql = `sum by (${multiRuntimeGroupBy}) (increase(plexus_tokens_input_total[${windowS}s]${offsetClause}))`;
-  const multiRuntimeOutputPromql = `sum by (${multiRuntimeGroupBy}) (increase(plexus_tokens_output_total[${windowS}s]${offsetClause}))`;
+  const multiRuntimeGroupBy = 'yaklog_agent_id, user_email, organization_id, yaklog_runtime_class';
+  const multiRuntimeInputPromql = `sum by (${multiRuntimeGroupBy}) (increase(yaklog_tokens_input_total[${windowS}s]${offsetClause}))`;
+  const multiRuntimeOutputPromql = `sum by (${multiRuntimeGroupBy}) (increase(yaklog_tokens_output_total[${windowS}s]${offsetClause}))`;
 
   const [costRes, tokenRes, multiInputRes, multiOutputRes] = await Promise.all([
     promFetch('/api/v1/query', { query: costPromql }),
@@ -159,7 +159,7 @@ async function rollupDay(ymd, opts = {}) {
   // token rows are unique per (dims + type) — fold types into one row.
   const byKey = new Map();
   const dimKey = (m) => [
-    m.plexus_agent_id || '',
+    m.yaklog_agent_id || '',
     m.user_email || '',
     m.organization_id || '',
     m.model || '',
@@ -170,7 +170,7 @@ async function rollupDay(ymd, opts = {}) {
     const value = parseFloat((series.value && series.value[1]) || '0') || 0;
     const k = dimKey(m);
     const row = byKey.get(k) || {
-      agent_id: m.plexus_agent_id || '',
+      agent_id: m.yaklog_agent_id || '',
       user_email: m.user_email || '',
       organization_id: m.organization_id || '',
       model: m.model || '',
@@ -194,7 +194,7 @@ async function rollupDay(ymd, opts = {}) {
       // Tokens series but no cost series — possible if cost is 0 for this dim;
       // create the row so token counts are still captured.
       row = {
-        agent_id: m.plexus_agent_id || '',
+        agent_id: m.yaklog_agent_id || '',
         user_email: m.user_email || '',
         organization_id: m.organization_id || '',
         model: m.model || '',
@@ -219,7 +219,7 @@ async function rollupDay(ymd, opts = {}) {
   }
 
   // CP11.x.1 (2026-06-15): merge multi-runtime (codex / gemini) token series.
-  // These metrics carry `plexus_runtime_class` instead of `model` — we use
+  // These metrics carry `yaklog_runtime_class` instead of `model` — we use
   // the runtime_class string as the synthetic model name so per-runtime
   // breakdowns work at the dashboard layer. Vendor is derived via the same
   // upsertCostDaily path (which prefers caller-supplied vendor, falls back
@@ -236,22 +236,22 @@ async function rollupDay(ymd, opts = {}) {
     'gemini-cli': 'Google',
   };
   const multiRuntimeKey = (m) => [
-    m.plexus_agent_id || '',
+    m.yaklog_agent_id || '',
     m.user_email || '',
     m.organization_id || '',
-    m.plexus_runtime_class || '',
+    m.yaklog_runtime_class || '',
   ].join(' ');
   const mergeMultiRuntime = (series, field) => {
     for (const s of series) {
       const m = s.metric || {};
-      const runtime_class = m.plexus_runtime_class || '';
+      const runtime_class = m.yaklog_runtime_class || '';
       if (!runtime_class) continue;  // skip un-classed series (cluster hygiene)
       const value = parseFloat((s.value && s.value[1]) || '0') || 0;
       const k = multiRuntimeKey(m);
       let row = byKey.get(k);
       if (!row) {
         row = {
-          agent_id: m.plexus_agent_id || '',
+          agent_id: m.yaklog_agent_id || '',
           user_email: m.user_email || '',
           organization_id: m.organization_id || '',
           model: runtime_class,  // synthetic model = runtime_class string

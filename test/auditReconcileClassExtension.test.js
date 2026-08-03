@@ -33,7 +33,7 @@ test.before(() => {
     period_start: '2026-05-01', period_end: '2026-05-31',
     external_system_label: 'Vanta',
     reconcile_class: 'grc-platform',
-    plexus_count: 100, external_count: 100,
+    yaklog_count: 100, external_count: 100,
     reconciler_agent_id: 'admin-agent',
     reconciled_by: 'a'.repeat(16),
   });
@@ -41,7 +41,7 @@ test.before(() => {
     period_start: '2026-05-01', period_end: '2026-05-31',
     external_system_label: 'Drata',
     reconcile_class: 'grc-platform',
-    plexus_count: 50, external_count: 52,
+    yaklog_count: 50, external_count: 52,
     reconciler_agent_id: 'admin-agent',
     reconciled_by: 'a'.repeat(16),
   });
@@ -49,7 +49,7 @@ test.before(() => {
     period_start: '2026-05-01', period_end: '2026-05-31',
     external_system_label: 'Splunk',
     reconcile_class: 'siem',
-    plexus_count: 1000, external_count: 998,
+    yaklog_count: 1000, external_count: 998,
     reconciler_agent_id: 'secops-agent',
     reconciled_by: 'a'.repeat(16),
   });
@@ -57,7 +57,7 @@ test.before(() => {
     period_start: '2026-05-01', period_end: '2026-05-31',
     external_system_label: 'legacy-soc-export',
     // reconcile_class omitted → defaults to 'other'
-    plexus_count: 5, external_count: 5,
+    yaklog_count: 5, external_count: 5,
     reconciler_agent_id: 'admin-agent',
     reconciled_by: 'a'.repeat(16),
   });
@@ -86,7 +86,7 @@ test('insertAuditReconciliation: rejects bad reconcile_class', () => {
   assert.throws(() => insertAuditReconciliation({
     period_start: '2026-05-01', period_end: '2026-05-31',
     external_system_label: 'bogus', reconcile_class: 'not-a-class',
-    plexus_count: 1, external_count: 1,
+    yaklog_count: 1, external_count: 1,
     reconciler_agent_id: 'a', reconciled_by: 'b',
   }), /reconcile_class must be one of/);
 });
@@ -120,14 +120,14 @@ test('aggregateAuditReconciliationsByClass: groups + counts correctly', () => {
 // ── HTTP endpoints ─────────────────────────────────────────────────────────
 
 test('GET /audit/reconciliations: returns all rows by default', async () => {
-  const r = await request(app).get('/api/v1/plexus/public/audit/reconciliations');
+  const r = await request(app).get('/api/v1/yaklog/public/audit/reconciliations');
   assert.equal(r.status, 200);
   assert.equal(r.body.count, 4);
 });
 
 test('GET /audit/reconciliations: filters by reconcile_class', async () => {
   const r = await request(app)
-    .get('/api/v1/plexus/public/audit/reconciliations?reconcile_class=grc-platform');
+    .get('/api/v1/yaklog/public/audit/reconciliations?reconcile_class=grc-platform');
   assert.equal(r.status, 200);
   assert.equal(r.body.count, 2);
   assert.ok(r.body.rows.every(x => x.reconcile_class === 'grc-platform'));
@@ -135,21 +135,21 @@ test('GET /audit/reconciliations: filters by reconcile_class', async () => {
 
 test('GET /audit/reconciliations: 400 on bad reconcile_class', async () => {
   const r = await request(app)
-    .get('/api/v1/plexus/public/audit/reconciliations?reconcile_class=invalid');
+    .get('/api/v1/yaklog/public/audit/reconciliations?reconcile_class=invalid');
   assert.equal(r.status, 400);
   assert.match(r.body.message, /reconcile_class must be one of/);
 });
 
 test('GET /audit/reconciliations: filters by external_system_label', async () => {
   const r = await request(app)
-    .get('/api/v1/plexus/public/audit/reconciliations?external_system_label=Splunk');
+    .get('/api/v1/yaklog/public/audit/reconciliations?external_system_label=Splunk');
   assert.equal(r.status, 200);
   assert.equal(r.body.count, 1);
 });
 
 test('GET /audit/reconciliations-by-class: returns aggregation', async () => {
   const r = await request(app)
-    .get('/api/v1/plexus/public/audit/reconciliations-by-class');
+    .get('/api/v1/yaklog/public/audit/reconciliations-by-class');
   assert.equal(r.status, 200);
   assert.ok(r.body.total >= 4);
   assert.ok(Array.isArray(r.body.buckets));
@@ -176,7 +176,7 @@ test('POST /ops/audit/reconcile: accepts new reconcile_class field', async () =>
       period_start: '2026-06-01', period_end: '2026-06-30',
       external_system_label: 'ServiceNow GRC',
       reconcile_class: 'grc-platform',
-      plexus_count: 200, external_count: 200,
+      yaklog_count: 200, external_count: 200,
       reconciler_agent_id: 'admin-agent',
     });
   assert.equal(r.status, 200);
@@ -192,7 +192,7 @@ test('POST /ops/audit/reconcile: 400 on bad reconcile_class', async () => {
       period_start: '2026-06-01', period_end: '2026-06-30',
       external_system_label: 'X',
       reconcile_class: 'definitely-not-a-class',
-      plexus_count: 1, external_count: 1,
+      yaklog_count: 1, external_count: 1,
       reconciler_agent_id: 'admin-agent',
     });
   assert.equal(r.status, 400);
@@ -206,7 +206,7 @@ test('POST /ops/audit/reconcile: omitting reconcile_class defaults to other', as
     .send({
       period_start: '2026-06-01', period_end: '2026-06-30',
       external_system_label: 'unknown-source',
-      plexus_count: 1, external_count: 1,
+      yaklog_count: 1, external_count: 1,
       reconciler_agent_id: 'admin-agent',
     });
   assert.equal(r.status, 200);

@@ -1,4 +1,4 @@
-// ADR-0041 P1 #output shared-hero tab — plexus-ui-agent.
+// ADR-0041 P1 #output shared-hero tab — yaklog-ui-agent.
 //
 // Marker-style (mirrors effortTab / reposA11y): verifies the served dashboard
 // ships the #output tab + hero band wired to /output/hero-summary, and — the

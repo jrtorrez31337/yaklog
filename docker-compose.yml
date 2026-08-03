@@ -23,39 +23,39 @@ services:
       - ${YAKLOG_FERRY_AUDIT_HOST:-/var/log/yaklog}:/var/log/yaklog:rw
       # CP13.6 Phase 2.2 GitHub PAT for GitHubWalker per parch #9866 ratify.
       # Mounted read-only; container reads via GITHUB_PAT_FILE env var below.
-      - /etc/plexus/github-pat.token:/etc/plexus/github-pat.token:ro
+      - /etc/yaklog/github-pat.token:/etc/yaklog/github-pat.token:ro
       # Task #138 Phase 2A vendor-key delivery substrate per parch #10320 +
       # ssw-devops #10288 OOB age-key ferry. yaklog-runtime age private key
       # is read by src/secureStore/sopsAge.js when invoking `sops --decrypt`
       # on vendor-keys/*.sops.env files in swarm-secrets.git. Mode 0600
       # root:root on host (sister-shape github-pat.token); container UID=0
       # matches host mode for read.
-      - /etc/plexus/yaklog-runtime.age.key:/etc/plexus/yaklog-runtime.age.key:ro
+      - /etc/yaklog/yaklog-runtime.age.key:/etc/yaklog/yaklog-runtime.age.key:ro
     environment:
-      GITHUB_PAT_FILE: /etc/plexus/github-pat.token
+      GITHUB_PAT_FILE: /etc/yaklog/github-pat.token
 
   # ──────────────────────────────────────────────────────────────────────
-  # Plexus OTel stack (Plan C Stage 1; Jon-ratified 2026-05-24).
+  # Yaklog OTel stack (Plan C Stage 1; Jon-ratified 2026-05-24).
   # Side-by-side with ssw-jaeger/ssw-grafana (different tech stack per Jon).
   # All three services join yaklog_default network so they can address
-  # each other by service name (plexus-otel-collector / plexus-prometheus).
+  # each other by service name (yaklog-otel-collector / yaklog-prometheus).
   # External port shifts avoid ssw-* collisions: 4327/4328/3001 vs ssw's
   # 4317/4318/3000.
   # ──────────────────────────────────────────────────────────────────────
 
-  plexus-otel-collector:
+  yaklog-otel-collector:
     image: otel/opentelemetry-collector-contrib:0.112.0
-    container_name: plexus-otel-collector
+    container_name: yaklog-otel-collector
     restart: unless-stopped
     command: ["--config=/etc/otelcol/config.yaml"]
     volumes:
       - ./otel/collector-config.yaml:/etc/otelcol/config.yaml:ro
     ports:
       # External OTLP receivers (shifted +10 to avoid ssw-jaeger 4317/4318)
-      - "${PLEXUS_BIND_IP:-0.0.0.0}:4327:4317"  # OTLP gRPC
-      - "${PLEXUS_BIND_IP:-0.0.0.0}:4328:4318"  # OTLP HTTP
+      - "${YAKLOG_BIND_IP:-0.0.0.0}:4327:4317"  # OTLP gRPC
+      - "${YAKLOG_BIND_IP:-0.0.0.0}:4328:4318"  # OTLP HTTP
       # Healthcheck (shifted from 13133 to avoid ssw-jaeger)
-      - "${PLEXUS_BIND_IP:-127.0.0.1}:13134:13133"
+      - "${YAKLOG_BIND_IP:-127.0.0.1}:13134:13133"
     # NOTE: the otel-collector-contrib image is distroless (no shell, no
     # wget, no curl). Docker's HEALTHCHECK runs in-container, so we can't
     # use the normal "wget the /health endpoint" pattern. Two options
@@ -65,9 +65,9 @@ services:
     # If Stage 2 needs in-container healthcheck (e.g., for orchestrator-
     # driven restarts), revisit with a custom image.
 
-  plexus-prometheus:
+  yaklog-prometheus:
     image: prom/prometheus:v2.55.0
-    container_name: plexus-prometheus
+    container_name: yaklog-prometheus
     restart: unless-stopped
     command:
       - --config.file=/etc/prometheus/prometheus.yml
@@ -78,11 +78,11 @@ services:
       - --web.enable-lifecycle
     volumes:
       - ./otel/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - plexus_prom_data:/prometheus
+      - yaklog_prom_data:/prometheus
     ports:
-      - "${PLEXUS_BIND_IP:-0.0.0.0}:9090:9090"
+      - "${YAKLOG_BIND_IP:-0.0.0.0}:9090:9090"
     depends_on:
-      plexus-otel-collector:
+      yaklog-otel-collector:
         condition: service_started  # collector is distroless; no in-container healthcheck (see above)
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
@@ -91,19 +91,19 @@ services:
       retries: 6
       start_period: 15s
 
-  plexus-grafana:
+  yaklog-grafana:
     image: grafana/grafana:11.6.0
-    container_name: plexus-grafana
+    container_name: yaklog-grafana
     restart: unless-stopped
     # CP4 hardening 2026-05-25: admin creds moved to per-host env_file
-    # outside this repo. The file at ${PLEXUS_GRAFANA_ENV_FILE:-...} MUST
+    # outside this repo. The file at ${YAKLOG_GRAFANA_ENV_FILE:-...} MUST
     # exist on the host BEFORE first-time `docker compose up`, OR the
     # container will spin up with Grafana's default admin/admin (security
     # hole). Production deploys should fail-fast on missing file; for
     # devel we accept the env_file lookup will error out the container
     # which is fail-safe enough.
     env_file:
-      - ${PLEXUS_GRAFANA_ENV_FILE:-./plexus-grafana.env}
+      - ${YAKLOG_GRAFANA_ENV_FILE:-./yaklog-grafana.env}
     environment:
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_AUTH_ANONYMOUS_ENABLED: "false"
@@ -111,15 +111,15 @@ services:
       # Provisioning paths
       GF_PATHS_PROVISIONING: /etc/grafana/provisioning
     volumes:
-      - ./otel/grafana-datasources.yaml:/etc/grafana/provisioning/datasources/plexus.yaml:ro
-      - ./otel/grafana-dashboard-provisioning.yaml:/etc/grafana/provisioning/dashboards/plexus.yaml:ro
+      - ./otel/grafana-datasources.yaml:/etc/grafana/provisioning/datasources/yaklog.yaml:ro
+      - ./otel/grafana-dashboard-provisioning.yaml:/etc/grafana/provisioning/dashboards/yaklog.yaml:ro
       - ./otel/grafana-dashboards:/etc/grafana/provisioning/dashboards/json:ro
-      - plexus_grafana_data:/var/lib/grafana
+      - yaklog_grafana_data:/var/lib/grafana
     ports:
       # Shifted to 3001 (ssw-grafana has 3000)
-      - "${PLEXUS_BIND_IP:-0.0.0.0}:3001:3000"
+      - "${YAKLOG_BIND_IP:-0.0.0.0}:3001:3000"
     depends_on:
-      plexus-prometheus:
+      yaklog-prometheus:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3000/api/health || exit 1"]
@@ -130,16 +130,16 @@ services:
 
 
   # ──────────────────────────────────────────────────────────────────────
-  # Plexus MinIO (CP12.21 Phase 3 (A) external integrity anchor hosting).
+  # Yaklog MinIO (CP12.21 Phase 3 (A) external integrity anchor hosting).
   # Per Jon-direct 2026-06-09 (#8236): substrate-choice α S3 Object Lock
   # canonical (parch #7984 OQ-3 ratify) + hosting flips AWS S3 → local
   # MinIO on devel (brand-narrative alignment: cluster-self-substrate canon).
   # 127.0.0.1-bound (devel-internal; no internet exposure).
   # ──────────────────────────────────────────────────────────────────────
 
-  plexus-minio:
+  yaklog-minio:
     image: minio/minio:latest
-    container_name: plexus-minio
+    container_name: yaklog-minio
     restart: unless-stopped
     command: server --console-address ":9001" /data
     environment:
@@ -149,7 +149,7 @@ services:
       - "127.0.0.1:9000:9000"
       - "127.0.0.1:9001:9001"
     volumes:
-      - plexus_minio_data:/data
+      - yaklog_minio_data:/data
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:9000/minio/health/live || exit 1"]
       interval: 30s
@@ -173,7 +173,7 @@ services:
       retries: 3
 
 volumes:
-  plexus_minio_data:
+  yaklog_minio_data:
   yaklog_data:
-  plexus_prom_data:
-  plexus_grafana_data:
+  yaklog_prom_data:
+  yaklog_grafana_data:

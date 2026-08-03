@@ -40,7 +40,7 @@ function seedPresence(agent_id, daemon_state, ageDays) {
 
 test('coverage-gap classifies known alias correctly', async () => {
   seedPresence('gamedev-godot-apple-agent', 'down', 16);
-  const r = await request(app).get('/api/v1/plexus/public/audit/coverage-gap');
+  const r = await request(app).get('/api/v1/yaklog/public/audit/coverage-gap');
   assert.equal(r.status, 200);
   const entry = r.body.missing_dispositions.find(d => d.agent_id === 'gamedev-godot-apple-agent');
   assert.ok(entry, 'expected entry for gamedev-godot-apple-agent');
@@ -51,7 +51,7 @@ test('coverage-gap classifies known alias correctly', async () => {
 test('coverage-gap classifies known different-runtime agents', async () => {
   seedPresence('gemini-agent', 'up', 0);
   seedPresence('aieng3-agent', 'down', 12);
-  const r = await request(app).get('/api/v1/plexus/public/audit/coverage-gap');
+  const r = await request(app).get('/api/v1/yaklog/public/audit/coverage-gap');
   const gemini = r.body.missing_dispositions.find(d => d.agent_id === 'gemini-agent');
   const aieng3 = r.body.missing_dispositions.find(d => d.agent_id === 'aieng3-agent');
   assert.equal(gemini.disposition, 'different_runtime');
@@ -62,7 +62,7 @@ test('coverage-gap classifies known different-runtime agents', async () => {
 
 test('coverage-gap classifies daemon-down agent as inactive', async () => {
   seedPresence('test-inactive-agent', 'down', 1);
-  const r = await request(app).get('/api/v1/plexus/public/audit/coverage-gap');
+  const r = await request(app).get('/api/v1/yaklog/public/audit/coverage-gap');
   const entry = r.body.missing_dispositions.find(d => d.agent_id === 'test-inactive-agent');
   assert.equal(entry.disposition, 'inactive');
   assert.match(entry.detail, /daemon down/);
@@ -70,7 +70,7 @@ test('coverage-gap classifies daemon-down agent as inactive', async () => {
 
 test('coverage-gap classifies stale heartbeat (>7d) as inactive', async () => {
   seedPresence('test-stale-agent', 'up', 10);
-  const r = await request(app).get('/api/v1/plexus/public/audit/coverage-gap');
+  const r = await request(app).get('/api/v1/yaklog/public/audit/coverage-gap');
   const entry = r.body.missing_dispositions.find(d => d.agent_id === 'test-stale-agent');
   assert.equal(entry.disposition, 'inactive');
   assert.match(entry.detail, /heartbeat.*old/);
@@ -78,7 +78,7 @@ test('coverage-gap classifies stale heartbeat (>7d) as inactive', async () => {
 
 test('coverage-gap classifies active-no-audit as genuine_gap', async () => {
   seedPresence('test-genuine-gap-agent', 'up', 0);
-  const r = await request(app).get('/api/v1/plexus/public/audit/coverage-gap');
+  const r = await request(app).get('/api/v1/yaklog/public/audit/coverage-gap');
   const entry = r.body.missing_dispositions.find(d => d.agent_id === 'test-genuine-gap-agent');
   assert.equal(entry.disposition, 'genuine_gap');
 });
@@ -89,7 +89,7 @@ test('coverage-gap counts categories correctly', async () => {
   // - 2 different_runtime (gemini-agent + aieng3-agent)
   // - 2 inactive (test-inactive-agent + test-stale-agent)
   // - 1 genuine_gap (test-genuine-gap-agent)
-  const r = await request(app).get('/api/v1/plexus/public/audit/coverage-gap');
+  const r = await request(app).get('/api/v1/yaklog/public/audit/coverage-gap');
   assert.ok(r.body.agents_missing_trail_7d >= 6);
   assert.ok(r.body.alias_count >= 1);
   assert.ok(r.body.different_runtime_count >= 2);

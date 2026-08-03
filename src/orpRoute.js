@@ -1,4 +1,4 @@
-// CP14-X Plexus Secure Store — public ORP read endpoint.
+// CP14-X Yaklog Secure Store — public ORP read endpoint.
 // GET /api/v1/orp/<agent_id>  (auth-required; per parch #10175 Q1 ratify:
 // any valid YAKLOG_API_KEYS token reads any ORP; per-agent scoping forward-track)
 //
@@ -12,7 +12,7 @@
 'use strict';
 
 const express = require('express');
-const { getOrp } = require('./plexusSecureDb');
+const { getOrp } = require('./yaklogSecureDb');
 
 const router = express.Router();
 

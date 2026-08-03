@@ -1,15 +1,15 @@
-# Plexus Grafana datasource provisioning — Stage 1.
-# Single Prometheus datasource pointed at the Plexus Prom container.
+# Yaklog Grafana datasource provisioning — Stage 1.
+# Single Prometheus datasource pointed at the Yaklog Prom container.
 # Container DNS name resolves on the yaklog_default docker network.
 
 apiVersion: 1
 
 datasources:
-  - name: Plexus-Prometheus
-    uid: Plexus-Prometheus  # stable; dashboards reference this UID. Without explicit uid Grafana auto-generates a hash UID and breaks dashboard JSON (found mid-CP2 canary 2026-05-25).
+  - name: Yaklog-Prometheus
+    uid: Yaklog-Prometheus  # stable; dashboards reference this UID. Without explicit uid Grafana auto-generates a hash UID and breaks dashboard JSON (found mid-CP2 canary 2026-05-25).
     type: prometheus
     access: proxy
-    url: http://plexus-prometheus:9090
+    url: http://yaklog-prometheus:9090
     isDefault: true
     editable: false  # provisioned: don't allow UI edits that would drift
     jsonData:
