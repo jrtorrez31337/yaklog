@@ -21,7 +21,7 @@ process.env.YAKLOG_YAKLOG_SECURE_DB_PATH = path.join(tempDir, 'yaklog-secure.db'
 process.env.YAKLOG_API_KEYS = 'tok-agent,tok-operator,tok-ops';
 process.env.YAKLOG_TOKEN_BINDINGS = 'agent-a:tok-agent';
 process.env.YAKLOG_DAEMON_BINDINGS = 'agent-a:tok-agent';
-process.env.YAKLOG_OPERATOR_BINDINGS = 'op-jhewgley:tok-operator';
+process.env.YAKLOG_OPERATOR_BINDINGS = 'op-operator2:tok-operator';
 process.env.YAKLOG_OPS_API_KEYS = 'tok-ops';
 process.env.YAKLOG_PRESENCE_SWEEP_MS = '0';
 process.env.NODE_ENV = 'test';
@@ -46,7 +46,7 @@ test.after(() => {
 test('config.operatorBindings parses YAKLOG_OPERATOR_BINDINGS env', () => {
   const ids = config.operatorBindings.get('tok-operator');
   assert.ok(ids, 'operatorBindings has tok-operator entry');
-  assert.ok(ids.has('op-jhewgley'), 'op-jhewgley bound to tok-operator');
+  assert.ok(ids.has('op-operator2'), 'op-operator2 bound to tok-operator');
 });
 
 test('config.operatorBindings is Map-of-Sets (sister-shape DAEMON_BINDINGS one-to-many)', () => {
@@ -60,7 +60,7 @@ test('config.operatorBindings is Map-of-Sets (sister-shape DAEMON_BINDINGS one-t
 
 test('POST /presence/event with operator token: session_class enforced to "operator"', async () => {
   const r = await request(app).post('/api/v1/presence/event').set(authOperator).send({
-    agent_id: 'op-jhewgley', daemon_state: 'up', session_state: 'idle',
+    agent_id: 'op-operator2', daemon_state: 'up', session_state: 'idle',
     session_class: 'agent', // attempt to spoof — server must override
   });
   assert.equal(r.statusCode, 200);
@@ -79,9 +79,9 @@ test('POST /presence/event with agent token: session_class enforced to "agent"',
 test('GET /presence returns session_class on each row', async () => {
   const r = await request(app).get('/api/v1/presence/public');
   assert.equal(r.statusCode, 200);
-  const op = r.body.presence.find((p) => p.agent_id === 'op-jhewgley');
+  const op = r.body.presence.find((p) => p.agent_id === 'op-operator2');
   const ag = r.body.presence.find((p) => p.agent_id === 'agent-a');
-  assert.ok(op, 'op-jhewgley row present');
+  assert.ok(op, 'op-operator2 row present');
   assert.equal(op.session_class, 'operator');
   assert.ok(ag, 'agent-a row present');
   assert.equal(ag.session_class, 'agent');

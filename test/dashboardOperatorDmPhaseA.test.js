@@ -17,10 +17,10 @@ const path = require('path');
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'yaklog-dashdm-test-'));
 process.env.YAKLOG_DB_PATH = path.join(tempDir, 'yaklog.db');
-process.env.YAKLOG_API_KEYS = 'tok-agent-a,tok-operator-jon,tok-operator-jhewgley';
+process.env.YAKLOG_API_KEYS = 'tok-agent-a,tok-operator-jon,tok-operator-op2';
 process.env.YAKLOG_TOKEN_BINDINGS = 'agent-a:tok-agent-a';
 process.env.YAKLOG_DAEMON_BINDINGS = 'agent-a:tok-agent-a';
-process.env.YAKLOG_OPERATOR_BINDINGS = 'op-jon:tok-operator-jon,op-jhewgley:tok-operator-jhewgley';
+process.env.YAKLOG_OPERATOR_BINDINGS = 'op-jon:tok-operator-jon,op-operator2:tok-operator-op2';
 process.env.YAKLOG_PRESENCE_SWEEP_MS = '0';
 process.env.NODE_ENV = 'test';
 
@@ -30,7 +30,7 @@ const { closeDb } = require('../src/db');
 
 const authAgent = { Authorization: 'Bearer tok-agent-a' };
 const authOpJon = { Authorization: 'Bearer tok-operator-jon' };
-const authOpJhewgley = { Authorization: 'Bearer tok-operator-jhewgley' };
+const authOpOp2 = { Authorization: 'Bearer tok-operator-op2' };
 
 test.after(() => {
   try { closeDb(); } catch {}
@@ -55,9 +55,9 @@ test('POST /messages: operator-class bearer with sender:"agent-a" (spoof) → se
   assert.equal(r.body.message.sender, 'op-jon', 'server overrode spoofed sender to operatorId');
 });
 
-test('POST /messages: operator-class bearer with sender:"op-jhewgley" (cross-operator spoof) → server overrides to op-jon', async () => {
+test('POST /messages: operator-class bearer with sender:"op-operator2" (cross-operator spoof) → server overrides to op-jon', async () => {
   const r = await request(app).post('/api/v1/messages').set(authOpJon).send({
-    channel: 'handoff', sender: 'op-jhewgley', body: '@agent-a cross-operator spoof',
+    channel: 'handoff', sender: 'op-operator2', body: '@agent-a cross-operator spoof',
   });
   assert.equal(r.statusCode, 201);
   assert.equal(r.body.message.sender, 'op-jon', 'operator cannot impersonate other operator');
@@ -120,12 +120,12 @@ test('PATCH /messages/:id: operator CANNOT mutate agent-class message (FLAG-3 by
 });
 
 test('PATCH /messages/:id: operator CANNOT mutate other operator message (cross-operator defense)', async () => {
-  const created = await request(app).post('/api/v1/messages').set(authOpJhewgley).send({
-    channel: 'handoff', sender: 'op-jhewgley', body: '@agent-a from jhewgley',
+  const created = await request(app).post('/api/v1/messages').set(authOpOp2).send({
+    channel: 'handoff', sender: 'op-operator2', body: '@agent-a from operator2',
   });
   const id = created.body.message.id;
   const r = await request(app).patch(`/api/v1/messages/${id}`).set(authOpJon).send({
-    body: 'op-jon trying to edit op-jhewgley message',
+    body: 'op-jon trying to edit op-operator2 message',
   });
   assert.equal(r.statusCode, 403);
 });

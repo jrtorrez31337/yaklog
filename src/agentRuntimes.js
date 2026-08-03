@@ -75,7 +75,7 @@ const EMAIL_TO_AGENT_ID = new Map([
   // gfxartist
   ['gfxartist-agent@ssw-cluster',  'gfxartist-agent'],
   ['gfxartist-agent@ssw.cluster',  'gfxartist-agent'],
-  ['gfxartist-agent@ssw.internal', 'gfxartist-agent'],
+  ['gfxartist-agent@operator.local', 'gfxartist-agent'],
   ['gfxartist@yaklog-host',              'gfxartist-agent'],
   // parch (governance)
   ['parch@yaklog-host',              'parch-agent'],
@@ -98,7 +98,7 @@ const EMAIL_TO_AGENT_ID = new Map([
   ['maker-agent@yaklog-host',        'maker-agent'],
   // additional ssw-devops + secops hostname variants
   ['ssw-devops@example.com', 'ssw-devops-agent'],
-  ['secops-agent@swarm.internal', 'secops-agent'],
+  ['secops-agent@yaklog-host.local', 'secops-agent'],
   // aieng without -agent suffix (legacy short-stem author identity; post-rename
   // per Jon-direct #7894 2026-06-06 redirects to current canonical identity).
   ['aieng@example.com',      's345-aieng-agent'],

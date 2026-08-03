@@ -9,9 +9,9 @@ const path = require('path');
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'yaklog-dashlogin-test-'));
 process.env.YAKLOG_DB_PATH = path.join(tempDir, 'yaklog.db');
-process.env.YAKLOG_API_KEYS = 'tok-agent-a,tok-operator-jon,tok-operator-jhewgley';
+process.env.YAKLOG_API_KEYS = 'tok-agent-a,tok-operator-jon,tok-operator-op2';
 process.env.YAKLOG_TOKEN_BINDINGS = 'agent-a:tok-agent-a';
-process.env.YAKLOG_OPERATOR_BINDINGS = 'op-jon:tok-operator-jon,op-jhewgley:tok-operator-jhewgley';
+process.env.YAKLOG_OPERATOR_BINDINGS = 'op-jon:tok-operator-jon,op-operator2:tok-operator-op2';
 process.env.YAKLOG_PRESENCE_SWEEP_MS = '0';
 process.env.NODE_ENV = 'test';
 
@@ -34,9 +34,9 @@ test('POST /dashboard/login: valid operator bearer → 200 with operator_id', as
 });
 
 test('POST /dashboard/login: different operator → different operator_id', async () => {
-  const r = await request(app).post('/dashboard/login').send({ token: 'tok-operator-jhewgley' });
+  const r = await request(app).post('/dashboard/login').send({ token: 'tok-operator-op2' });
   assert.equal(r.statusCode, 200);
-  assert.equal(r.body.operator_id, 'op-jhewgley');
+  assert.equal(r.body.operator_id, 'op-operator2');
 });
 
 // ─── POST /dashboard/login — uniform 401 (FLAG-2) ──────────────────────────
