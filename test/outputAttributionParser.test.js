@@ -146,7 +146,7 @@ test('parseAttribution handles empty + null + undefined inputs honestly', () => 
 const { parseAuthorEmail } = require('../src/outputAttributionParser');
 
 test('parseAuthorEmail: Codex direct-author email → aieng3-agent + runtime=codex', () => {
-  const r = parseAuthorEmail('aieng3-agent@swarm.local');
+  const r = parseAuthorEmail('aieng3-agent@yaklog-host');
   assert.equal(r.agent_attribution, 'aieng3-agent');
   assert.equal(r.attribution_method, 'author_email_direct');
   assert.equal(r.runtime_class, 'codex');
@@ -167,7 +167,7 @@ test('parseAuthorEmail: unknown email → null (falls through)', () => {
 
 test('parseAttribution: Co-Authored-By trailer takes precedence over author_email', () => {
   const msg = `Subject\n\nBody\n\nCo-Authored-By: Claude Opus 4 <noreply@anthropic.com>`;
-  const r = parseAttribution(msg, null, 'aieng3-agent@swarm.local');
+  const r = parseAttribution(msg, null, 'aieng3-agent@yaklog-host');
   // Trailer wins; author_email NOT consulted
   assert.equal(r.attribution_method, 'co_authored_by');
   assert.equal(r.runtime_class, 'claude-code');
@@ -175,7 +175,7 @@ test('parseAttribution: Co-Authored-By trailer takes precedence over author_emai
 
 test('parseAttribution: Codex direct-commit (no trailer) → author_email_direct path resolves', () => {
   const msg = `Subject\n\nBody with no trailer`;
-  const r = parseAttribution(msg, null, 'aieng3-agent@swarm.local');
+  const r = parseAttribution(msg, null, 'aieng3-agent@yaklog-host');
   assert.equal(r.attribution_method, 'author_email_direct');
   assert.equal(r.agent_attribution, 'aieng3-agent');
   assert.equal(r.runtime_class, 'codex');
@@ -218,7 +218,7 @@ test('parseCoAuthoredBy: generic CC trailer still resolves to claude-code runtim
 });
 
 test('parseCoAuthoredBy: codex direct-author email resolves to aieng3-agent (not generic codex)', () => {
-  const msg = `Subject\n\nCo-Authored-By: aieng3-agent <aieng3-agent@swarm.local>`;
+  const msg = `Subject\n\nCo-Authored-By: aieng3-agent <aieng3-agent@yaklog-host>`;
   const r = parseCoAuthoredBy(msg);
   assert.equal(r.agent_attribution, 'aieng3-agent');
   assert.equal(r.runtime_class, 'codex');

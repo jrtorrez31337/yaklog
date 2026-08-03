@@ -37,14 +37,14 @@ const VALID_RUNTIMES = new Set(['claude_code', 'gemini', 'codex', 'ptah']);
 // for per-agent attribution.
 //
 // Map<email, agent_id> — explicit; do not auto-derive from REGISTRY
-// because canonical commit emails vary by host (e.g., aieng3-agent@swarm.local
+// because canonical commit emails vary by host (e.g., aieng3-agent@yaklog-host
 // vs aieng3-agent@yaklog-host for the same agent). When a new agent's commit email
 // appears in output-strand, add an entry here.
 const EMAIL_TO_AGENT_ID = new Map([
   // Codex (aieng3-agent)
-  ['aieng3-agent@swarm.local', 'aieng3-agent'],
+  ['aieng3-agent@yaklog-host', 'aieng3-agent'],
   ['aieng3-agent@yaklog-host',       'aieng3-agent'],
-  ['aieng3@swarm.local',       'aieng3-agent'],
+  ['aieng3@yaklog-host',       'aieng3-agent'],
   // Gemini
   ['gemini-agent@yaklog-host',       'gemini-agent'],
   // Ptah

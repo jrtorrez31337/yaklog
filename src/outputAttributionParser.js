@@ -12,7 +12,7 @@
 //   1. Co-Authored-By trailer parse (most reliable; LLM-emitted)
 //   2. author_email direct lookup (Phase 0 Item C; empirical anchor:
 //      Codex+Gemini commit as DIRECT authors not via Co-Authored-By trailer
-//      per /srv/git/ptah.git probe — aieng3-agent@swarm.local +
+//      per /srv/git/ptah.git probe — aieng3-agent@yaklog-host +
 //      gemini-agent@yaklog-host). Resolves via agentRuntimes.agentIdByEmail()
 //      reverse-index.
 //   3. Agent-name pattern in body (cross-ref to presence.agent_id registry)
@@ -142,7 +142,7 @@ function parseBodyPattern(commitMessage, knownAgentIds) {
 }
 
 // Phase 0 Item C — author_email direct lookup.
-// Codex (aieng3-agent@swarm.local + aieng3-agent@yaklog-host) and Gemini
+// Codex (aieng3-agent@yaklog-host) and Gemini
 // (gemini-agent@yaklog-host) commit as direct authors per empirical anchor in
 // /srv/git/ptah.git. agentIdByEmail returns agent_id; runtimeOf resolves
 // agent_id → runtime_class via the canonical REGISTRY map.
